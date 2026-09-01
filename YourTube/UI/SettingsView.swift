@@ -47,8 +47,9 @@ struct SettingsView: View {
                 } footer: {
                     Text("""
                     Shorts are detected heuristically — YouTube's API has no \
-                    flag for them. A video under 60 seconds tagged #shorts or \
-                    with a portrait thumbnail is treated as one. Turn this on if \
+                    flag for them. A video of 3 minutes or less is treated as one \
+                    if it's tagged #shorts or its thumbnail shows vertical video. \
+                    Turn this on if \
                     something you wanted got filtered out.
                     """)
                 }

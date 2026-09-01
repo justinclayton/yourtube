@@ -13,9 +13,10 @@ packages:
 settings:
   base:
     SWIFT_VERSION: "5.10"
+    GENERATE_INFOPLIST_FILE: YES
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
-    DEVELOPMENT_TEAM: "" # set your Apple Developer Team ID here
+    DEVELOPMENT_TEAM: "J52S5R2K5A"
 
 targets:
   YourTube:

@@ -30,10 +30,16 @@ final class FeedRefresher {
 
     private let modelContext: ModelContext
     private let api: YouTubeAPI
+    private let thumbnailSession: URLSession
 
-    init(modelContext: ModelContext, api: YouTubeAPI) {
+    init(
+        modelContext: ModelContext,
+        api: YouTubeAPI,
+        thumbnailSession: URLSession = .shared
+    ) {
         self.modelContext = modelContext
         self.api = api
+        self.thumbnailSession = thumbnailSession
     }
 
     var isRefreshing: Bool {
@@ -48,6 +54,8 @@ final class FeedRefresher {
         status = .refreshing(completed: 0, total: 0)
 
         do {
+            try await reclassifyStaleVideos()
+
             let subscriptions = try await syncSubscriptions()
             guard !subscriptions.isEmpty else {
                 status = .idle
@@ -60,7 +68,7 @@ final class FeedRefresher {
 
             if !newVideoIds.isEmpty {
                 let hydrated = try await api.videos(ids: Array(newVideoIds))
-                try upsert(videos: hydrated)
+                try await upsert(videos: hydrated)
             }
 
             lastRefreshedAt = .now
@@ -169,7 +177,9 @@ final class FeedRefresher {
         Set(try modelContext.fetch(FetchDescriptor<Video>()).map(\.videoId))
     }
 
-    private func upsert(videos: [YT.VideoItem]) throws {
+    private func upsert(videos: [YT.VideoItem]) async throws {
+        var pending: [(video: Video, signals: VideoSignals)] = []
+
         for item in videos {
             guard let snippet = item.snippet else { continue }
 
@@ -198,12 +208,86 @@ final class FeedRefresher {
                 durationSeconds: duration,
                 thumbnailURL: thumbnail?.url,
                 thumbnailWidth: thumbnail?.width,
-                thumbnailHeight: thumbnail?.height,
-                isLikelyShort: ShortsHeuristic.isLikelyShort(signals)
+                thumbnailHeight: thumbnail?.height
             )
             modelContext.insert(video)
+            pending.append((video, signals))
         }
+
+        await classify(pending)
         try modelContext.save()
+    }
+
+    // MARK: - Shorts classification
+
+    /// Re-runs the heuristic over videos classified by an older version of it.
+    /// Cheap when there's nothing to do, which is every time but the first
+    /// launch after an app update that changed the heuristic. Runs at the start
+    /// of every refresh and when the feed appears, so an update takes effect
+    /// without waiting for new uploads.
+    func reclassifyStaleVideos() async throws {
+        let current = ShortsHeuristic.version
+        let stale = try modelContext.fetch(FetchDescriptor<Video>(
+            predicate: #Predicate { $0.classifierVersion < current }
+        ))
+        guard !stale.isEmpty else { return }
+
+        let pending = stale.map { video in
+            (video, VideoSignals(
+                durationSeconds: video.durationSeconds,
+                title: video.title,
+                description: video.videoDescription,
+                thumbnailWidth: video.thumbnailWidth,
+                thumbnailHeight: video.thumbnailHeight
+            ))
+        }
+        await classify(pending)
+        try modelContext.save()
+    }
+
+    /// Applies the Shorts heuristic, fetching and analysing the thumbnail for
+    /// videos where it could change the answer: inside the duration gate and
+    /// not already caught by a cheaper signal.
+    private func classify(_ pending: [(video: Video, signals: VideoSignals)]) async {
+        var needsThumbnail: [String] = []
+        for (video, signals) in pending
+        where ShortsHeuristic.isWithinDurationGate(signals)
+            && !ShortsHeuristic.isLikelyShort(signals) {
+            needsThumbnail.append(video.videoId)
+        }
+
+        let pillarboxed = await analyzeThumbnails(videoIds: needsThumbnail)
+
+        for (video, signals) in pending {
+            var signals = signals
+            signals.hasPillarboxedThumbnail = pillarboxed[video.videoId] ?? nil
+            video.isLikelyShort = ShortsHeuristic.isLikelyShort(signals)
+            video.classifierVersion = ShortsHeuristic.version
+        }
+    }
+
+    /// Downloads `hqdefault.jpg` for each ID and runs `ThumbnailAnalyzer`.
+    /// Failures (offline, 404, undecodable) map to nil: no evidence, and the
+    /// video is left un-flagged rather than the refresh failing.
+    private func analyzeThumbnails(videoIds: [String]) async -> [String: Bool?] {
+        var results: [String: Bool?] = [:]
+        let session = thumbnailSession
+
+        for batch in videoIds.chunked(into: maxConcurrentChannelFetches) {
+            await withTaskGroup(of: (String, Bool?).self) { group in
+                for id in batch {
+                    group.addTask {
+                        let url = ThumbnailAnalyzer.thumbnailURL(forVideoId: id)
+                        guard let (data, response) = try? await session.data(from: url),
+                              (response as? HTTPURLResponse)?.statusCode == 200
+                        else { return (id, nil) }
+                        return (id, ThumbnailAnalyzer.looksPillarboxed(imageData: data))
+                    }
+                }
+                for await (id, verdict) in group { results[id] = verdict }
+            }
+        }
+        return results
     }
 }
 
