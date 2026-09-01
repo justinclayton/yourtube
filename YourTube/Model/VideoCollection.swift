@@ -1,0 +1,54 @@
+import Foundation
+import SwiftData
+
+/// A user-facing bucket for videos ("Learn", "Cooking", ...).
+///
+/// `centroid` is the running mean of the embeddings of videos filed here.
+/// It starts nil and is filled in once the first video lands, so collections
+/// get more accurate as you use them rather than needing to be trained up front.
+@Model
+final class VideoCollection {
+    @Attribute(.unique) var name: String
+    var isUserCreated: Bool
+    var createdAt: Date
+    var sortOrder: Int
+
+    /// Mean embedding vector of member videos. Nil until the first assignment.
+    var centroid: [Double]?
+    /// How many videos contributed to `centroid`, for incremental averaging.
+    var centroidSampleCount: Int
+
+    @Relationship(deleteRule: .nullify, inverse: \Video.collection)
+    var videos: [Video] = []
+
+    init(
+        name: String,
+        isUserCreated: Bool = true,
+        sortOrder: Int = 0,
+        centroid: [Double]? = nil,
+        centroidSampleCount: Int = 0
+    ) {
+        self.name = name
+        self.isUserCreated = isUserCreated
+        self.createdAt = .now
+        self.sortOrder = sortOrder
+        self.centroid = centroid
+        self.centroidSampleCount = centroidSampleCount
+    }
+
+    /// Fold a new embedding into the running mean.
+    func absorb(embedding: [Double]) {
+        guard !embedding.isEmpty else { return }
+        guard var current = centroid, current.count == embedding.count else {
+            centroid = embedding
+            centroidSampleCount = 1
+            return
+        }
+        let n = Double(centroidSampleCount)
+        for i in current.indices {
+            current[i] = (current[i] * n + embedding[i]) / (n + 1)
+        }
+        centroid = current
+        centroidSampleCount += 1
+    }
+}

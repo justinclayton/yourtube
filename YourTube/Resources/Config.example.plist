@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- From Google Cloud Console > Credentials > OAuth 2.0 Client IDs (iOS) -->
+	<key>GoogleClientID</key>
+	<string>REPLACE_ME.apps.googleusercontent.com</string>
+	<!-- The same value reversed, as shown in the console as REVERSED_CLIENT_ID.
+	     Must also appear in Info.plist under CFBundleURLSchemes. -->
+	<key>GoogleRedirectScheme</key>
+	<string>com.googleusercontent.apps.REPLACE_ME</string>
+</dict>
+</plist>
