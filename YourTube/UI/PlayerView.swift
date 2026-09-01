@@ -26,7 +26,7 @@ struct PlayerView: View {
                 parameters: .init(
                     autoPlay: true,
                     showControls: true,
-                    showRelatedVideos: false
+                    restrictRelatedVideosToSameChannel: true
                 )
             )
         )
