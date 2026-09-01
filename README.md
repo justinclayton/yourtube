@@ -44,9 +44,19 @@ probing `youtube.com/shorts/{id}` and watching for a redirect (~99% accurate),
 but that's an undocumented endpoint, it rate-limits aggressively, and it
 arguably breaches the API Terms of Service. This app doesn't use it.
 
-Instead: a video is treated as a Short if it's **60 seconds or under** *and*
-either tagged `#shorts` or has a portrait thumbnail. Duration alone isn't
-enough — trailers, clips, and pre-2020 uploads are often short.
+Instead: a video is treated as a Short if it's **3 minutes or under** (YouTube's
+cap since late 2024) *and* one of these corroborates it:
+
+- tagged `#shorts` in the title or description;
+- a portrait thumbnail (rare — the API reports 16:9 for nearly everything);
+- a **pillarboxed thumbnail**: YouTube renders vertical video into a 16:9
+  thumbnail with a blurred fill either side. `ThumbnailAnalyzer` downloads the
+  small `hqdefault.jpg` (no API quota) and compares edge detail in the side
+  strips against the centre. Shorts score well under half; regular videos are
+  roughly even. This catches the untagged majority.
+
+Duration alone isn't enough — trailers, clips, and pre-2020 uploads are often
+short.
 
 Because it's a guess, Shorts are **hidden, never deleted**. If something you
 wanted gets filtered, flip *Show Shorts* in Settings.

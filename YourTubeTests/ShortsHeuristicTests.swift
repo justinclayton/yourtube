@@ -21,13 +21,14 @@ final class ShortsHeuristicTests: XCTestCase {
         XCTAssertFalse(ShortsHeuristic.isLikelyShort(signals))
     }
 
-    func testExactlySixtySecondsIsWithinTheGate() {
-        let signals = VideoSignals(durationSeconds: 60, title: "Quick tip #shorts")
+    /// YouTube's cap has been 3 minutes since late 2024.
+    func testExactlyThreeMinutesIsWithinTheGate() {
+        let signals = VideoSignals(durationSeconds: 180, title: "Quick tip #shorts")
         XCTAssertTrue(ShortsHeuristic.isLikelyShort(signals))
     }
 
-    func testSixtyOneSecondsIsOutsideTheGate() {
-        let signals = VideoSignals(durationSeconds: 61, title: "Quick tip #shorts")
+    func testOneSecondOverThreeMinutesIsOutsideTheGate() {
+        let signals = VideoSignals(durationSeconds: 181, title: "Quick tip #shorts")
         XCTAssertFalse(ShortsHeuristic.isLikelyShort(signals))
     }
 
@@ -66,6 +67,34 @@ final class ShortsHeuristicTests: XCTestCase {
             thumbnailHeight: 1280
         )
         XCTAssertTrue(ShortsHeuristic.isLikelyShort(signals))
+    }
+
+    /// The signal that catches untagged Shorts served with 16:9 thumbnails.
+    func testShortDurationPlusPillarboxedThumbnailIsEnough() {
+        let signals = VideoSignals(
+            durationSeconds: 84,
+            title: "Patch with me!",
+            thumbnailWidth: 1280,
+            thumbnailHeight: 720,
+            hasPillarboxedThumbnail: true
+        )
+        XCTAssertTrue(ShortsHeuristic.isLikelyShort(signals))
+    }
+
+    func testUnanalysedThumbnailIsNotEvidence() {
+        let signals = VideoSignals(
+            durationSeconds: 45,
+            title: "Official Trailer",
+            thumbnailWidth: 1280,
+            thumbnailHeight: 720,
+            hasPillarboxedThumbnail: nil
+        )
+        XCTAssertFalse(ShortsHeuristic.isLikelyShort(signals))
+    }
+
+    func testPillarboxingIsIgnoredOutsideTheDurationGate() {
+        let signals = VideoSignals(durationSeconds: 600, hasPillarboxedThumbnail: true)
+        XCTAssertFalse(ShortsHeuristic.isLikelyShort(signals))
     }
 
     func testTagMatchingIsCaseInsensitive() {
@@ -150,13 +179,27 @@ final class ShortsHeuristicTests: XCTestCase {
             ))
         }
 
-        // Untagged Shorts served with letterboxed 16:9 thumbnails. These are the
-        // ones the heuristic genuinely cannot catch, and they set the recall ceiling.
-        for i in 0..<5 {
+        // Untagged Shorts served with pillarboxed 16:9 thumbnails — the common
+        // case in practice. Caught only via thumbnail analysis.
+        for i in 0..<10 {
+            cases.append(Case(
+                signals: VideoSignals(
+                    durationSeconds: 30 + i * 12,
+                    title: "Quick thought \(i)",
+                    thumbnailWidth: 1280, thumbnailHeight: 720,
+                    hasPillarboxedThumbnail: true
+                ),
+                isShort: true
+            ))
+        }
+
+        // Untagged Shorts whose thumbnail couldn't be analysed (fetch failed).
+        // These set the recall ceiling.
+        for i in 0..<3 {
             cases.append(Case(
                 signals: VideoSignals(
                     durationSeconds: 30 + i,
-                    title: "Quick thought \(i)",
+                    title: "Unfetched \(i)",
                     thumbnailWidth: 1280, thumbnailHeight: 720
                 ),
                 isShort: true
@@ -184,7 +227,8 @@ final class ShortsHeuristicTests: XCTestCase {
                     durationSeconds: 25 + i,
                     title: "Official Teaser \(i)",
                     description: "Coming soon.",
-                    thumbnailWidth: 1280, thumbnailHeight: 720
+                    thumbnailWidth: 1280, thumbnailHeight: 720,
+                    hasPillarboxedThumbnail: false
                 ),
                 isShort: false
             ))

@@ -20,6 +20,10 @@ struct SubscriptionsView: View {
                 }
             }
         }
+        .task {
+            // Heuristic changes apply to already-stored videos without a refresh.
+            try? await services.feed.reclassifyStaleVideos()
+        }
     }
 }
 
