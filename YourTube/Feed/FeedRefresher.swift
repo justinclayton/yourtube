@@ -78,6 +78,24 @@ final class FeedRefresher {
         }
     }
 
+    /// Pulls a deeper slice of one channel's uploads playlist than a normal
+    /// refresh does, for browsing a channel's back catalogue. Returns how many
+    /// videos were newly stored; zero means we've already got everything the
+    /// playlist offers within the page limit.
+    ///
+    /// Costs 1 unit for the playlist page plus 1 per 50 videos hydrated.
+    func loadOlderUploads(channelId: String, pageSize: Int = 50) async throws -> Int {
+        let playlistId = Subscription.uploadsPlaylistId(forChannelId: channelId)
+        let known = try knownVideoIds()
+        let items = try await api.recentUploads(playlistId: playlistId, limit: pageSize)
+        let newIds = items.compactMap(\.videoId).filter { !known.contains($0) }
+        guard !newIds.isEmpty else { return 0 }
+
+        let hydrated = try await api.videos(ids: newIds)
+        try await upsert(videos: hydrated)
+        return hydrated.count
+    }
+
     // MARK: - Steps
 
     /// Mirrors the remote subscription list into the local store, adding new
