@@ -4,6 +4,27 @@ import SwiftData
 struct SubscriptionsView: View {
     @Environment(AppServices.self) private var services
     @AppStorage(SettingsKeys.showShorts) private var showShorts = false
+    @AppStorage(SettingsKeys.feedCategory) private var feedCategory = ""
+
+    @Query(sort: [SortDescriptor(\VideoCollection.sortOrder), SortDescriptor(\VideoCollection.name)])
+    private var categories: [VideoCollection]
+    @Query private var rules: [ChannelRule]
+    @Query private var subscriptions: [Subscription]
+
+    /// Channel IDs the feed should be limited to, or nil for everything.
+    private var channelFilter: [String]? {
+        guard !feedCategory.isEmpty else { return nil }
+        let filedIn = rules.reduce(into: [String: String]()) { map, rule in
+            if let name = rule.collection?.name { map[rule.channelId] = name }
+        }
+        if feedCategory == CategoryManager.uncategorizedName {
+            return subscriptions.map(\.channelId).filter { filedIn[$0] == nil }
+        }
+        // A category that has since been deleted shows an empty feed rather
+        // than silently falling back to everything; the chip row makes it
+        // obvious and one tap fixes it.
+        return filedIn.filter { $0.value == feedCategory }.map(\.key)
+    }
 
     var body: some View {
         NavigationStack {
@@ -11,7 +32,13 @@ struct SubscriptionsView: View {
                 if services.auth.needsReauth {
                     ReauthBanner()
                 }
-                SubscriptionFeedList(showShorts: showShorts)
+                if !categories.isEmpty {
+                    CategoryChips(
+                        names: categories.map(\.name) + [CategoryManager.uncategorizedName],
+                        selected: $feedCategory
+                    )
+                }
+                SubscriptionFeedList(showShorts: showShorts, channelIds: channelFilter)
             }
             .navigationTitle("Subscriptions")
             .toolbar {
@@ -27,15 +54,59 @@ struct SubscriptionsView: View {
     }
 }
 
+/// Horizontal row of category filters above the feed. "All" clears it.
+private struct CategoryChips: View {
+    let names: [String]
+    @Binding var selected: String
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                chip("All", isOn: selected.isEmpty) { selected = "" }
+                ForEach(names, id: \.self) { name in
+                    chip(name, isOn: selected == name) {
+                        selected = selected == name ? "" : name
+                    }
+                }
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+        }
+    }
+
+    private func chip(_ title: String, isOn: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.subheadline.weight(isOn ? .semibold : .regular))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(isOn ? AnyShapeStyle(.tint) : AnyShapeStyle(.fill.tertiary), in: Capsule())
+                .foregroundStyle(isOn ? .white : .primary)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 /// Split out so `@Query` can take a predicate that depends on the Shorts
-/// toggle — the macro needs it fixed at init time.
+/// toggle and category filter — the macro needs them fixed at init time.
 private struct SubscriptionFeedList: View {
     @Environment(AppServices.self) private var services
     @Query private var videos: [Video]
 
-    init(showShorts: Bool) {
+    init(showShorts: Bool, channelIds: [String]?) {
+        let predicate: Predicate<Video>?
+        switch (showShorts, channelIds) {
+        case (true, nil):
+            predicate = nil
+        case (false, nil):
+            predicate = #Predicate<Video> { !$0.isLikelyShort }
+        case (true, let ids?):
+            predicate = #Predicate<Video> { ids.contains($0.channelId) }
+        case (false, let ids?):
+            predicate = #Predicate<Video> { ids.contains($0.channelId) && !$0.isLikelyShort }
+        }
         _videos = Query(
-            filter: showShorts ? nil : #Predicate<Video> { !$0.isLikelyShort },
+            filter: predicate,
             sort: [SortDescriptor(\Video.publishedAt, order: .reverse)]
         )
     }

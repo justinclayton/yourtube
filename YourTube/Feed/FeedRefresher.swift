@@ -119,11 +119,13 @@ final class FeedRefresher {
             if let record = byId[channelId] {
                 record.title = item.snippet.title
                 record.thumbnailURL = item.snippet.thumbnails?.best?.url
+                record.channelDescription = item.snippet.description
             } else {
                 let record = Subscription(
                     channelId: channelId,
                     title: item.snippet.title,
-                    thumbnailURL: item.snippet.thumbnails?.best?.url
+                    thumbnailURL: item.snippet.thumbnails?.best?.url,
+                    channelDescription: item.snippet.description
                 )
                 modelContext.insert(record)
                 byId[channelId] = record

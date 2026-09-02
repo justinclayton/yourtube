@@ -18,9 +18,15 @@ struct RootView: View {
                 .tabItem { Label("Settings", systemImage: "gear") }
         }
         .task {
+            services.categories.seedDefaultCategoriesIfNeeded()
             // Attempt a silent token refresh on launch so a still-valid session
             // goes straight to the feed without a sign-in prompt.
             _ = try? await services.auth.validAccessToken()
+            services.categories.classifyUnassignedInBackground()
+        }
+        .onChange(of: services.feed.lastRefreshedAt) {
+            // New subscriptions arrive via refresh; file them as they appear.
+            services.categories.classifyUnassignedInBackground()
         }
     }
 }

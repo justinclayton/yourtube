@@ -32,6 +32,8 @@ enum YT {
 
         struct Snippet: Decodable {
             let title: String
+            /// The channel's "about" text. Used as classifier input.
+            let description: String?
             let resourceId: ResourceId
             let thumbnails: Thumbnails?
         }

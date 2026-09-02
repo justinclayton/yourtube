@@ -3,6 +3,8 @@ import SwiftData
 
 enum SettingsKeys {
     static let showShorts = "settings.showShorts"
+    /// Name of the category the Subscriptions feed is filtered to; empty = all.
+    static let feedCategory = "settings.feedCategory"
 }
 
 struct SettingsView: View {
@@ -42,6 +44,9 @@ struct SettingsView: View {
 
                 Section {
                     Toggle("Show Shorts", isOn: $showShorts)
+                    NavigationLink("Categories") {
+                        CategoriesSettingsView()
+                    }
                 } header: {
                     Text("Feed")
                 } footer: {

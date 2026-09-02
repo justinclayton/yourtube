@@ -1,7 +1,7 @@
 import SwiftUI
 import SwiftData
 
-/// Browse the feed one subscribed channel at a time.
+/// Browse the feed one subscribed channel at a time, grouped by category.
 struct ChannelsView: View {
     @AppStorage(SettingsKeys.showShorts) private var showShorts = false
 
@@ -16,12 +16,20 @@ struct ChannelsView: View {
 /// Split out so the unwatched query can depend on the Shorts toggle, which
 /// `@Query` needs fixed at init time.
 private struct ChannelList: View {
+    @Environment(AppServices.self) private var services
     let showShorts: Bool
+
     @Query(sort: \Subscription.title) private var subscriptions: [Subscription]
+    @Query(sort: [SortDescriptor(\VideoCollection.sortOrder), SortDescriptor(\VideoCollection.name)])
+    private var categories: [VideoCollection]
+    @Query private var rules: [ChannelRule]
     /// One query for every unwatched video, counted per channel here, rather
     /// than a live query per row — with several hundred subscriptions the
     /// per-row version makes the list unusable.
     @Query private var unwatched: [Video]
+
+    @State private var collapsed: Set<String> = []
+    @State private var filing: Subscription?
 
     init(showShorts: Bool) {
         self.showShorts = showShorts
@@ -31,8 +39,48 @@ private struct ChannelList: View {
         )
     }
 
-    private var unwatchedByChannel: [String: Int] {
-        unwatched.reduce(into: [:]) { counts, video in counts[video.channelId, default: 0] += 1 }
+    private struct Group: Identifiable {
+        let id: String
+        let title: String
+        let collection: VideoCollection?
+        let channels: [Subscription]
+        let unwatched: Int
+    }
+
+    private var groups: [Group] {
+        let unwatchedByChannel = unwatched.reduce(into: [String: Int]()) {
+            $0[$1.channelId, default: 0] += 1
+        }
+        let collectionByChannel = rules.reduce(into: [String: VideoCollection]()) {
+            if let c = $1.collection { $0[$1.channelId] = c }
+        }
+        var byCollection: [PersistentIdentifier: [Subscription]] = [:]
+        var uncategorized: [Subscription] = []
+        for sub in subscriptions {
+            if let c = collectionByChannel[sub.channelId] {
+                byCollection[c.persistentModelID, default: []].append(sub)
+            } else {
+                uncategorized.append(sub)
+            }
+        }
+        func count(_ subs: [Subscription]) -> Int {
+            subs.reduce(0) { $0 + (unwatchedByChannel[$1.channelId] ?? 0) }
+        }
+
+        var result: [Group] = categories.compactMap { c in
+            guard let subs = byCollection[c.persistentModelID], !subs.isEmpty else { return nil }
+            return Group(id: c.name, title: c.name, collection: c, channels: subs, unwatched: count(subs))
+        }
+        if !uncategorized.isEmpty {
+            result.append(Group(
+                id: CategoryManager.uncategorizedName,
+                title: CategoryManager.uncategorizedName,
+                collection: nil,
+                channels: uncategorized,
+                unwatched: count(uncategorized)
+            ))
+        }
+        return result
     }
 
     var body: some View {
@@ -43,19 +91,102 @@ private struct ChannelList: View {
                 description: Text("Refresh the Subscriptions tab to pull in your channels.")
             )
         } else {
-            let counts = unwatchedByChannel
-            List(subscriptions) { subscription in
-                NavigationLink {
-                    ChannelView(subscription: subscription, showShorts: showShorts)
-                } label: {
-                    ChannelRow(
-                        subscription: subscription,
-                        unwatchedCount: counts[subscription.channelId] ?? 0
-                    )
+            let unwatchedByChannel = unwatched.reduce(into: [String: Int]()) {
+                $0[$1.channelId, default: 0] += 1
+            }
+            List {
+                if case .running(let done, let total) = services.categories.status {
+                    HStack {
+                        ProgressView(value: Double(done), total: Double(max(1, total)))
+                        Text("Sorting channels \(done)/\(total)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                }
+                ForEach(groups) { group in
+                    Section {
+                        if !collapsed.contains(group.id) {
+                            ForEach(group.channels) { subscription in
+                                NavigationLink {
+                                    ChannelView(subscription: subscription, showShorts: showShorts)
+                                } label: {
+                                    ChannelRow(
+                                        subscription: subscription,
+                                        unwatchedCount: unwatchedByChannel[subscription.channelId] ?? 0
+                                    )
+                                }
+                                .swipeActions(edge: .leading) {
+                                    Button {
+                                        filing = subscription
+                                    } label: {
+                                        Label("Category", systemImage: "folder")
+                                    }
+                                    .tint(.indigo)
+                                }
+                                .contextMenu {
+                                    Button("Move to category…", systemImage: "folder") {
+                                        filing = subscription
+                                    }
+                                }
+                            }
+                        }
+                    } header: {
+                        GroupHeader(
+                            title: group.title,
+                            channelCount: group.channels.count,
+                            unwatched: group.unwatched,
+                            isCollapsed: collapsed.contains(group.id)
+                        ) {
+                            withAnimation(.snappy) {
+                                if collapsed.contains(group.id) {
+                                    collapsed.remove(group.id)
+                                } else {
+                                    collapsed.insert(group.id)
+                                }
+                            }
+                        }
+                    }
                 }
             }
             .listStyle(.plain)
+            .sheet(item: $filing) { subscription in
+                CategoryPickerSheet(subscription: subscription, categories: categories)
+            }
         }
+    }
+}
+
+private struct GroupHeader: View {
+    let title: String
+    let channelCount: Int
+    let unwatched: Int
+    let isCollapsed: Bool
+    let toggle: () -> Void
+
+    var body: some View {
+        Button(action: toggle) {
+            HStack(spacing: 8) {
+                Image(systemName: "chevron.down")
+                    .font(.caption.weight(.semibold))
+                    .rotationEffect(.degrees(isCollapsed ? -90 : 0))
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                Text("\(channelCount)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if unwatched > 0 {
+                    Text("\(unwatched) new")
+                        .font(.caption.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(.tint)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .textCase(nil)
     }
 }
 
@@ -80,6 +211,70 @@ private struct ChannelRow: View {
             }
         }
         .padding(.vertical, 2)
+    }
+}
+
+/// Manually file one channel. The choice is marked user-set so the classifier
+/// leaves it alone from then on.
+private struct CategoryPickerSheet: View {
+    @Environment(AppServices.self) private var services
+    @Environment(\.dismiss) private var dismiss
+    let subscription: Subscription
+    let categories: [VideoCollection]
+
+    @State private var current: VideoCollection?
+    @State private var error: String?
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    row(title: CategoryManager.uncategorizedName, collection: nil)
+                }
+                Section("Categories") {
+                    ForEach(categories) { category in
+                        row(title: category.name, collection: category)
+                    }
+                }
+                if let error {
+                    Text(error).foregroundStyle(.red).font(.caption)
+                }
+            }
+            .navigationTitle(subscription.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .task {
+                current = try? services.categories.rule(forChannelId: subscription.channelId)?.collection
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func row(title: String, collection: VideoCollection?) -> some View {
+        Button {
+            do {
+                try services.categories.assign(
+                    channelId: subscription.channelId,
+                    channelTitle: subscription.title,
+                    to: collection
+                )
+                dismiss()
+            } catch {
+                self.error = error.localizedDescription
+            }
+        } label: {
+            HStack {
+                Text(title).foregroundStyle(.primary)
+                Spacer()
+                if current === collection {
+                    Image(systemName: "checkmark").foregroundStyle(.tint)
+                }
+            }
+        }
     }
 }
 
