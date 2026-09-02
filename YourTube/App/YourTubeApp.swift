@@ -47,6 +47,7 @@ final class AppServices {
     let quota: QuotaTracker
     let api: YouTubeAPI
     let feed: FeedRefresher
+    let categories: CategoryManager
 
     init(config: AppConfig.Values, modelContext: ModelContext) {
         let auth = AuthController(config: config)
@@ -58,5 +59,9 @@ final class AppServices {
         self.quota = quota
         self.api = api
         self.feed = FeedRefresher(modelContext: modelContext, api: api)
+        self.categories = CategoryManager(
+            modelContext: modelContext,
+            categorizer: ChannelCategorizerFactory.makeSystemCategorizer()
+        )
     }
 }
