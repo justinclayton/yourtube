@@ -8,6 +8,9 @@ struct RootView: View {
             SubscriptionsView()
                 .tabItem { Label("Subscriptions", systemImage: "play.square.stack") }
 
+            ChannelsView()
+                .tabItem { Label("Channels", systemImage: "person.2") }
+
             WatchLaterView()
                 .tabItem { Label("Watch Later", systemImage: "clock") }
 
