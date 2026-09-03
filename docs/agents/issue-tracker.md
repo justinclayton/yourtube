@@ -11,6 +11,16 @@ Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all o
 - **Apply / remove labels**: `gh issue edit <number> --add-label "..."` / `--remove-label "..."`
 - **Close**: `gh issue close <number> --comment "..."`
 
+## Claiming an issue
+
+Open issues an agent may pick up carry `ready-for-agent`. "Take the next issue" means the lowest-numbered open `ready-for-agent` issue with no open blocker. Claiming is the session's first write: swap the label so no other session picks the same one.
+
+```
+gh issue edit <n> --add-label in-progress --remove-label ready-for-agent
+```
+
+Open the PR with `Closes #<n>` in the body; the merge closes the issue and the `in-progress` label goes with it.
+
 Infer the repo from `git remote -v`; `gh` does this automatically when run inside a clone.
 
 ## Pull requests as a triage surface
