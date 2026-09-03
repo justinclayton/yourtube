@@ -20,12 +20,12 @@ struct CategoriesSettingsView: View {
 
     private var channelCountByCategory: [PersistentIdentifier: Int] {
         rules.reduce(into: [:]) { counts, rule in
-            if let c = rule.collection { counts[c.persistentModelID, default: 0] += 1 }
+            for c in rule.collections { counts[c.persistentModelID, default: 0] += 1 }
         }
     }
 
     private var uncategorizedCount: Int {
-        let filed = Set(rules.compactMap { $0.collection == nil ? nil : $0.channelId })
+        let filed = Set(rules.compactMap { $0.collections.isEmpty ? nil : $0.channelId })
         return subscriptions.filter { !filed.contains($0.channelId) }.count
     }
 
@@ -96,8 +96,9 @@ struct CategoriesSettingsView: View {
         } footer: {
             Text("""
             Channels are sorted on-device by Apple's language model from the \
-            channel name, description and recent video titles. Nothing leaves \
-            the phone. Channels you file by hand are never re-sorted.
+            channel name, description and recent video titles, into up to \
+            three categories each. Nothing leaves the phone. Channels you \
+            file by hand are never re-sorted.
             """)
         }
     }
@@ -126,7 +127,7 @@ struct CategoriesSettingsView: View {
         } header: {
             Text("Categories")
         } footer: {
-            Text("Tap to rename. Deleting a category moves its channels to Uncategorized; after adding one, use \"Re-sort all\" to let the model consider it.")
+            Text("Tap to rename. A channel can be in several categories; deleting one drops it from those channels without touching their other categories. After adding a category, use \"Re-sort all\" to let the model consider it.")
         }
     }
 

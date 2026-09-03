@@ -3,7 +3,8 @@ import SwiftData
 import Observation
 
 /// Owns categories (`VideoCollection`) and channel assignments (`ChannelRule`),
-/// and drives the on-device classifier over subscribed channels.
+/// and drives the on-device classifier over subscribed channels. A channel can
+/// carry up to three categories at once.
 ///
 /// Classification is one call per channel, run sequentially in the background;
 /// a few hundred channels take a few minutes on first launch and are then
@@ -48,15 +49,18 @@ final class CategoryManager {
     static let uncategorizedName = "Uncategorized"
 
     /// Bump when the prompt or answer handling changes in a way that should
-    /// give previously-unsure channels another go. Stored in UserDefaults
+    /// give previously-classified channels another go. Stored in UserDefaults
     /// after a completed run; the next launch after a bump widens the
-    /// automatic pass to include unsure channels once.
-    static let classifierVersion = 2
+    /// automatic pass to every non-user-set channel once.
+    ///
+    /// 3: multi-tagging. Channels filed under one category get a chance to
+    /// pick up a second or third.
+    static let classifierVersion = 3
     static let classifierVersionKey = "categories.classifierVersion"
 
     /// Which scope the automatic launch-time pass should use.
     nonisolated static func automaticScope(storedVersion: Int) -> Scope {
-        storedVersion < classifierVersion ? .unassignedAndUnsure : .unassigned
+        storedVersion < classifierVersion ? .allAutomatic : .unassigned
     }
 
     private(set) var status: Status = .idle
@@ -131,17 +135,35 @@ final class CategoryManager {
         try modelContext.save()
     }
 
-    /// Deleting a category un-files its channels rather than deleting anything
-    /// else. Videos are untouched.
+    /// Deleting a category removes it from every rule, leaving the rules'
+    /// other categories in place. Videos are untouched.
     func delete(_ collection: VideoCollection) throws {
-        for rule in try rules() where rule.collection === collection {
-            rule.collection = nil
+        for rule in try rules() where rule.contains(collection) {
+            rule.collections.removeAll { $0 === collection }
         }
         modelContext.delete(collection)
         try modelContext.save()
     }
 
     // MARK: - Assignments
+
+    /// Folds pre-multi-tag rules into the new shape: a channel filed under X
+    /// becomes filed under exactly {X}, keeping its user-set flag. Idempotent
+    /// and cheap when there's nothing left to migrate; run once per launch.
+    @discardableResult
+    func migrateLegacyRules() throws -> Int {
+        var migrated = 0
+        for rule in try rules() {
+            guard let legacy = rule.collection else { continue }
+            if rule.collections.isEmpty {
+                rule.collections = [legacy]
+            }
+            rule.collection = nil
+            migrated += 1
+        }
+        if migrated > 0 { try modelContext.save() }
+        return migrated
+    }
 
     func rules() throws -> [ChannelRule] {
         try modelContext.fetch(FetchDescriptor<ChannelRule>())
@@ -153,25 +175,41 @@ final class CategoryManager {
         )).first
     }
 
-    /// Files a channel by hand. Pass nil to make it Uncategorised. Manual
-    /// choices stick: the classifier never overwrites a user-set rule.
-    func assign(channelId: String, channelTitle: String, to collection: VideoCollection?) throws {
+    /// Files a channel by hand under any number of categories; an empty list
+    /// makes it Uncategorised. Manual choices stick: the classifier never
+    /// overwrites a user-set rule.
+    func assign(channelId: String, channelTitle: String, to collections: [VideoCollection]) throws {
+        let unique = collections.reduce(into: [VideoCollection]()) { acc, c in
+            if !acc.contains(where: { $0 === c }) { acc.append(c) }
+        }
         if let rule = try rule(forChannelId: channelId) {
-            rule.collection = collection
+            rule.collections = unique
             rule.isUserSet = true
             rule.channelTitle = channelTitle
         } else {
             modelContext.insert(ChannelRule(
                 channelId: channelId,
                 channelTitle: channelTitle,
-                collection: collection,
+                collections: unique,
                 isUserSet: true
             ))
         }
         try modelContext.save()
     }
 
-    /// Channel IDs currently filed under a category, or (for nil) under none.
+    /// Adds or removes one category on a channel's rule, keeping the others.
+    /// Marks the rule user-set like `assign`.
+    func toggle(_ collection: VideoCollection, channelId: String, channelTitle: String) throws {
+        var current = try rule(forChannelId: channelId)?.collections ?? []
+        if current.contains(where: { $0 === collection }) {
+            current.removeAll { $0 === collection }
+        } else {
+            current.append(collection)
+        }
+        try assign(channelId: channelId, channelTitle: channelTitle, to: current)
+    }
+
+    /// Channel IDs whose tag set contains a category, or (for nil) is empty.
     /// Used to build feed predicates.
     func channelIds(in collection: VideoCollection?) throws -> [String] {
         let subscriptions = try modelContext.fetch(FetchDescriptor<Subscription>())
@@ -180,9 +218,9 @@ final class CategoryManager {
             uniquingKeysWith: { first, _ in first }
         )
         return subscriptions.map(\.channelId).filter { id in
-            let filed = ruleByChannel[id]?.collection
-            if let collection { return filed === collection }
-            return filed == nil
+            let filed = ruleByChannel[id]?.collections ?? []
+            if let collection { return filed.contains { $0 === collection } }
+            return filed.isEmpty
         }
     }
 
@@ -248,7 +286,7 @@ final class CategoryManager {
                     // channel name or title. One bad channel must not abort
                     // the other six hundred; record it as unsure and carry on.
                     lastRunFailures += 1
-                    guess = CategoryGuess(category: nil, isConfident: false)
+                    guess = .unsure
                 }
                 try apply(guess, to: subscription)
 
@@ -282,7 +320,7 @@ final class CategoryManager {
             if rule.isUserSet { return false }
             switch scope {
             case .unassigned: return false
-            case .unassignedAndUnsure: return rule.collection == nil
+            case .unassignedAndUnsure: return rule.collections.isEmpty
             case .allAutomatic: return true
             }
         }
@@ -305,21 +343,19 @@ final class CategoryManager {
     }
 
     private func apply(_ guess: CategoryGuess, to subscription: Subscription) throws {
-        let collection: VideoCollection? = {
-            guard guess.isConfident, let name = guess.category else { return nil }
-            return try? categories().first { $0.name == name }
-        }()
+        let all = try categories()
+        let collections = guess.categories.compactMap { name in all.first { $0.name == name } }
 
         if let rule = try rule(forChannelId: subscription.channelId) {
             guard !rule.isUserSet else { return }
-            rule.collection = collection
+            rule.collections = collections
             rule.channelTitle = subscription.title
             rule.classifiedAt = .now
         } else {
             modelContext.insert(ChannelRule(
                 channelId: subscription.channelId,
                 channelTitle: subscription.title,
-                collection: collection,
+                collections: collections,
                 isUserSet: false,
                 classifiedAt: .now
             ))

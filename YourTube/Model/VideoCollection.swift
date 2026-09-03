@@ -21,6 +21,12 @@ final class VideoCollection {
     @Relationship(deleteRule: .nullify, inverse: \Video.collection)
     var videos: [Video] = []
 
+    /// Channels filed here. Declared so the relationship is many-to-many:
+    /// without an explicit inverse SwiftData treats `ChannelRule.collections`
+    /// as one-to-many and a category can only belong to a single rule.
+    @Relationship(deleteRule: .nullify, inverse: \ChannelRule.collections)
+    var rules: [ChannelRule] = []
+
     init(
         name: String,
         isUserCreated: Bool = true,
