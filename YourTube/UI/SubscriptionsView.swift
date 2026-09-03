@@ -5,6 +5,7 @@ struct SubscriptionsView: View {
     @Environment(AppServices.self) private var services
     @AppStorage(SettingsKeys.showShorts) private var showShorts = false
     @AppStorage(SettingsKeys.feedCategory) private var feedCategory = ""
+    @AppStorage(SettingsKeys.channelDailyCap) private var channelDailyCap = SettingsKeys.defaultChannelDailyCap
 
     @Query(sort: [SortDescriptor(\VideoCollection.sortOrder), SortDescriptor(\VideoCollection.name)])
     private var categories: [VideoCollection]
@@ -49,7 +50,11 @@ struct SubscriptionsView: View {
                 if !categories.isEmpty {
                     CategoryChips(names: chipNames, selected: selectedCategory)
                 }
-                SubscriptionFeedList(showShorts: showShorts, channelIds: channelFilter)
+                SubscriptionFeedList(
+                    showShorts: showShorts,
+                    channelIds: channelFilter,
+                    channelDailyCap: channelDailyCap
+                )
             }
             .navigationTitle("Subscriptions")
             .toolbar {
@@ -110,8 +115,12 @@ private struct CategoryChips: View {
 private struct SubscriptionFeedList: View {
     @Environment(AppServices.self) private var services
     @Query private var videos: [Video]
+    let channelDailyCap: Int
+    /// Folds the user has opened, keyed by `ChannelDailyCap.key`.
+    @State private var expandedFolds: Set<String> = []
 
-    init(showShorts: Bool, channelIds: [String]?) {
+    init(showShorts: Bool, channelIds: [String]?, channelDailyCap: Int) {
+        self.channelDailyCap = channelDailyCap
         let predicate: Predicate<Video>?
         switch (showShorts, channelIds) {
         case (true, nil):
@@ -137,11 +146,26 @@ private struct SubscriptionFeedList: View {
                 List {
                     ForEach(groupedByDay, id: \.day) { group in
                         Section(group.day.formatted(.dateTime.weekday(.wide).month().day())) {
-                            ForEach(group.videos) { video in
-                                NavigationLink {
-                                    PlayerView(video: video)
-                                } label: {
-                                    VideoRow(video: video)
+                            ForEach(rows(for: group)) { row in
+                                switch row {
+                                case .video(let video):
+                                    NavigationLink {
+                                        PlayerView(video: video)
+                                    } label: {
+                                        VideoRow(video: video)
+                                    }
+                                case .more(let key, let channelTitle, let hidden):
+                                    MoreFromChannelRow(
+                                        channelTitle: channelTitle,
+                                        count: hidden.count,
+                                        isExpanded: expandedFolds.contains(key)
+                                    ) {
+                                        withAnimation {
+                                            if expandedFolds.remove(key) == nil {
+                                                expandedFolds.insert(key)
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -153,6 +177,19 @@ private struct SubscriptionFeedList: View {
         .refreshable { await services.feed.refresh() }
     }
 
+    /// The Shorts filter is already in the `@Query` predicate, so hidden Shorts
+    /// never count against the cap.
+    private func rows(for group: (day: Date, videos: [Video])) -> [FeedRow<Video>] {
+        ChannelDailyCap.apply(
+            group.videos,
+            cap: channelDailyCap,
+            day: group.day,
+            expanded: expandedFolds,
+            channelId: \.channelId,
+            channelTitle: \.channelTitle
+        )
+    }
+
     private var groupedByDay: [(day: Date, videos: [Video])] {
         let calendar = Calendar.current
         let buckets = Dictionary(grouping: videos) {
@@ -161,6 +198,32 @@ private struct SubscriptionFeedList: View {
         return buckets
             .map { (day: $0.key, videos: $0.value) }
             .sorted { $0.day > $1.day }
+    }
+}
+
+/// The "+N more from Channel" fold. Tapping toggles the hidden videos inline.
+private struct MoreFromChannelRow: View {
+    let channelTitle: String
+    let count: Int
+    let isExpanded: Bool
+    let toggle: () -> Void
+
+    var body: some View {
+        Button(action: toggle) {
+            HStack {
+                Text(isExpanded
+                     ? "Hide \(count) more from \(channelTitle)"
+                     : "+\(count) more from \(channelTitle)")
+                    .font(.subheadline)
+                Spacer()
+                Image(systemName: "chevron.down")
+                    .font(.caption.weight(.semibold))
+                    .rotationEffect(.degrees(isExpanded ? 180 : 0))
+            }
+            .foregroundStyle(.secondary)
+            .padding(.vertical, 6)
+        }
+        .buttonStyle(.plain)
     }
 }
 
