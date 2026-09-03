@@ -5,11 +5,14 @@ import SwiftData
 /// channel with several categories is listed under each of them.
 struct ChannelsView: View {
     @AppStorage(SettingsKeys.showShorts) private var showShorts = false
+    /// Local, name-only filter over cached subscriptions; see `LocalSearch`.
+    @State private var searchQuery = ""
 
     var body: some View {
         NavigationStack {
-            ChannelList(showShorts: showShorts)
+            ChannelList(showShorts: showShorts, searchQuery: searchQuery)
                 .navigationTitle("Channels")
+                .searchable(text: $searchQuery, prompt: "Search channels")
         }
     }
 }
@@ -19,8 +22,13 @@ struct ChannelsView: View {
 private struct ChannelList: View {
     @Environment(AppServices.self) private var services
     let showShorts: Bool
+    let searchQuery: String
 
-    @Query(sort: \Subscription.title) private var subscriptions: [Subscription]
+    @Query(sort: \Subscription.title) private var allSubscriptions: [Subscription]
+    /// Subscriptions narrowed by the search field; everything when it's empty.
+    private var subscriptions: [Subscription] {
+        LocalSearch.filter(allSubscriptions, query: searchQuery) { [$0.title] }
+    }
     @Query(sort: [SortDescriptor(\VideoCollection.sortOrder), SortDescriptor(\VideoCollection.name)])
     private var categories: [VideoCollection]
     @Query private var rules: [ChannelRule]
@@ -32,8 +40,9 @@ private struct ChannelList: View {
     @State private var collapsed: Set<String> = []
     @State private var filing: Subscription?
 
-    init(showShorts: Bool) {
+    init(showShorts: Bool, searchQuery: String) {
         self.showShorts = showShorts
+        self.searchQuery = searchQuery
         _unwatched = Query(filter: showShorts
             ? #Predicate<Video> { !$0.isWatched }
             : #Predicate<Video> { !$0.isWatched && !$0.isLikelyShort }
@@ -87,12 +96,14 @@ private struct ChannelList: View {
     }
 
     var body: some View {
-        if subscriptions.isEmpty {
+        if allSubscriptions.isEmpty {
             ContentUnavailableView(
                 "No channels yet",
                 systemImage: "person.2",
                 description: Text("Refresh the Subscriptions tab to pull in your channels.")
             )
+        } else if subscriptions.isEmpty {
+            ContentUnavailableView.search(text: searchQuery)
         } else {
             let unwatchedByChannel = unwatched.reduce(into: [String: Int]()) {
                 $0[$1.channelId, default: 0] += 1

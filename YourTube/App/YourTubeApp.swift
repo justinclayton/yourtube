@@ -10,6 +10,16 @@ struct YourTubeApp: App {
     init() {
         setup = MainActor.assumeIsolated {
             Result {
+                #if DEBUG
+                if DebugFixtures.isRequested {
+                    let container = try DebugFixtures.makeContainer()
+                    let services = AppServices(
+                        config: DebugFixtures.config,
+                        modelContext: container.mainContext
+                    )
+                    return (container, services)
+                }
+                #endif
                 let config = try AppConfig.load()
                 let container = try ModelContainer(
                     for: Video.self, Subscription.self,

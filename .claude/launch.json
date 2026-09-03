@@ -4,8 +4,33 @@
     {
       "name": "yourtube-sim",
       "runtimeExecutable": "xcodebuild",
-      "runtimeArgs": ["-project", "YourTube.xcodeproj", "-scheme", "YourTube", "-destination", "platform=iOS Simulator,id=90AFA528-C804-43DE-A76B-3DAE4C767718", "build"],
+      "runtimeArgs": [
+        "-project",
+        "YourTube.xcodeproj",
+        "-scheme",
+        "YourTube",
+        "-destination",
+        "platform=iOS Simulator,id=90AFA528-C804-43DE-A76B-3DAE4C767718",
+        "build"
+      ],
       "port": 0
+    },
+    {
+      "name": "yourtube-sim-fixtures",
+      "runtimeExecutable": "xcodebuild",
+      "runtimeArgs": [
+        "-project",
+        "YourTube.xcodeproj",
+        "-scheme",
+        "YourTube",
+        "-destination",
+        "platform=iOS Simulator,id=90AFA528-C804-43DE-A76B-3DAE4C767718",
+        "build"
+      ],
+      "port": 0,
+      "launchArgs": [
+        "-seedFixtures"
+      ]
     }
   ]
 }

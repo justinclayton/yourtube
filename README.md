@@ -20,6 +20,7 @@ before you build this.
 | Subscription feed | Works. Fans out across subscribed channels' uploads playlists. |
 | Hiding Shorts | Heuristic, ~95% accurate. There is no `isShort` flag in the API. |
 | Watch Later, watched state | Works, stored **on-device**. YouTube's own Watch Later isn't API-accessible. |
+| Search | Works, **local only**: filters cached titles and channel names on device. The API's search endpoint costs 100 quota units per call, so it isn't used. |
 | Playback | Works, via YouTube's IFrame player. |
 | Background audio | **Not possible.** YouTube kills embedded playback server-side after screen lock. |
 | Picture-in-Picture | Only from native fullscreen. |
@@ -198,6 +199,20 @@ reliably resolve the name; update the `id=` there after creating the device
 
 Agents: pass `device: "YourTube Dev"` when building or launching in the
 simulator.
+
+### Fixture data without a login
+
+Debug builds accept a `-seedFixtures` launch argument. The app then opens an
+in-memory store pre-filled with a few subscriptions, categories, and videos
+(see `DebugFixtures.swift`) and skips `Config.plist`, so it runs signed out
+with the re-auth banner showing. Use it to poke at local-only features such
+as search, category chips, and the daily cap on a fresh simulator, or after
+the weekly token expiry. Nothing touches disk; relaunch without the flag to
+get the real store back.
+
+Xcode: *Product > Scheme > Edit Scheme > Run > Arguments Passed On Launch*.
+Command line: `xcrun simctl launch "YourTube Dev" net.claytons.yourtube -seedFixtures`.
+The `yourtube-sim-fixtures` entry in `.claude/launch.json` carries it.
 
 ## Tests
 
