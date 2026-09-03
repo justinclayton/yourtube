@@ -177,6 +177,28 @@ YourTube/
 YourTubeTests/
 ```
 
+## Development loop
+
+Run and test on **one** simulator, named `YourTube Dev`, and never erase it.
+The refresh token lives in that device's Keychain and the Google web login in
+its cookie jar, so signing in is a weekly one-tap affair rather than a
+password-and-2FA trip on every fresh device. Debug builds keep the Google
+cookies for this reason (`prefersEphemeralWebBrowserSession` is false only
+under `DEBUG`); release builds still isolate the session.
+
+If the device doesn't exist yet:
+
+```sh
+xcrun simctl create "YourTube Dev" "iPhone 17 Pro"
+```
+
+`.claude/launch.json` targets it by UDID because `xcodebuild` doesn't
+reliably resolve the name; update the `id=` there after creating the device
+(`xcrun simctl list devices | grep "YourTube Dev"`).
+
+Agents: pass `device: "YourTube Dev"` when building or launching in the
+simulator.
+
 ## Tests
 
 Run with Cmd-U. Coverage is concentrated where the risk is:
