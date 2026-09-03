@@ -200,6 +200,20 @@ reliably resolve the name; update the `id=` there after creating the device
 Agents: pass `device: "YourTube Dev"` when building or launching in the
 simulator.
 
+### Fixture data without a login
+
+Debug builds accept a `-seedFixtures` launch argument. The app then opens an
+in-memory store pre-filled with a few subscriptions, categories, and videos
+(see `DebugFixtures.swift`) and skips `Config.plist`, so it runs signed out
+with the re-auth banner showing. Use it to poke at local-only features such
+as search, category chips, and the daily cap on a fresh simulator, or after
+the weekly token expiry. Nothing touches disk; relaunch without the flag to
+get the real store back.
+
+Xcode: *Product > Scheme > Edit Scheme > Run > Arguments Passed On Launch*.
+Command line: `xcrun simctl launch "YourTube Dev" net.claytons.yourtube -seedFixtures`.
+The `yourtube-sim-fixtures` entry in `.claude/launch.json` carries it.
+
 ## Tests
 
 Run with Cmd-U. Coverage is concentrated where the risk is:
