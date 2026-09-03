@@ -12,6 +12,11 @@ final class VideoCollection {
     var isUserCreated: Bool
     var createdAt: Date
     var sortOrder: Int
+    /// The one built-in, hand-assigned tag ("Priority"). Exactly one collection
+    /// carries this. It sits first in every list, the classifier never sees
+    /// it, and it can't be renamed or deleted. Stored with a default so
+    /// existing stores open without a migration.
+    var isPriority: Bool = false
 
     /// Mean embedding vector of member videos. Nil until the first assignment.
     var centroid: [Double]?
@@ -31,6 +36,7 @@ final class VideoCollection {
         name: String,
         isUserCreated: Bool = true,
         sortOrder: Int = 0,
+        isPriority: Bool = false,
         centroid: [Double]? = nil,
         centroidSampleCount: Int = 0
     ) {
@@ -38,6 +44,7 @@ final class VideoCollection {
         self.isUserCreated = isUserCreated
         self.createdAt = .now
         self.sortOrder = sortOrder
+        self.isPriority = isPriority
         self.centroid = centroid
         self.centroidSampleCount = centroidSampleCount
     }

@@ -19,7 +19,7 @@ Open issues an agent may pick up carry `ready-for-agent`. "Take the next issue" 
 gh issue edit <n> --add-label in-progress --remove-label ready-for-agent
 ```
 
-Open the PR with `Closes #<n>` in the body; the merge closes the issue and the `in-progress` label goes with it.
+Name the working branch `claude/issue-<n>` after the issue number. Open the PR with `Closes #<n>` in the body; the merge closes the issue and the `in-progress` label goes with it.
 
 Infer the repo from `git remote -v`; `gh` does this automatically when run inside a clone.
 

@@ -2,7 +2,8 @@ import SwiftUI
 import SwiftData
 
 /// Browse the feed one subscribed channel at a time, grouped by category. A
-/// channel with several categories is listed under each of them.
+/// channel with several categories is listed under each of them; Priority is
+/// the first group.
 struct ChannelsView: View {
     @AppStorage(SettingsKeys.showShorts) private var showShorts = false
     /// Local, name-only filter over cached subscriptions; see `LocalSearch`.
@@ -39,6 +40,11 @@ private struct ChannelList: View {
 
     @State private var collapsed: Set<String> = []
     @State private var filing: Subscription?
+    @State private var priorityError: String?
+
+    private var priorityChannelIds: Set<String> {
+        Set(rules.filter(\.isPriority).map(\.channelId))
+    }
 
     init(showShorts: Bool, searchQuery: String) {
         self.showShorts = showShorts
@@ -61,17 +67,17 @@ private struct ChannelList: View {
         let unwatchedByChannel = unwatched.reduce(into: [String: Int]()) {
             $0[$1.channelId, default: 0] += 1
         }
-        let collectionsByChannel = rules.reduce(into: [String: [VideoCollection]]()) {
-            if !$1.collections.isEmpty { $0[$1.channelId] = $1.collections }
-        }
+        let ruleByChannel = Dictionary(rules.map { ($0.channelId, $0) }, uniquingKeysWith: { first, _ in first })
         var byCollection: [PersistentIdentifier: [Subscription]] = [:]
         var uncategorized: [Subscription] = []
         for sub in subscriptions {
-            if let filed = collectionsByChannel[sub.channelId] {
-                for c in filed {
-                    byCollection[c.persistentModelID, default: []].append(sub)
-                }
-            } else {
+            let rule = ruleByChannel[sub.channelId]
+            for c in rule?.collections ?? [] {
+                byCollection[c.persistentModelID, default: []].append(sub)
+            }
+            // Priority says nothing about topic, so a priority-only channel
+            // is still listed here for filing.
+            if rule?.topicCollections.isEmpty ?? true {
                 uncategorized.append(sub)
             }
         }
@@ -139,11 +145,14 @@ private struct ChannelList: View {
                                         Label("Categories", systemImage: "folder")
                                     }
                                     .tint(.indigo)
+                                    priorityButton(for: subscription)
+                                        .tint(.orange)
                                 }
                                 .contextMenu {
                                     Button("Categories…", systemImage: "folder") {
                                         filing = subscription
                                     }
+                                    priorityButton(for: subscription)
                                 }
                             }
                         }
@@ -169,6 +178,37 @@ private struct ChannelList: View {
             .sheet(item: $filing) { subscription in
                 CategoryPickerSheet(subscription: subscription, categories: categories)
             }
+            .alert("Couldn't update priority", isPresented: Binding(
+                get: { priorityError != nil },
+                set: { if !$0 { priorityError = nil } }
+            )) {
+                Button("OK", role: .cancel) { priorityError = nil }
+            } message: {
+                Text(priorityError ?? "")
+            }
+        }
+    }
+
+    /// One tap in or out of Priority. Separate from the category picker
+    /// because it's the action taken most, and it shouldn't lock the
+    /// channel's topics against the classifier the way manual filing does.
+    private func priorityButton(for subscription: Subscription) -> some View {
+        let isPriority = priorityChannelIds.contains(subscription.channelId)
+        return Button {
+            do {
+                try services.categories.setPriority(
+                    !isPriority,
+                    channelId: subscription.channelId,
+                    channelTitle: subscription.title
+                )
+            } catch {
+                priorityError = error.localizedDescription
+            }
+        } label: {
+            Label(
+                isPriority ? "Remove priority" : "Mark as priority",
+                systemImage: isPriority ? "star.slash" : "star"
+            )
         }
     }
 }
@@ -230,9 +270,10 @@ private struct ChannelRow: View {
     }
 }
 
-/// Manually file one channel under any number of categories. Each toggle
-/// saves immediately and marks the rule user-set so the classifier leaves it
-/// alone from then on.
+/// Manually file one channel under any number of categories. Each topic
+/// toggle saves immediately and marks the rule user-set so the classifier
+/// leaves it alone from then on. Priority has its own switch: flipping it
+/// doesn't lock the topics.
 private struct CategoryPickerSheet: View {
     @Environment(AppServices.self) private var services
     @Environment(\.dismiss) private var dismiss
@@ -240,11 +281,23 @@ private struct CategoryPickerSheet: View {
     let categories: [VideoCollection]
 
     @State private var selected: Set<PersistentIdentifier> = []
+    @State private var isPriority = false
     @State private var error: String?
+
+    private var topicCategories: [VideoCollection] { categories.filter { !$0.isPriority } }
 
     var body: some View {
         NavigationStack {
             List {
+                if categories.contains(where: \.isPriority) {
+                    Section {
+                        Toggle(isOn: priorityBinding) {
+                            Label(CategoryManager.priorityName, systemImage: "star")
+                        }
+                    } footer: {
+                        Text("For the few channels you never want to miss. Set by hand only; automatic sorting never changes it.")
+                    }
+                }
                 Section {
                     Button {
                         save([])
@@ -259,7 +312,7 @@ private struct CategoryPickerSheet: View {
                     }
                 }
                 Section {
-                    ForEach(categories) { category in
+                    ForEach(topicCategories) { category in
                         Toggle(isOn: binding(for: category)) {
                             Text(category.name)
                         }
@@ -281,11 +334,27 @@ private struct CategoryPickerSheet: View {
                 }
             }
             .task {
-                let current = (try? services.categories.rule(forChannelId: subscription.channelId)?.collections) ?? []
-                selected = Set(current.map(\.persistentModelID))
+                let rule = try? services.categories.rule(forChannelId: subscription.channelId)
+                selected = Set((rule?.topicCollections ?? []).map(\.persistentModelID))
+                isPriority = rule?.isPriority ?? false
             }
         }
         .presentationDetents([.medium, .large])
+    }
+
+    private var priorityBinding: Binding<Bool> {
+        Binding(
+            get: { isPriority },
+            set: { isOn in
+                do {
+                    try services.categories.setPriority(isOn, channelId: subscription.channelId, channelTitle: subscription.title)
+                    isPriority = isOn
+                    error = nil
+                } catch {
+                    self.error = error.localizedDescription
+                }
+            }
+        )
     }
 
     private func binding(for category: VideoCollection) -> Binding<Bool> {
@@ -304,7 +373,7 @@ private struct CategoryPickerSheet: View {
             try services.categories.assign(
                 channelId: subscription.channelId,
                 channelTitle: subscription.title,
-                to: categories.filter { ids.contains($0.persistentModelID) }
+                to: topicCategories.filter { ids.contains($0.persistentModelID) }
             )
             selected = ids
             error = nil

@@ -30,18 +30,19 @@ struct SubscriptionsView: View {
     }
 
     /// Channel IDs the feed should be limited to, or nil for everything.
-    /// A channel appears under every category it carries.
+    /// A channel appears under every category it carries, Priority included.
+    /// Uncategorized means no topic category, so a priority-only channel is
+    /// still there to be filed.
     private var channelFilter: [String]? {
         let feedCategory = selectedCategory.wrappedValue
         guard !feedCategory.isEmpty else { return nil }
-        let filedIn = rules.reduce(into: [String: Set<String>]()) { map, rule in
-            let names = Set(rule.collections.map(\.name))
-            if !names.isEmpty { map[rule.channelId] = names }
-        }
         if feedCategory == CategoryManager.uncategorizedName {
-            return subscriptions.map(\.channelId).filter { filedIn[$0] == nil }
+            let filed = Set(rules.filter { !$0.topicCollections.isEmpty }.map(\.channelId))
+            return subscriptions.map(\.channelId).filter { !filed.contains($0) }
         }
-        return filedIn.filter { $0.value.contains(feedCategory) }.map(\.key)
+        return rules
+            .filter { rule in rule.collections.contains { $0.name == feedCategory } }
+            .map(\.channelId)
     }
 
     /// Subscribed channels whose name matches the query, within the current
@@ -91,6 +92,8 @@ struct SubscriptionsView: View {
 /// Horizontal row of category filters above the feed. "All" (empty selection)
 /// is one chip among the rest; the row scrolls the remembered chip into view
 /// on launch so a restored selection is visible, not off to the right.
+/// Priority comes first by sort order. It gets no badge or count on purpose:
+/// the chip is meant to be a calm place, not a to-do list.
 private struct CategoryChips: View {
     let names: [String]
     @Binding var selected: String
