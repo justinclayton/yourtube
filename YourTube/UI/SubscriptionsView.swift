@@ -12,9 +12,24 @@ struct SubscriptionsView: View {
     @Query private var rules: [ChannelRule]
     @Query private var subscriptions: [Subscription]
 
+    private var chipNames: [String] {
+        categories.map(\.name) + [CategoryManager.uncategorizedName]
+    }
+
+    /// The remembered chip, or "All" (empty) if that category has since been
+    /// deleted. Falling back rather than showing an empty feed means a stale
+    /// selection never greets the user with nothing on launch.
+    private var selectedCategory: Binding<String> {
+        Binding(
+            get: { chipNames.contains(feedCategory) ? feedCategory : "" },
+            set: { feedCategory = $0 }
+        )
+    }
+
     /// Channel IDs the feed should be limited to, or nil for everything.
     /// A channel appears under every category it carries.
     private var channelFilter: [String]? {
+        let feedCategory = selectedCategory.wrappedValue
         guard !feedCategory.isEmpty else { return nil }
         let filedIn = rules.reduce(into: [String: Set<String>]()) { map, rule in
             let names = Set(rule.collections.map(\.name))
@@ -23,9 +38,6 @@ struct SubscriptionsView: View {
         if feedCategory == CategoryManager.uncategorizedName {
             return subscriptions.map(\.channelId).filter { filedIn[$0] == nil }
         }
-        // A category that has since been deleted shows an empty feed rather
-        // than silently falling back to everything; the chip row makes it
-        // obvious and one tap fixes it.
         return filedIn.filter { $0.value.contains(feedCategory) }.map(\.key)
     }
 
@@ -36,10 +48,7 @@ struct SubscriptionsView: View {
                     ReauthBanner()
                 }
                 if !categories.isEmpty {
-                    CategoryChips(
-                        names: categories.map(\.name) + [CategoryManager.uncategorizedName],
-                        selected: $feedCategory
-                    )
+                    CategoryChips(names: chipNames, selected: selectedCategory)
                 }
                 SubscriptionFeedList(
                     showShorts: showShorts,
@@ -61,23 +70,30 @@ struct SubscriptionsView: View {
     }
 }
 
-/// Horizontal row of category filters above the feed. "All" clears it.
+/// Horizontal row of category filters above the feed. "All" (empty selection)
+/// is one chip among the rest; the row scrolls the remembered chip into view
+/// on launch so a restored selection is visible, not off to the right.
 private struct CategoryChips: View {
     let names: [String]
     @Binding var selected: String
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                chip("All", isOn: selected.isEmpty) { selected = "" }
-                ForEach(names, id: \.self) { name in
-                    chip(name, isOn: selected == name) {
-                        selected = selected == name ? "" : name
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    chip("All", isOn: selected.isEmpty) { selected = "" }
+                        .id("")
+                    ForEach(names, id: \.self) { name in
+                        chip(name, isOn: selected == name) {
+                            selected = selected == name ? "" : name
+                        }
+                        .id(name)
                     }
                 }
+                .padding(.horizontal)
+                .padding(.vertical, 8)
             }
-            .padding(.horizontal)
-            .padding(.vertical, 8)
+            .onAppear { proxy.scrollTo(selected, anchor: .center) }
         }
     }
 
