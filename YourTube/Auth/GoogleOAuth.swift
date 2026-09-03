@@ -122,9 +122,15 @@ final class GoogleOAuth: NSObject {
                 continuation.resume(returning: callbackURL)
             }
             authSession.presentationContextProvider = self
-            // Don't reuse Safari's cookies — keeps the app's session separate
-            // from whatever Google account is signed in on the web.
+            // Release: don't reuse Safari's cookies, so the app's session stays
+            // separate from whatever Google account is signed in on the web.
+            // Debug: keep them, so re-auth in the simulator is a tap on the
+            // remembered account instead of a full password + 2FA round trip.
+            #if DEBUG
+            authSession.prefersEphemeralWebBrowserSession = false
+            #else
             authSession.prefersEphemeralWebBrowserSession = true
+            #endif
             authSession.start()
         }
     }
