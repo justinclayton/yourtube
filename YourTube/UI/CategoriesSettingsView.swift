@@ -25,7 +25,7 @@ struct CategoriesSettingsView: View {
     }
 
     private var uncategorizedCount: Int {
-        let filed = Set(rules.compactMap { $0.collections.isEmpty ? nil : $0.channelId })
+        let filed = Set(rules.compactMap { $0.topicCollections.isEmpty ? nil : $0.channelId })
         return subscriptions.filter { !filed.contains($0.channelId) }.count
     }
 
@@ -106,15 +106,28 @@ struct CategoriesSettingsView: View {
     private var categoriesSection: some View {
         Section {
             ForEach(categories) { category in
-                Button {
-                    renaming = category
-                    renameText = category.name
-                } label: {
-                    LabeledContent(category.name) {
+                if category.isPriority {
+                    // Built in: no rename, no delete. Shown so the count is
+                    // visible and the list matches the chip row.
+                    LabeledContent {
                         Text("\(channelCountByCategory[category.persistentModelID] ?? 0)")
                             .monospacedDigit()
+                    } label: {
+                        Label(category.name, systemImage: "star")
+                        Text("Hand-picked. Never sorted automatically.")
                     }
-                    .foregroundStyle(.primary)
+                    .deleteDisabled(true)
+                } else {
+                    Button {
+                        renaming = category
+                        renameText = category.name
+                    } label: {
+                        LabeledContent(category.name) {
+                            Text("\(channelCountByCategory[category.persistentModelID] ?? 0)")
+                                .monospacedDigit()
+                        }
+                        .foregroundStyle(.primary)
+                    }
                 }
             }
             .onDelete(perform: delete)

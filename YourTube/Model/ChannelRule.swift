@@ -10,7 +10,12 @@ import SwiftData
 /// classifier (`isUserSet == false`) or by the user filing a channel by hand
 /// (`isUserSet == true`, never overwritten automatically).
 ///
-/// A rule with empty `collections` and a `classifiedAt` date means the
+/// The built-in Priority tag rides alongside the topic categories in
+/// `collections`: it's set only by hand, and the classifier preserves it
+/// while rewriting the topics. "Uncategorised" means no *topic* category, so
+/// a priority-only channel still shows up there for filing.
+///
+/// A rule with no topic categories and a `classifiedAt` date means the
 /// classifier ran but produced nothing usable, so the channel stays
 /// Uncategorised rather than being filed somewhere wrong.
 @Model
@@ -48,6 +53,17 @@ final class ChannelRule {
     /// Whether the channel is filed under `collection`.
     func contains(_ collection: VideoCollection) -> Bool {
         collections.contains { $0 === collection }
+    }
+
+    /// Whether the channel carries the built-in Priority tag.
+    var isPriority: Bool {
+        collections.contains { $0.isPriority }
+    }
+
+    /// The categories the classifier is responsible for: everything except
+    /// Priority. Empty means Uncategorised.
+    var topicCollections: [VideoCollection] {
+        collections.filter { !$0.isPriority }
     }
 
     /// Category names, in the list's display order.

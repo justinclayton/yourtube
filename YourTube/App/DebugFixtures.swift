@@ -60,7 +60,7 @@ enum DebugFixtures {
             ("Straße walk in Kreuzberg", 12, 2400, false),
             ("Späti tour", 13, 60, true),
         ]),
-        Channel(id: "UC-nasa", title: "NASA", categories: ["Science & Explainers"], videos: [
+        Channel(id: "UC-nasa", title: "NASA", categories: ["Priority", "Science & Explainers"], videos: [
             ("Artemis III launch briefing", 1, 5400, false),
             ("Mars weather this week", 2, 300, false),
             ("Space station timelapse", 4, 240, false),
@@ -79,6 +79,13 @@ enum DebugFixtures {
             }
         )
         collections.values.forEach(context.insert)
+        let priority = VideoCollection(
+            name: CategoryManager.priorityName,
+            isUserCreated: false,
+            sortOrder: CategoryManager.prioritySortOrder,
+            isPriority: true
+        )
+        context.insert(priority)
 
         for channel in channels {
             context.insert(Subscription(
@@ -86,7 +93,9 @@ enum DebugFixtures {
                 title: channel.title,
                 channelDescription: "Fixture channel for \(channel.title)."
             ))
-            let filed = channel.categories.compactMap { collections[$0] }
+            let filed = channel.categories.compactMap { name in
+                name == CategoryManager.priorityName ? priority : collections[name]
+            }
             if !filed.isEmpty {
                 context.insert(ChannelRule(
                     channelId: channel.id,

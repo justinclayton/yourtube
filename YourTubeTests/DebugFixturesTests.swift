@@ -12,10 +12,14 @@ final class DebugFixturesTests: XCTestCase {
         XCTAssertGreaterThan(try context.fetchCount(FetchDescriptor<Subscription>()), 0)
         XCTAssertGreaterThan(try context.fetchCount(FetchDescriptor<ChannelRule>()), 0)
         XCTAssertGreaterThan(try context.fetchCount(FetchDescriptor<Video>()), 0)
+        // The defaults plus the built-in Priority tag.
         XCTAssertEqual(
             try context.fetchCount(FetchDescriptor<VideoCollection>()),
-            CategoryManager.defaultCategoryNames.count
+            CategoryManager.defaultCategoryNames.count + 1
         )
+        let priority = try context.fetch(FetchDescriptor<VideoCollection>()).filter(\.isPriority)
+        XCTAssertEqual(priority.count, 1)
+        XCTAssertTrue(priority.first?.rules.isEmpty == false, "a fixture channel is marked Priority")
     }
 
     func testSearchOverFixturesFindsChannelAndVideosByDiacriticFreeQuery() throws {

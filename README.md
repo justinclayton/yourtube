@@ -154,6 +154,18 @@ calm.
   classifier over every non-user-set channel once, which is how channels filed
   under a single category before multi-tagging pick up their extra tags.
 
+### Priority
+
+One tag is built in and hand-assigned only: **Priority**, for the handful of
+channels you never want to miss. It's pinned first in the chip row and can't
+be renamed or deleted. The classifier never sees it, so it's never assigned
+automatically and "Re-sort all" never removes it; it rides alongside a
+channel's topic categories, so a channel can be both Priority and Comedy and
+shows under both chips. Mark or unmark a channel from the swipe or long-press
+menu in Channels. Marking a channel Priority doesn't count as filing it by
+hand, so the model still sorts its topics. The chip shows no count or unread
+badge on purpose.
+
 Requires iOS 26 and a device that supports Apple Intelligence (iPhone 15 Pro or
 later). Elsewhere the feature degrades to manual filing only. The classifier's
 self-reported confidence turned out to be noise — it hedged on more than half

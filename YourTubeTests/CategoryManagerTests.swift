@@ -51,7 +51,138 @@ final class CategoryManagerTests: XCTestCase {
         let manager = makeManager(nil)
         manager.seedDefaultCategoriesIfNeeded()
         let names = try manager.categories().map(\.name)
-        XCTAssertEqual(names, CategoryManager.defaultCategoryNames)
+        XCTAssertEqual(names, [CategoryManager.priorityName] + CategoryManager.defaultCategoryNames)
+        XCTAssertEqual(try manager.topicCategories().map(\.name), CategoryManager.defaultCategoryNames)
+    }
+
+    // MARK: - Priority
+
+    func testPriorityIsSeededFirstAndNotUserCreated() throws {
+        let manager = makeManager(nil)
+        let priority = try XCTUnwrap(manager.priorityCategory())
+        XCTAssertEqual(try manager.categories().first?.name, CategoryManager.priorityName)
+        XCTAssertFalse(priority.isUserCreated)
+        XCTAssertEqual(try manager.categories().filter(\.isPriority).count, 1)
+    }
+
+    /// A store from before the Priority tag existed has its defaults but no
+    /// Priority; the next launch adds it without re-seeding the rest.
+    func testPriorityIsAddedToExistingStore() throws {
+        context.insert(VideoCollection(name: "Cars", isUserCreated: false, sortOrder: 0))
+        context.insert(VideoCollection(name: "Mine", isUserCreated: true, sortOrder: 1))
+        try context.save()
+        let manager = makeManager(nil)
+        XCTAssertEqual(try manager.categories().map(\.name), [CategoryManager.priorityName, "Cars", "Mine"])
+    }
+
+    func testUserMadePriorityCategoryIsPromotedNotDuplicated() throws {
+        context.insert(VideoCollection(name: "priority", isUserCreated: true, sortOrder: 5))
+        try context.save()
+        let manager = makeManager(nil)
+        let priorities = try manager.categories().filter(\.isPriority)
+        XCTAssertEqual(priorities.count, 1)
+        XCTAssertEqual(priorities.first?.name, "priority")
+        XCTAssertEqual(try manager.categories().first?.isPriority, true)
+    }
+
+    func testPriorityCannotBeRenamedOrDeleted() throws {
+        let manager = makeManager(nil)
+        let priority = try XCTUnwrap(manager.priorityCategory())
+        XCTAssertThrowsError(try manager.rename(priority, to: "Favourites"))
+        XCTAssertThrowsError(try manager.delete(priority))
+        XCTAssertEqual(priority.name, CategoryManager.priorityName)
+        XCTAssertNotNil(try manager.priorityCategory())
+    }
+
+    func testClassifierNeverSeesPriority() async throws {
+        final class Recorder: ChannelCategorizer, @unchecked Sendable {
+            var seen: [String] = []
+            func categorize(_ channel: ChannelDescriptor, among categories: [String]) async throws -> CategoryGuess {
+                seen = categories
+                return CategoryGuess(categories: [CategoryManager.priorityName, "Cars"])
+            }
+        }
+        let recorder = Recorder()
+        let manager = makeManager(recorder)
+        let sub = subscribe("Sneaky")
+
+        await manager.classify(scope: .unassigned)
+
+        XCTAssertFalse(recorder.seen.contains(CategoryManager.priorityName))
+        XCTAssertEqual(try manager.rule(forChannelId: sub.channelId)?.collections.map(\.name), ["Cars"],
+                       "an off-list Priority answer is dropped, never assigned")
+    }
+
+    func testSetPriorityTogglesTagWithoutLockingTopics() async throws {
+        let stub = StubCategorizer(answers: ["Fresh": guess("Cars")])
+        let manager = makeManager(stub)
+        let sub = subscribe("Fresh")
+
+        try manager.setPriority(true, channelId: sub.channelId, channelTitle: sub.title)
+        var rule = try XCTUnwrap(manager.rule(forChannelId: sub.channelId))
+        XCTAssertTrue(rule.isPriority)
+        XCTAssertFalse(rule.isUserSet, "priority alone doesn't count as manual filing")
+        XCTAssertTrue(try manager.isPriority(channelId: sub.channelId))
+
+        // The launch-time pass still files a priority-only channel.
+        await manager.classify(scope: .unassigned)
+        rule = try XCTUnwrap(manager.rule(forChannelId: sub.channelId))
+        XCTAssertEqual(Set(rule.collections.map(\.name)), [CategoryManager.priorityName, "Cars"])
+
+        try manager.setPriority(false, channelId: sub.channelId, channelTitle: sub.title)
+        rule = try XCTUnwrap(manager.rule(forChannelId: sub.channelId))
+        XCTAssertEqual(rule.collections.map(\.name), ["Cars"])
+        XCTAssertFalse(try manager.isPriority(channelId: sub.channelId))
+    }
+
+    func testResortKeepsPriorityAndReplacesTopics() async throws {
+        var stub = StubCategorizer(answers: ["Keep": guess("Cars")])
+        let manager = makeManager(stub)
+        let sub = subscribe("Keep")
+        await manager.classify(scope: .unassigned)
+        try manager.setPriority(true, channelId: sub.channelId, channelTitle: sub.title)
+
+        stub.answers["Keep"] = guess("Food")
+        let manager2 = CategoryManager(modelContext: context, categorizer: stub)
+        await manager2.classify(scope: .allAutomatic)
+
+        let rule = try XCTUnwrap(manager2.rule(forChannelId: sub.channelId))
+        XCTAssertEqual(Set(rule.collections.map(\.name)), [CategoryManager.priorityName, "Food"])
+    }
+
+    func testManualFilingKeepsPriority() throws {
+        let manager = makeManager(nil)
+        let sub = subscribe("Manual")
+        let comedy = try XCTUnwrap(manager.categories().first { $0.name == "Comedy" })
+        try manager.setPriority(true, channelId: sub.channelId, channelTitle: sub.title)
+
+        try manager.assign(channelId: sub.channelId, channelTitle: sub.title, to: [comedy])
+        var rule = try XCTUnwrap(manager.rule(forChannelId: sub.channelId))
+        XCTAssertEqual(Set(rule.collections.map(\.name)), [CategoryManager.priorityName, "Comedy"])
+        XCTAssertTrue(rule.isUserSet)
+
+        // Filing as Uncategorised clears topics, not Priority.
+        try manager.assign(channelId: sub.channelId, channelTitle: sub.title, to: [])
+        rule = try XCTUnwrap(manager.rule(forChannelId: sub.channelId))
+        XCTAssertEqual(rule.collections.map(\.name), [CategoryManager.priorityName])
+        XCTAssertTrue(rule.topicCollections.isEmpty)
+    }
+
+    /// Priority and Comedy at once: the channel is under both chips, and a
+    /// priority-only channel still counts as Uncategorised for filing.
+    func testPriorityChannelAppearsUnderBothChips() throws {
+        let manager = makeManager(nil)
+        let both = subscribe("Both")
+        let onlyPriority = subscribe("OnlyPriority")
+        let comedy = try XCTUnwrap(manager.categories().first { $0.name == "Comedy" })
+        let priority = try XCTUnwrap(manager.priorityCategory())
+        try manager.assign(channelId: both.channelId, channelTitle: both.title, to: [comedy])
+        try manager.setPriority(true, channelId: both.channelId, channelTitle: both.title)
+        try manager.setPriority(true, channelId: onlyPriority.channelId, channelTitle: onlyPriority.title)
+
+        XCTAssertEqual(Set(try manager.channelIds(in: priority)), Set([both.channelId, onlyPriority.channelId]))
+        XCTAssertEqual(try manager.channelIds(in: comedy), [both.channelId])
+        XCTAssertEqual(try manager.channelIds(in: nil), [onlyPriority.channelId])
     }
 
     // MARK: - Classification
