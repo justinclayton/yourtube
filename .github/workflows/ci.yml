@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Agent sessions push often; drop superseded runs rather than queueing them
+# behind each other on the (expensive) macOS runners.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Config.plist is per-install and gitignored; this is the backstop for a
+  # `git add -f` or a gitignore edit letting it through.
+  config-leak:
+    name: No committed Config.plist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail if Config.plist is tracked
+        run: |
+          if git ls-files --error-unmatch YourTube/Resources/Config.plist >/dev/null 2>&1; then
+            echo "::error file=YourTube/Resources/Config.plist::Config.plist is tracked; it is per-install and must stay untracked (see README)."
+            exit 1
+          fi
+          echo "Config.plist is not tracked."
+
+  test:
+    name: Build and test (iOS Simulator)
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      # No signing needed for simulator builds, and the runner has no team cert.
+      CODE_SIGNING_ALLOWED: "NO"
+      DEVELOPER_DIR: /Applications/Xcode.app
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen and xcbeautify
+        run: brew install xcodegen xcbeautify
+
+      # The .xcodeproj is gitignored, so Package.resolved is generated too;
+      # key the SPM cache on the file that declares the dependencies.
+      - name: Cache Swift packages
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData/**/SourcePackages
+          key: spm-${{ runner.os }}-${{ hashFiles('project.yml') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Pick a simulator
+        id: sim
+        run: |
+          # Use whatever iPhone the runner's iOS runtime offers; pin nothing
+          # so Xcode/runtime bumps on the runner image don't break CI.
+          name=$(xcrun simctl list devices available -j \
+            | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["name"] for r,v in d.items() if "iOS" in r for x in v if x["name"].startswith("iPhone")))')
+          echo "Using simulator: $name"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - name: Build and test
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project YourTube.xcodeproj \
+            -scheme YourTube \
+            -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.name }}" \
+            -resultBundlePath TestResults.xcresult \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcbeautify --renderer github-actions
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TestResults.xcresult
+          path: TestResults.xcresult
