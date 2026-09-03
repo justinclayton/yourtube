@@ -187,6 +187,8 @@ Run with Cmd-U. Coverage is concentrated where the risk is:
   the daily quota.
 - `CategoryManagerTests` — rule migration, multi-answer resolution, and the
   "contains" feed predicate, against a stub classifier.
+- `ChannelDailyCapTests` — the per-channel daily cap that folds a prolific
+  channel's extra uploads into a "+N more" row.
 - `ISO8601DurationTests`, `PKCETests`, `SubscriptionTests`.
 
 **The Shorts corpus is synthetic.** The cases in

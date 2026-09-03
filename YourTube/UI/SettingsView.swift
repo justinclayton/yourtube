@@ -5,12 +5,16 @@ enum SettingsKeys {
     static let showShorts = "settings.showShorts"
     /// Name of the category the Subscriptions feed is filtered to; empty = all.
     static let feedCategory = "settings.feedCategory"
+    /// Max videos per channel per day before the rest fold into "+N more"; 0 = off.
+    static let channelDailyCap = "settings.channelDailyCap"
+    static let defaultChannelDailyCap = 2
 }
 
 struct SettingsView: View {
     @Environment(AppServices.self) private var services
     @Environment(\.modelContext) private var modelContext
     @AppStorage(SettingsKeys.showShorts) private var showShorts = false
+    @AppStorage(SettingsKeys.channelDailyCap) private var channelDailyCap = SettingsKeys.defaultChannelDailyCap
 
     @Query private var subscriptions: [Subscription]
     @Query private var videos: [Video]
@@ -44,6 +48,12 @@ struct SettingsView: View {
 
                 Section {
                     Toggle("Show Shorts", isOn: $showShorts)
+                    Stepper(value: $channelDailyCap, in: 0...10) {
+                        LabeledContent(
+                            "Per-channel daily cap",
+                            value: channelDailyCap == 0 ? "Off" : "\(channelDailyCap)"
+                        )
+                    }
                     NavigationLink("Categories") {
                         CategoriesSettingsView()
                     }
@@ -56,6 +66,10 @@ struct SettingsView: View {
                     if it's tagged #shorts or its thumbnail shows vertical video. \
                     Turn this on if \
                     something you wanted got filtered out.
+
+                    The daily cap folds a channel's extra uploads on a given day \
+                    into a single "+N more" row so one prolific channel can't \
+                    crowd out the rest.
                     """)
                 }
 
