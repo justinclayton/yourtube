@@ -228,6 +228,9 @@ The `yourtube-sim-fixtures` entry in `.claude/launch.json` carries it.
 Run with Cmd-U. Coverage is concentrated where the risk is:
 
 - `ShortsHeuristicTests` — the only component that guesses.
+- `FeedRefresherTests` — a refresh against stubbed API and thumbnail
+  responses. Pins that a new video never reaches the store before its Shorts
+  verdict, since the feed observes the store live.
 - `YouTubeAPITests` — pagination, batching, and error classification, against
   stubbed responses. Pagination gets attention because a loop there would burn
   the daily quota.

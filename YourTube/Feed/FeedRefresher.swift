@@ -230,11 +230,19 @@ final class FeedRefresher {
                 thumbnailWidth: thumbnail?.width,
                 thumbnailHeight: thumbnail?.height
             )
-            modelContext.insert(video)
             pending.append((video, signals))
         }
 
+        // Classify before inserting. The feed's `@Query` watches the main
+        // context live, and classification suspends on thumbnail downloads,
+        // so a video inserted first would show up in the feed with the
+        // default `isLikelyShort = false` and then vanish once its verdict
+        // landed. Holding the insert until the verdict is known means a Short
+        // is hidden from its first appearance.
         await classify(pending)
+        for (video, _) in pending {
+            modelContext.insert(video)
+        }
         try modelContext.save()
     }
 
