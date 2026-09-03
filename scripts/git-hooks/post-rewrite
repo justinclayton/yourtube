@@ -1,0 +1,5 @@
+#!/bin/sh
+# Runs after `git pull --rebase` / `git rebase` / `git commit --amend`.
+# stdin lists "old-sha new-sha" pairs; compare the range as a whole.
+[ "$1" = "rebase" ] || exit 0
+exec "$(dirname "$0")/regenerate-project.sh" ORIG_HEAD HEAD
