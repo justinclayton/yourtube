@@ -12,6 +12,9 @@ struct SubscriptionsView: View {
     @Query private var rules: [ChannelRule]
     @Query private var subscriptions: [Subscription]
 
+    /// Local search over the cached store. Never hits the API; see `LocalSearch`.
+    @State private var searchQuery = ""
+
     private var chipNames: [String] {
         categories.map(\.name) + [CategoryManager.uncategorizedName]
     }
@@ -41,6 +44,18 @@ struct SubscriptionsView: View {
         return filedIn.filter { $0.value.contains(feedCategory) }.map(\.key)
     }
 
+    /// Subscribed channels whose name matches the query, within the current
+    /// chip, alphabetical. Empty when not searching.
+    private var matchingChannels: [Subscription] {
+        let terms = LocalSearch.terms(in: searchQuery)
+        guard !terms.isEmpty else { return [] }
+        let allowed = channelFilter.map(Set.init)
+        return subscriptions
+            .filter { allowed?.contains($0.channelId) ?? true }
+            .filter { LocalSearch.matches(terms: terms, fields: [$0.title]) }
+            .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+    }
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
@@ -53,10 +68,13 @@ struct SubscriptionsView: View {
                 SubscriptionFeedList(
                     showShorts: showShorts,
                     channelIds: channelFilter,
-                    channelDailyCap: channelDailyCap
+                    channelDailyCap: channelDailyCap,
+                    searchQuery: searchQuery,
+                    matchingChannels: matchingChannels
                 )
             }
             .navigationTitle("Subscriptions")
+            .searchable(text: $searchQuery, prompt: "Search titles and channels")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     RefreshButton()
@@ -116,11 +134,23 @@ private struct SubscriptionFeedList: View {
     @Environment(AppServices.self) private var services
     @Query private var videos: [Video]
     let channelDailyCap: Int
+    let searchQuery: String
+    let matchingChannels: [Subscription]
+    let showShorts: Bool
     /// Folds the user has opened, keyed by `ChannelDailyCap.key`.
     @State private var expandedFolds: Set<String> = []
 
-    init(showShorts: Bool, channelIds: [String]?, channelDailyCap: Int) {
+    init(
+        showShorts: Bool,
+        channelIds: [String]?,
+        channelDailyCap: Int,
+        searchQuery: String,
+        matchingChannels: [Subscription]
+    ) {
         self.channelDailyCap = channelDailyCap
+        self.searchQuery = searchQuery
+        self.matchingChannels = matchingChannels
+        self.showShorts = showShorts
         let predicate: Predicate<Video>?
         switch (showShorts, channelIds) {
         case (true, nil):
@@ -138,9 +168,19 @@ private struct SubscriptionFeedList: View {
         )
     }
 
+    private var isSearching: Bool { !LocalSearch.terms(in: searchQuery).isEmpty }
+
+    /// The Shorts toggle and category chip are already in the `@Query`
+    /// predicate, so search only ever narrows what the chip would show.
+    private var searchedVideos: [Video] {
+        LocalSearch.filter(videos, query: searchQuery) { [$0.title, $0.channelTitle] }
+    }
+
     var body: some View {
         Group {
-            if videos.isEmpty {
+            if isSearching {
+                searchResults
+            } else if videos.isEmpty {
                 EmptyFeedView()
             } else {
                 List {
@@ -175,6 +215,46 @@ private struct SubscriptionFeedList: View {
             }
         }
         .refreshable { await services.feed.refresh() }
+    }
+
+    /// Channel matches sit above video matches so a channel name finds the
+    /// channel itself, not just its videos. Videos stay newest first; the
+    /// daily cap doesn't apply because a search is already a narrow slice.
+    @ViewBuilder
+    private var searchResults: some View {
+        let matches = searchedVideos
+        if matches.isEmpty && matchingChannels.isEmpty {
+            ContentUnavailableView.search(text: searchQuery)
+        } else {
+            List {
+                if !matchingChannels.isEmpty {
+                    Section("Channels") {
+                        ForEach(matchingChannels, id: \.channelId) { subscription in
+                            NavigationLink {
+                                ChannelView(subscription: subscription, showShorts: showShorts)
+                            } label: {
+                                HStack(spacing: 12) {
+                                    ChannelAvatar(url: subscription.thumbnailURL, size: 36)
+                                    Text(subscription.title).lineLimit(1)
+                                }
+                            }
+                        }
+                    }
+                }
+                if !matches.isEmpty {
+                    Section("Videos") {
+                        ForEach(matches) { video in
+                            NavigationLink {
+                                PlayerView(video: video)
+                            } label: {
+                                VideoRow(video: video)
+                            }
+                        }
+                    }
+                }
+            }
+            .listStyle(.plain)
+        }
     }
 
     /// The Shorts filter is already in the `@Query` predicate, so hidden Shorts

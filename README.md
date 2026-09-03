@@ -20,6 +20,7 @@ before you build this.
 | Subscription feed | Works. Fans out across subscribed channels' uploads playlists. |
 | Hiding Shorts | Heuristic, ~95% accurate. There is no `isShort` flag in the API. |
 | Watch Later, watched state | Works, stored **on-device**. YouTube's own Watch Later isn't API-accessible. |
+| Search | Works, **local only**: filters cached titles and channel names on device. The API's search endpoint costs 100 quota units per call, so it isn't used. |
 | Playback | Works, via YouTube's IFrame player. |
 | Background audio | **Not possible.** YouTube kills embedded playback server-side after screen lock. |
 | Picture-in-Picture | Only from native fullscreen. |
