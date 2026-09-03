@@ -8,7 +8,7 @@ private struct StubCategorizer: ChannelCategorizer {
     struct Refused: Error {}
 
     var answers: [String: CategoryGuess]
-    var fallback = CategoryGuess(category: "Other", isConfident: true)
+    var fallback = CategoryGuess(categories: ["Other"])
     /// Titles the stub throws on, standing in for a guardrail refusal.
     var refuses: Set<String> = []
 
@@ -17,6 +17,8 @@ private struct StubCategorizer: ChannelCategorizer {
         return answers[channel.title] ?? fallback
     }
 }
+
+private func guess(_ names: String...) -> CategoryGuess { CategoryGuess(categories: names) }
 
 @MainActor
 final class CategoryManagerTests: XCTestCase {
@@ -56,7 +58,7 @@ final class CategoryManagerTests: XCTestCase {
 
     func testConfidentGuessFilesChannel() async throws {
         let stub = StubCategorizer(answers: [
-            "Auto Focus": CategoryGuess(category: "Cars", isConfident: true),
+            "Auto Focus": guess("Cars"),
         ])
         let manager = makeManager(stub)
         let sub = subscribe("Auto Focus")
@@ -64,7 +66,7 @@ final class CategoryManagerTests: XCTestCase {
         await manager.classify(scope: .unassigned)
 
         let rule = try XCTUnwrap(manager.rule(forChannelId: sub.channelId))
-        XCTAssertEqual(rule.collection?.name, "Cars")
+        XCTAssertEqual(rule.collections.map(\.name), ["Cars"])
         XCTAssertFalse(rule.isUserSet)
         XCTAssertNotNil(rule.classifiedAt)
         XCTAssertEqual(manager.status, .idle)
@@ -72,7 +74,7 @@ final class CategoryManagerTests: XCTestCase {
 
     func testUnsureGuessLeavesChannelUncategorisedButRecorded() async throws {
         let stub = StubCategorizer(answers: [
-            "Mystery": CategoryGuess(category: "Comedy", isConfident: false),
+            "Mystery": .unsure,
         ])
         let manager = makeManager(stub)
         let sub = subscribe("Mystery")
@@ -80,79 +82,94 @@ final class CategoryManagerTests: XCTestCase {
         await manager.classify(scope: .unassigned)
 
         let rule = try XCTUnwrap(manager.rule(forChannelId: sub.channelId))
-        XCTAssertNil(rule.collection)
+        XCTAssertTrue(rule.collections.isEmpty)
         XCTAssertNotNil(rule.classifiedAt, "should not be retried on the next unassigned pass")
     }
 
-    func testOffListAnswerIsTreatedAsUnsure() async throws {
+    func testMultipleAnswersFileChannelUnderEach() async throws {
         let stub = StubCategorizer(answers: [
-            "Weird": CategoryGuess(category: nil, isConfident: true),
+            "Neal Brennan": guess("Podcasts & Interviews", "Comedy"),
         ])
         let manager = makeManager(stub)
-        let sub = subscribe("Weird")
+        let sub = subscribe("Neal Brennan")
 
         await manager.classify(scope: .unassigned)
 
-        XCTAssertNil(try manager.rule(forChannelId: sub.channelId)?.collection)
+        let rule = try XCTUnwrap(manager.rule(forChannelId: sub.channelId))
+        XCTAssertEqual(Set(rule.collections.map(\.name)), ["Podcasts & Interviews", "Comedy"])
+    }
+
+    /// Names the manager can't find in the list are skipped, not fatal.
+    func testUnknownNamesInGuessAreDroppedIndividually() async throws {
+        let stub = StubCategorizer(answers: [
+            "Mixed": guess("Cars", "Sports"),
+        ])
+        let manager = makeManager(stub)
+        let sub = subscribe("Mixed")
+
+        await manager.classify(scope: .unassigned)
+
+        XCTAssertEqual(try manager.rule(forChannelId: sub.channelId)?.collections.map(\.name), ["Cars"])
     }
 
     func testUnassignedScopeSkipsAlreadyClassified() async throws {
         var stub = StubCategorizer(answers: [
-            "A": CategoryGuess(category: "Cars", isConfident: true),
+            "A": guess("Cars"),
         ])
         let manager = makeManager(stub)
         let sub = subscribe("A")
         await manager.classify(scope: .unassigned)
 
         // The model changes its mind; an unassigned pass must not re-ask.
-        stub.answers["A"] = CategoryGuess(category: "Food", isConfident: true)
+        stub.answers["A"] = guess("Food")
         let manager2 = CategoryManager(modelContext: context, categorizer: stub)
         await manager2.classify(scope: .unassigned)
-        XCTAssertEqual(try manager2.rule(forChannelId: sub.channelId)?.collection?.name, "Cars")
+        XCTAssertEqual(try manager2.rule(forChannelId: sub.channelId)?.collections.map(\.name), ["Cars"])
 
         // But a full automatic re-run does.
         await manager2.classify(scope: .allAutomatic)
-        XCTAssertEqual(try manager2.rule(forChannelId: sub.channelId)?.collection?.name, "Food")
+        XCTAssertEqual(try manager2.rule(forChannelId: sub.channelId)?.collections.map(\.name), ["Food"])
     }
 
     func testUserSetRuleSurvivesFullRerun() async throws {
         let stub = StubCategorizer(answers: [
-            "Hand filed": CategoryGuess(category: "Games", isConfident: true),
+            "Hand filed": guess("Games"),
         ])
         let manager = makeManager(stub)
         let sub = subscribe("Hand filed")
         let comedy = try XCTUnwrap(manager.categories().first { $0.name == "Comedy" })
-        try manager.assign(channelId: sub.channelId, channelTitle: sub.title, to: comedy)
+        let food = try XCTUnwrap(manager.categories().first { $0.name == "Food" })
+        try manager.assign(channelId: sub.channelId, channelTitle: sub.title, to: [comedy, food])
 
         await manager.classify(scope: .allAutomatic)
 
         let rule = try XCTUnwrap(manager.rule(forChannelId: sub.channelId))
-        XCTAssertEqual(rule.collection?.name, "Comedy")
+        XCTAssertEqual(Set(rule.collections.map(\.name)), ["Comedy", "Food"])
         XCTAssertTrue(rule.isUserSet)
     }
 
     func testUnsureChannelsAreRetriedOnlyInWiderScope() async throws {
         var stub = StubCategorizer(answers: [
-            "Later": CategoryGuess(category: "Food", isConfident: false),
+            "Later": .unsure,
         ])
         let manager = makeManager(stub)
         let sub = subscribe("Later")
         await manager.classify(scope: .unassigned)
-        XCTAssertNil(try manager.rule(forChannelId: sub.channelId)?.collection)
+        XCTAssertEqual(try manager.rule(forChannelId: sub.channelId)?.collections.isEmpty, true)
 
-        stub.answers["Later"] = CategoryGuess(category: "Food", isConfident: true)
+        stub.answers["Later"] = guess("Food")
         let manager2 = CategoryManager(modelContext: context, categorizer: stub)
         await manager2.classify(scope: .unassigned)
-        XCTAssertNil(try manager2.rule(forChannelId: sub.channelId)?.collection)
+        XCTAssertEqual(try manager2.rule(forChannelId: sub.channelId)?.collections.isEmpty, true)
 
         await manager2.classify(scope: .unassignedAndUnsure)
-        XCTAssertEqual(try manager2.rule(forChannelId: sub.channelId)?.collection?.name, "Food")
+        XCTAssertEqual(try manager2.rule(forChannelId: sub.channelId)?.collections.map(\.name), ["Food"])
     }
 
     /// A guardrail refusal on one channel must not abort the run.
     func testRefusedChannelIsRecordedUnsureAndRunContinues() async throws {
         let stub = StubCategorizer(
-            answers: ["Fine": CategoryGuess(category: "Cars", isConfident: true)],
+            answers: ["Fine": guess("Cars")],
             refuses: ["🛑 Blocked"]
         )
         let manager = makeManager(stub)
@@ -164,9 +181,9 @@ final class CategoryManagerTests: XCTestCase {
         XCTAssertEqual(manager.status, .idle)
         XCTAssertEqual(manager.lastRunFailures, 1)
         let blockedRule = try XCTUnwrap(manager.rule(forChannelId: blocked.channelId))
-        XCTAssertNil(blockedRule.collection)
+        XCTAssertTrue(blockedRule.collections.isEmpty)
         XCTAssertNotNil(blockedRule.classifiedAt)
-        XCTAssertEqual(try manager.rule(forChannelId: fine.channelId)?.collection?.name, "Cars")
+        XCTAssertEqual(try manager.rule(forChannelId: fine.channelId)?.collections.map(\.name), ["Cars"])
     }
 
     func testNoCategorizerFailsCleanly() async throws {
@@ -181,19 +198,91 @@ final class CategoryManagerTests: XCTestCase {
 
     // MARK: - Category editing
 
-    func testDeletingCategoryUnfilesChannels() async throws {
+    func testDeletingCategoryRemovesItFromRulesButKeepsOtherCategories() async throws {
         let stub = StubCategorizer(answers: [
-            "X": CategoryGuess(category: "Cars", isConfident: true),
+            "X": guess("Cars"),
+            "Y": guess("Cars", "Comedy"),
         ])
         let manager = makeManager(stub)
-        let sub = subscribe("X")
+        let x = subscribe("X")
+        let y = subscribe("Y")
         await manager.classify(scope: .unassigned)
         let cars = try XCTUnwrap(manager.categories().first { $0.name == "Cars" })
 
         try manager.delete(cars)
 
-        XCTAssertNil(try manager.rule(forChannelId: sub.channelId)?.collection)
+        XCTAssertEqual(try manager.rule(forChannelId: x.channelId)?.collections.isEmpty, true)
+        XCTAssertEqual(try manager.rule(forChannelId: y.channelId)?.collections.map(\.name), ["Comedy"])
         XCTAssertFalse(try manager.categories().contains { $0.name == "Cars" })
+    }
+
+    func testToggleAddsAndRemovesOneCategoryAndMarksUserSet() async throws {
+        let stub = StubCategorizer(answers: ["T": guess("Cars")])
+        let manager = makeManager(stub)
+        let sub = subscribe("T")
+        await manager.classify(scope: .unassigned)
+        let comedy = try XCTUnwrap(manager.categories().first { $0.name == "Comedy" })
+        let cars = try XCTUnwrap(manager.categories().first { $0.name == "Cars" })
+
+        try manager.toggle(comedy, channelId: sub.channelId, channelTitle: sub.title)
+        var rule = try XCTUnwrap(manager.rule(forChannelId: sub.channelId))
+        XCTAssertEqual(Set(rule.collections.map(\.name)), ["Cars", "Comedy"])
+        XCTAssertTrue(rule.isUserSet)
+
+        try manager.toggle(cars, channelId: sub.channelId, channelTitle: sub.title)
+        rule = try XCTUnwrap(manager.rule(forChannelId: sub.channelId))
+        XCTAssertEqual(rule.collections.map(\.name), ["Comedy"])
+    }
+
+    func testAssignDedupesRepeatedCategories() throws {
+        let manager = makeManager(nil)
+        let sub = subscribe("D")
+        let cars = try XCTUnwrap(manager.categories().first { $0.name == "Cars" })
+        try manager.assign(channelId: sub.channelId, channelTitle: sub.title, to: [cars, cars])
+        XCTAssertEqual(try manager.rule(forChannelId: sub.channelId)?.collections.count, 1)
+    }
+
+    // MARK: - Migration
+
+    /// Rules written before multi-tagging stored one category in `collection`.
+    func testLegacySingleCategoryRuleMigratesToOneTagSet() throws {
+        let manager = makeManager(nil)
+        let cars = try XCTUnwrap(manager.categories().first { $0.name == "Cars" })
+        let auto = ChannelRule(channelId: "UC-auto", channelTitle: "Auto", collections: [], isUserSet: false, classifiedAt: .now)
+        auto.collection = cars
+        let hand = ChannelRule(channelId: "UC-hand", channelTitle: "Hand", collections: [], isUserSet: true)
+        hand.collection = cars
+        let unsure = ChannelRule(channelId: "UC-unsure", channelTitle: "Unsure", collections: [], classifiedAt: .now)
+        context.insert(auto); context.insert(hand); context.insert(unsure)
+        try context.save()
+
+        XCTAssertEqual(try manager.migrateLegacyRules(), 2)
+
+        for rule in [auto, hand] {
+            XCTAssertEqual(rule.collections.map(\.name), ["Cars"])
+            XCTAssertNil(rule.collection)
+        }
+        XCTAssertFalse(auto.isUserSet)
+        XCTAssertTrue(hand.isUserSet, "user-set flag survives migration")
+        XCTAssertNotNil(auto.classifiedAt)
+        XCTAssertTrue(unsure.collections.isEmpty)
+
+        XCTAssertEqual(try manager.migrateLegacyRules(), 0, "idempotent")
+    }
+
+    func testMigrationDoesNotOverwriteAlreadyMultiTaggedRule() throws {
+        let manager = makeManager(nil)
+        let cars = try XCTUnwrap(manager.categories().first { $0.name == "Cars" })
+        let comedy = try XCTUnwrap(manager.categories().first { $0.name == "Comedy" })
+        let rule = ChannelRule(channelId: "UC-both", channelTitle: "Both", collections: [comedy])
+        rule.collection = cars
+        context.insert(rule)
+        try context.save()
+
+        try manager.migrateLegacyRules()
+
+        XCTAssertEqual(rule.collections.map(\.name), ["Comedy"])
+        XCTAssertNil(rule.collection)
     }
 
     func testAddCategoryIsCaseInsensitiveDedup() throws {
@@ -208,23 +297,27 @@ final class CategoryManagerTests: XCTestCase {
         XCTAssertEqual(try manager.categories().last?.name, "Sports", "new categories sort last")
     }
 
+    /// The feed predicate is "tag set contains X": a multi-tagged channel is
+    /// in every category it carries, and Uncategorised means an empty set.
     func testChannelIdsInCategoryAndUncategorised() async throws {
         let stub = StubCategorizer(answers: [
-            "Filed": CategoryGuess(category: "Cars", isConfident: true),
-            "Unsure": CategoryGuess(category: "Cars", isConfident: false),
+            "Filed": guess("Cars"),
+            "Both": guess("Cars", "Comedy"),
+            "Unsure": .unsure,
         ])
         let manager = makeManager(stub)
         let filed = subscribe("Filed")
+        let both = subscribe("Both")
         let unsure = subscribe("Unsure")
-        let never = subscribe("Never")
-        // Remove "Never" from targets by giving it a user-set nil rule? No —
-        // simply exclude it from the stub run by classifying before inserting.
-        context.delete(never)
         await manager.classify(scope: .unassigned)
         let untouched = subscribe("Untouched")
 
         let cars = try XCTUnwrap(manager.categories().first { $0.name == "Cars" })
-        XCTAssertEqual(try manager.channelIds(in: cars), [filed.channelId])
+        let comedy = try XCTUnwrap(manager.categories().first { $0.name == "Comedy" })
+        let food = try XCTUnwrap(manager.categories().first { $0.name == "Food" })
+        XCTAssertEqual(Set(try manager.channelIds(in: cars)), Set([filed.channelId, both.channelId]))
+        XCTAssertEqual(try manager.channelIds(in: comedy), [both.channelId])
+        XCTAssertEqual(try manager.channelIds(in: food), [])
         XCTAssertEqual(
             Set(try manager.channelIds(in: nil)),
             Set([unsure.channelId, untouched.channelId])
@@ -269,10 +362,31 @@ final class CategoryPromptTests: XCTestCase {
         XCTAssertFalse(prompt.contains("Recent videos:"))
     }
 
-    func testInstructionsListEveryCategory() {
+    func testInstructionsListEveryCategoryAndAskForUpToThree() {
         let text = CategoryPrompt.instructions(categories: ["Cars", "Food"])
         XCTAssertTrue(text.contains("- Cars"))
         XCTAssertTrue(text.contains("- Food"))
+        XCTAssertTrue(text.contains("one to 3 category names"))
+    }
+
+    /// Multi-answer resolution: each name resolved on its own, off-list ones
+    /// dropped, duplicates collapsed, order kept, capped at three.
+    func testResolveManyDropsOffListDedupesAndCaps() {
+        let categories = CategoryManager.defaultCategoryNames
+        XCTAssertEqual(
+            CategoryPrompt.resolve(["Podcasts & Interviews", "Sports", "comedy"], among: categories),
+            ["Podcasts & Interviews", "Comedy"]
+        )
+        XCTAssertEqual(
+            CategoryPrompt.resolve(["Comedy", "COMEDY", "Comedy."], among: categories),
+            ["Comedy"]
+        )
+        XCTAssertEqual(
+            CategoryPrompt.resolve(["Cars", "Food", "Games", "Comedy"], among: categories),
+            ["Cars", "Food", "Games"]
+        )
+        XCTAssertEqual(CategoryPrompt.resolve(["Sports", ""], among: categories), [])
+        XCTAssertEqual(CategoryPrompt.resolve([], among: categories), [])
     }
 
     func testResolveToleratesCaseAndAmpersand() {
@@ -295,9 +409,11 @@ final class CategoryPromptTests: XCTestCase {
         XCTAssertEqual(CategoryPrompt.resolve("News, Politics", among: categories), "News & Politics")
     }
 
+    /// After a bump every non-user-set channel is re-classified once, so
+    /// channels filed under one category can pick up extra tags.
     func testAutomaticScopeWidensOnceAfterVersionBump() {
-        XCTAssertEqual(CategoryManager.automaticScope(storedVersion: 0), .unassignedAndUnsure)
-        XCTAssertEqual(CategoryManager.automaticScope(storedVersion: CategoryManager.classifierVersion - 1), .unassignedAndUnsure)
+        XCTAssertEqual(CategoryManager.automaticScope(storedVersion: 0), .allAutomatic)
+        XCTAssertEqual(CategoryManager.automaticScope(storedVersion: CategoryManager.classifierVersion - 1), .allAutomatic)
         XCTAssertEqual(CategoryManager.automaticScope(storedVersion: CategoryManager.classifierVersion), .unassigned)
     }
 }

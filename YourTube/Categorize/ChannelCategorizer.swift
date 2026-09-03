@@ -11,13 +11,15 @@ struct ChannelDescriptor: Sendable, Equatable {
 }
 
 struct CategoryGuess: Sendable, Equatable {
-    /// One of the names passed to `categorize`, or nil if the model wouldn't
-    /// commit / answered something off-list.
-    var category: String?
-    var isConfident: Bool
+    /// Names from the list passed to `categorize`, most relevant first.
+    /// Empty if the model wouldn't commit or answered entirely off-list;
+    /// the channel then stays Uncategorised.
+    var categories: [String]
+
+    static let unsure = CategoryGuess(categories: [])
 }
 
-/// Assigns a channel to one of a caller-supplied list of categories.
+/// Files a channel under one to three of a caller-supplied list of categories.
 ///
 /// A protocol so the app logic and tests don't depend on Apple's on-device
 /// model being present — it isn't on the simulator without Apple Intelligence,
@@ -31,14 +33,21 @@ protocol ChannelCategorizer: Sendable {
 enum CategoryPrompt {
     static let maxAboutLength = 400
     static let maxRecentTitles = 10
+    /// The most tags a channel can carry from one classifier answer. Three is
+    /// enough for "comedian with a podcast and a car show"; more and every
+    /// channel ends up everywhere.
+    static let maxCategoriesPerChannel = 3
 
     static func instructions(categories: [String]) -> String {
         """
-        You sort YouTube channels into exactly one category from this list:
+        You sort YouTube channels into categories from this list:
         \(categories.map { "- \($0)" }.joined(separator: "\n"))
 
-        Judge by what the channel mostly publishes. Prefer the most specific \
-        fitting category. Use "Other" only when nothing else fits.
+        Answer with one to \(maxCategoriesPerChannel) category names, most \
+        relevant first. Judge by what the channel mostly publishes. Prefer the \
+        most specific fitting categories, and add a second or third only when \
+        the channel genuinely publishes both kinds of thing. Use "Other" only \
+        when nothing else fits, and never alongside another category.
         """
     }
 
@@ -56,7 +65,23 @@ enum CategoryPrompt {
         return lines.joined(separator: "\n")
     }
 
-    /// Matches the model's answer back onto the allowed list.
+    /// Matches a list of answers back onto the allowed list, keeping order.
+    ///
+    /// Each answer goes through `resolve`; off-list answers are dropped rather
+    /// than failing the whole channel, duplicates collapse, and the result is
+    /// capped at `maxCategoriesPerChannel`.
+    static func resolve(_ answers: [String], among categories: [String]) -> [String] {
+        var seen: Set<String> = []
+        var result: [String] = []
+        for answer in answers {
+            guard let name = resolve(answer, among: categories), seen.insert(name).inserted else { continue }
+            result.append(name)
+            if result.count == maxCategoriesPerChannel { break }
+        }
+        return result
+    }
+
+    /// Matches one answer back onto the allowed list.
     ///
     /// Exact (after normalising case and punctuation) wins. Otherwise the
     /// category sharing the most words with the answer, as long as it's a
@@ -121,15 +146,18 @@ import os
 @available(iOS 26.0, *)
 struct FoundationModelCategorizer: ChannelCategorizer {
     /// Constrained output: the model must fill this shape, so we never have to
-    /// parse free text. `category` is validated against the list afterwards.
+    /// parse free text. Each name is validated against the list afterwards.
     ///
     /// There's deliberately no "confident" field. An earlier version asked for
     /// one and the model hedged on more than half of clear-cut channels, so it
-    /// carried no signal; the category answer itself is what's reliable.
+    /// carried no signal; the category answers themselves are what's reliable.
     @Generable
     struct Answer {
-        @Guide(description: "The single best category name, copied exactly from the list.")
-        var category: String
+        @Guide(
+            description: "One to three category names copied exactly from the list, most relevant first.",
+            .minimumCount(1), .maximumCount(3)
+        )
+        var categories: [String]
     }
 
     private static let log = Logger(subsystem: "net.claytons.yourtube", category: "categorizer")
@@ -169,9 +197,9 @@ struct FoundationModelCategorizer: ChannelCategorizer {
             to: CategoryPrompt.prompt(for: channel),
             generating: Answer.self
         )
-        let resolved = CategoryPrompt.resolve(response.content.category, among: categories)
-        Self.log.notice("\(channel.title, privacy: .public) -> \(response.content.category, privacy: .public) resolved=\(resolved ?? "nil", privacy: .public)")
-        return CategoryGuess(category: resolved, isConfident: resolved != nil)
+        let resolved = CategoryPrompt.resolve(response.content.categories, among: categories)
+        Self.log.notice("\(channel.title, privacy: .public) -> \(response.content.categories.joined(separator: " | "), privacy: .public) resolved=\(resolved.joined(separator: " | "), privacy: .public)")
+        return CategoryGuess(categories: resolved)
     }
 }
 #endif

@@ -12,10 +12,12 @@ struct SubscriptionsView: View {
     @Query private var subscriptions: [Subscription]
 
     /// Channel IDs the feed should be limited to, or nil for everything.
+    /// A channel appears under every category it carries.
     private var channelFilter: [String]? {
         guard !feedCategory.isEmpty else { return nil }
-        let filedIn = rules.reduce(into: [String: String]()) { map, rule in
-            if let name = rule.collection?.name { map[rule.channelId] = name }
+        let filedIn = rules.reduce(into: [String: Set<String>]()) { map, rule in
+            let names = Set(rule.collections.map(\.name))
+            if !names.isEmpty { map[rule.channelId] = names }
         }
         if feedCategory == CategoryManager.uncategorizedName {
             return subscriptions.map(\.channelId).filter { filedIn[$0] == nil }
@@ -23,7 +25,7 @@ struct SubscriptionsView: View {
         // A category that has since been deleted shows an empty feed rather
         // than silently falling back to everything; the chip row makes it
         // obvious and one tap fixes it.
-        return filedIn.filter { $0.value == feedCategory }.map(\.key)
+        return filedIn.filter { $0.value.contains(feedCategory) }.map(\.key)
     }
 
     var body: some View {

@@ -1,7 +1,8 @@
 import SwiftUI
 import SwiftData
 
-/// Browse the feed one subscribed channel at a time, grouped by category.
+/// Browse the feed one subscribed channel at a time, grouped by category. A
+/// channel with several categories is listed under each of them.
 struct ChannelsView: View {
     @AppStorage(SettingsKeys.showShorts) private var showShorts = false
 
@@ -51,14 +52,16 @@ private struct ChannelList: View {
         let unwatchedByChannel = unwatched.reduce(into: [String: Int]()) {
             $0[$1.channelId, default: 0] += 1
         }
-        let collectionByChannel = rules.reduce(into: [String: VideoCollection]()) {
-            if let c = $1.collection { $0[$1.channelId] = c }
+        let collectionsByChannel = rules.reduce(into: [String: [VideoCollection]]()) {
+            if !$1.collections.isEmpty { $0[$1.channelId] = $1.collections }
         }
         var byCollection: [PersistentIdentifier: [Subscription]] = [:]
         var uncategorized: [Subscription] = []
         for sub in subscriptions {
-            if let c = collectionByChannel[sub.channelId] {
-                byCollection[c.persistentModelID, default: []].append(sub)
+            if let filed = collectionsByChannel[sub.channelId] {
+                for c in filed {
+                    byCollection[c.persistentModelID, default: []].append(sub)
+                }
             } else {
                 uncategorized.append(sub)
             }
@@ -107,7 +110,9 @@ private struct ChannelList: View {
                 ForEach(groups) { group in
                     Section {
                         if !collapsed.contains(group.id) {
-                            ForEach(group.channels) { subscription in
+                            // A channel can appear in several groups, so the
+                            // row identity has to include the group.
+                            ForEach(group.channels, id: \.channelId) { subscription in
                                 NavigationLink {
                                     ChannelView(subscription: subscription, showShorts: showShorts)
                                 } label: {
@@ -120,12 +125,12 @@ private struct ChannelList: View {
                                     Button {
                                         filing = subscription
                                     } label: {
-                                        Label("Category", systemImage: "folder")
+                                        Label("Categories", systemImage: "folder")
                                     }
                                     .tint(.indigo)
                                 }
                                 .contextMenu {
-                                    Button("Move to category…", systemImage: "folder") {
+                                    Button("Categories…", systemImage: "folder") {
                                         filing = subscription
                                     }
                                 }
@@ -214,27 +219,44 @@ private struct ChannelRow: View {
     }
 }
 
-/// Manually file one channel. The choice is marked user-set so the classifier
-/// leaves it alone from then on.
+/// Manually file one channel under any number of categories. Each toggle
+/// saves immediately and marks the rule user-set so the classifier leaves it
+/// alone from then on.
 private struct CategoryPickerSheet: View {
     @Environment(AppServices.self) private var services
     @Environment(\.dismiss) private var dismiss
     let subscription: Subscription
     let categories: [VideoCollection]
 
-    @State private var current: VideoCollection?
+    @State private var selected: Set<PersistentIdentifier> = []
     @State private var error: String?
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
-                    row(title: CategoryManager.uncategorizedName, collection: nil)
-                }
-                Section("Categories") {
-                    ForEach(categories) { category in
-                        row(title: category.name, collection: category)
+                    Button {
+                        save([])
+                    } label: {
+                        HStack {
+                            Text(CategoryManager.uncategorizedName).foregroundStyle(.primary)
+                            Spacer()
+                            if selected.isEmpty {
+                                Image(systemName: "checkmark").foregroundStyle(.tint)
+                            }
+                        }
                     }
+                }
+                Section {
+                    ForEach(categories) { category in
+                        Toggle(isOn: binding(for: category)) {
+                            Text(category.name)
+                        }
+                    }
+                } header: {
+                    Text("Categories")
+                } footer: {
+                    Text("Pick as many as fit. The channel shows up under each one.")
                 }
                 if let error {
                     Text(error).foregroundStyle(.red).font(.caption)
@@ -243,37 +265,40 @@ private struct CategoryPickerSheet: View {
             .navigationTitle(subscription.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
             }
             .task {
-                current = try? services.categories.rule(forChannelId: subscription.channelId)?.collection
+                let current = (try? services.categories.rule(forChannelId: subscription.channelId)?.collections) ?? []
+                selected = Set(current.map(\.persistentModelID))
             }
         }
         .presentationDetents([.medium, .large])
     }
 
-    private func row(title: String, collection: VideoCollection?) -> some View {
-        Button {
-            do {
-                try services.categories.assign(
-                    channelId: subscription.channelId,
-                    channelTitle: subscription.title,
-                    to: collection
-                )
-                dismiss()
-            } catch {
-                self.error = error.localizedDescription
+    private func binding(for category: VideoCollection) -> Binding<Bool> {
+        Binding(
+            get: { selected.contains(category.persistentModelID) },
+            set: { isOn in
+                var next = selected
+                if isOn { next.insert(category.persistentModelID) } else { next.remove(category.persistentModelID) }
+                save(next)
             }
-        } label: {
-            HStack {
-                Text(title).foregroundStyle(.primary)
-                Spacer()
-                if current === collection {
-                    Image(systemName: "checkmark").foregroundStyle(.tint)
-                }
-            }
+        )
+    }
+
+    private func save(_ ids: Set<PersistentIdentifier>) {
+        do {
+            try services.categories.assign(
+                channelId: subscription.channelId,
+                channelTitle: subscription.title,
+                to: categories.filter { ids.contains($0.persistentModelID) }
+            )
+            selected = ids
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 }

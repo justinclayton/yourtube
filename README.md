@@ -116,23 +116,38 @@ calendar reminder.
 Subscribed channels are sorted into categories (Comedy, Music & Audio Gear,
 Tech & Engineering, ...) by Apple's on-device language model via the
 Foundation Models framework. Input is the channel name, its "about" text and
-its ten most recent video titles; output is constrained to one name from the
-current category list. Nothing leaves the device and there's no API cost.
+its ten most recent video titles; output is constrained to one to three names
+from the current category list, most relevant first. Nothing leaves the device
+and there's no API cost.
+
+A channel can carry several categories at once: a comedian's interview show
+is filed under both Comedy and Podcasts & Interviews, and shows up under every
+feed chip it carries. The chips themselves stay single-select. The taxonomy is
+fixed and editable in Settings rather than free-form tags, because a small
+model invents a long tail of near-duplicate tags and that's the opposite of
+calm.
 
 - Runs once per channel in the background after launch and after each refresh;
   ~1.5 channels/second on an M4, so a 600-channel library takes about 7 minutes
   the first time, then only new subscriptions are classified.
-- Channels the model refuses (its safety guardrail trips on some names) or
-  answers off-list for stay **Uncategorized** rather than being filed wrongly.
-- Filing a channel by hand (swipe or long-press in Channels) is permanent: the
-  classifier never overwrites a user-set assignment.
-- Categories are editable in Settings. Adding one and pressing "Re-sort all"
-  lets the model consider it.
+- Each answer is matched against the list with a tolerant word-overlap
+  matcher. Off-list answers are dropped individually; a channel with nothing
+  left, or one the model refuses (its safety guardrail trips on some names),
+  stays **Uncategorized** rather than being filed wrongly.
+- Filing a channel by hand (swipe or long-press in Channels) opens a
+  multi-select of categories and is permanent: the classifier never
+  overwrites a user-set assignment.
+- Deleting a category drops it from every channel without touching the
+  channel's other categories. Adding one and pressing "Re-sort all" lets the
+  model consider it.
+- Bumping `CategoryManager.classifierVersion` makes the next launch re-run the
+  classifier over every non-user-set channel once, which is how channels filed
+  under a single category before multi-tagging pick up their extra tags.
 
 Requires iOS 26 and a device that supports Apple Intelligence (iPhone 15 Pro or
 later). Elsewhere the feature degrades to manual filing only. The classifier's
 self-reported confidence turned out to be noise — it hedged on more than half
-of clear-cut channels — so the app trusts the category answer alone.
+of clear-cut channels — so the app trusts the category answers alone.
 
 ## API quota
 
@@ -170,6 +185,8 @@ Run with Cmd-U. Coverage is concentrated where the risk is:
 - `YouTubeAPITests` — pagination, batching, and error classification, against
   stubbed responses. Pagination gets attention because a loop there would burn
   the daily quota.
+- `CategoryManagerTests` — rule migration, multi-answer resolution, and the
+  "contains" feed predicate, against a stub classifier.
 - `ISO8601DurationTests`, `PKCETests`, `SubscriptionTests`.
 
 **The Shorts corpus is synthetic.** The cases in
