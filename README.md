@@ -104,6 +104,15 @@ open YourTube.xcodeproj
 
 Set your Development Team in *Signing & Capabilities*, then run.
 
+The `.xcodeproj` is gitignored, so pulling commits that add or remove Swift
+files leaves it stale ("Cannot find 'X' in scope"). Either rerun
+`xcodegen generate`, or install the repo's git hooks once to do it for you
+after pulls, checkouts, and rebases:
+
+```sh
+git config core.hooksPath scripts/git-hooks
+```
+
 ### 5. TestFlight
 
 Archive and upload to App Store Connect, then add yourself as an **internal
