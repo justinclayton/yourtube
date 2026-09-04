@@ -43,7 +43,8 @@ final class ThumbnailAnalyzerTests: XCTestCase {
     /// Grey image with a deterministic high-contrast checker pattern in the
     /// given column range and a smooth horizontal gradient elsewhere (the
     /// gradient stands in for YouTube's blur: non-zero but low edge energy).
-    private static func makeImage(width: Int, height: Int, detailedColumns: Range<Int>) -> CGImage {
+    /// Shared with `FeedRefresherTests`, which serves it as a stub thumbnail.
+    static func makeImage(width: Int, height: Int, detailedColumns: Range<Int>) -> CGImage {
         var pixels = [UInt8](repeating: 0, count: width * height)
         var seed: UInt32 = 12345
         for y in 0..<height {
