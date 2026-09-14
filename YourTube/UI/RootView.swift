@@ -5,14 +5,14 @@ struct RootView: View {
 
     var body: some View {
         TabView {
-            SubscriptionsView()
-                .tabItem { Label("Subscriptions", systemImage: "play.square.stack") }
+            ShowsView()
+                .tabItem { Label("Shows", systemImage: "tv") }
+
+            FeedView()
+                .tabItem { Label("Feed", systemImage: "play.square.stack") }
 
             ChannelsView()
                 .tabItem { Label("Channels", systemImage: "person.2") }
-
-            WatchLaterView()
-                .tabItem { Label("Watch Later", systemImage: "clock") }
 
             SettingsView()
                 .tabItem { Label("Settings", systemImage: "gear") }
@@ -20,6 +20,7 @@ struct RootView: View {
         .task {
             services.categories.seedDefaultCategoriesIfNeeded()
             try? services.categories.migrateLegacyRules()
+            _ = try? services.upNext.migrateLegacySaves()
             // Attempt a silent token refresh on launch so a still-valid session
             // goes straight to the feed without a sign-in prompt.
             _ = try? await services.auth.validAccessToken()

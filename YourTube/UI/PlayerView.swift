@@ -15,6 +15,7 @@ import YouTubePlayerKit
 struct PlayerView: View {
     @Bindable var video: Video
     @Environment(\.modelContext) private var modelContext
+    @Environment(AppServices.self) private var services
 
     @State private var player: YouTubePlayer
 
@@ -61,27 +62,26 @@ struct PlayerView: View {
             .padding()
         }
         .navigationBarTitleDisplayMode(.inline)
-        .task {
-            // Opening the player is a good enough signal that it's been seen.
-            markWatched()
-        }
+        // Opening the player no longer marks a video watched: watched
+        // removes a video from Up Next, and peeking at an earmarked video
+        // must not do that. Automatic marking returns as the 90% rule
+        // with playback progress (#21).
     }
 
     private var actions: some View {
         HStack(spacing: 12) {
             Button {
-                toggleWatchLater()
+                try? services.upNext.toggle(video)
             } label: {
                 Label(
-                    video.isSavedForLater ? "Saved" : "Watch Later",
-                    systemImage: video.isSavedForLater ? "clock.fill" : "clock"
+                    video.isInUpNext ? "Earmarked" : "Earmark",
+                    systemImage: video.isInUpNext ? "bookmark.fill" : "bookmark"
                 )
             }
             .buttonStyle(.bordered)
 
             Button {
-                video.isWatched.toggle()
-                try? modelContext.save()
+                toggleWatched()
             } label: {
                 Label(
                     video.isWatched ? "Watched" : "Mark watched",
@@ -94,14 +94,13 @@ struct PlayerView: View {
         }
     }
 
-    private func toggleWatchLater() {
-        video.savedForLaterAt = video.isSavedForLater ? nil : .now
-        try? modelContext.save()
-    }
-
-    private func markWatched() {
-        guard !video.isWatched else { return }
-        video.isWatched = true
-        try? modelContext.save()
+    /// Watched leaves Up Next; unwatching doesn't put it back.
+    private func toggleWatched() {
+        if video.isWatched {
+            video.isWatched = false
+            try? modelContext.save()
+        } else {
+            try? services.upNext.markWatched(video)
+        }
     }
 }

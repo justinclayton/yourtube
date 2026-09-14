@@ -17,8 +17,8 @@ struct VideoRow: View {
                     .lineLimit(1)
                 HStack(spacing: 6) {
                     Text(video.publishedAt, format: .relative(presentation: .named))
-                    if video.isSavedForLater {
-                        Image(systemName: "clock.fill")
+                    if video.isInUpNext {
+                        Image(systemName: "bookmark.fill")
                     }
                     if video.isWatched {
                         Image(systemName: "checkmark.circle.fill")
