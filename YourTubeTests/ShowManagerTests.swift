@@ -825,6 +825,45 @@ final class ShowManagerTests: XCTestCase {
         XCTAssertEqual(try manager.episodes(of: show).map(\.videoId), ["podcast"])
     }
 
+    /// `EpisodeCard` resolves its caption and art preference through the
+    /// pure, catalogue-in-hand overload rather than a fresh fetch, so it
+    /// needs to agree with the stored-catalogue version exactly.
+    func testShowContainingPrefersTheChannelShowOverAPlaylistShowOnTheSameChannel() throws {
+        video("upload", channelId: "UC-coco", daysAgo: 1)
+        let podcast = video("podcast", channelId: "UC-coco", daysAgo: 2)
+        try context.save()
+
+        let channelShow = try manager.markAsShow(channelId: "UC-coco", channelTitle: "Team Coco")
+        _ = try playlistShow("Needs a Friend", channelId: "UC-coco",
+                              seasons: [(playlist: "PL-f", name: "Needs a Friend", videoIds: ["podcast"])])
+
+        XCTAssertEqual(try manager.show(containing: podcast)?.id, channelShow.id,
+                       "the channel show is the whole of what the channel puts out, so it wins")
+        XCTAssertEqual(ShowManager.show(containing: podcast, in: try manager.allRecords())?.id, channelShow.id,
+                       "the catalogue-in-hand overload agrees with the fetching one")
+    }
+
+    func testShowContainingFindsAPlaylistShowForAGuestChannelsVideo() throws {
+        let guestClip = video("guest-clip", channelId: "UC-guest", daysAgo: 1)
+        try context.save()
+
+        let show = try playlistShow("Needs a Friend", channelId: "UC-coco",
+                                    seasons: [(playlist: "PL-f", name: "Needs a Friend",
+                                               videoIds: ["guest-clip"])])
+
+        XCTAssertEqual(try manager.show(containing: guestClip)?.id, show.id,
+                       "a playlist can hold a guest channel's video, and that video is still an episode of this show")
+        XCTAssertEqual(ShowManager.show(containing: guestClip, in: try manager.allRecords())?.id, show.id)
+    }
+
+    func testShowContainingIsNilForAVideoInNoShow() throws {
+        let stray = video("stray", channelId: "UC-nowhere", daysAgo: 1)
+        try context.save()
+
+        XCTAssertNil(try manager.show(containing: stray))
+        XCTAssertNil(ShowManager.show(containing: stray, in: try manager.allRecords()))
+    }
+
     /// Categories and Priority are the channel's, read through its rule. The
     /// manager writes no rule of its own, so there is nothing to file twice.
     func testAPlaylistShowCarriesItsChannelAndCreatesNoRuleOfItsOwn() throws {

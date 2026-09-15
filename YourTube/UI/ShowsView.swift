@@ -55,6 +55,7 @@ struct ShowsView: View {
 private struct UpNextSection: View {
     @Environment(AppServices.self) private var services
     @Query private var subscriptions: [Subscription]
+    @Query private var shows: [Show]
     @State private var isEditing = false
     let videos: [Video]
 
@@ -95,7 +96,12 @@ private struct UpNextSection: View {
 
     private func card(_ video: Video, size: EpisodeCard.Size) -> some View {
         NavigationLink(value: video) {
-            EpisodeCard(video: video, avatarURL: avatars[video.channelId], size: size)
+            EpisodeCard(
+                video: video,
+                avatarURL: avatars[video.channelId],
+                size: size,
+                show: ShowManager.show(containing: video, in: shows)
+            )
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
