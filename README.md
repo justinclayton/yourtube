@@ -152,8 +152,35 @@ name set beneath it and a count of the episodes you haven't watched (no badge
 when you're caught up). Posters carry nothing but art and a name, so a show
 never looks like a single video. The chips above the grid are the feed's
 chips, and a show appears under every category its channel carries; Priority
-shows are pinned first. Tapping a poster opens the show page, which is a
-stub for now.
+shows are pinned first.
+
+### The show page
+
+Tapping a poster opens the show: square channel art, where the episodes come
+from, and a line of habit — "Posts Tue, Fri · about 1 hr 15 min". Both halves
+of that line are computed from the episodes on hand and never stored: the
+weekdays are the ones the show has posted on at least twice, and the length is
+the median episode rounded to five minutes, so a show that changes its habits
+stops claiming the old ones as soon as the new episodes land.
+
+**Play next** opens the right episode in one tap: the newest unwatched for a
+daily news show, the oldest for a backlog watched forwards, and — whatever the
+play order — an episode you're partway through, where the button reads
+*Resume*. **Mark all watched** clears the backlog, badge included; episodes it
+marks leave Continue Watching and Up Next like any other finished video, and
+ones the retention window hides are left alone.
+
+Below that, the episodes in air order, newest first whatever the play order,
+watched ones dimmed and no title truncated. Swipe an episode right to earmark
+it to Up Next, left to mark it watched.
+
+Two per-show settings live behind the button in the top corner. **Play order**
+is the newest-first/oldest-first choice above. **Card art** decides whether the
+show's episodes use the channel's art or the videos' own thumbnails — for a
+channel whose avatar carries no information — and applies to the show's cards
+in Continue Watching and Up Next as well as to the page. Other shows are
+unaffected; a show's poster in the grid is always channel art, because that's
+what makes it a show and not a video.
 
 Flag a channel as a show from the Channels tab: swipe it, long-press it, or
 use its Categories sheet. Both answers are recorded — "Not a show" is stored
@@ -304,9 +331,11 @@ Run with Cmd-U. Coverage is concentrated where the risk is:
 - `CategoryManagerTests` — rule migration, multi-answer resolution, and the
   "contains" feed predicate, against a stub classifier.
 - `ShowManagerTests` — the show catalogue: membership (Shorts are never
-  episodes), unwatched counts, the retention window, and the thing most worth
-  pinning — a hand-made show flag, in either direction, surviving an
-  automatic detector pass.
+  episodes), unwatched counts, the retention window, what Play next opens
+  under each play order (an episode in progress always winning), the cadence
+  weekdays and typical duration behind the show page's habit line, and the
+  thing most worth pinning — a hand-made show flag, in either direction,
+  surviving an automatic detector pass.
 - `ChannelDailyCapTests` — the per-channel daily cap that folds a prolific
   channel's extra uploads into a "+N more" row.
 - `ISO8601DurationTests`, `PKCETests`, `SubscriptionTests`.
