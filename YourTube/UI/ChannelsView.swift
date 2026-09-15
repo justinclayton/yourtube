@@ -51,8 +51,12 @@ private struct ChannelList: View {
         Set(rules.filter(\.isPriority).map(\.channelId))
     }
 
+    /// Channels that are themselves shows. A channel that merely hosts a
+    /// playlist-backed show isn't one — Team Coco puts out clips and tour
+    /// footage as well as the podcast — so the flag and the screen icon read
+    /// channel-backed rows only.
     private var showChannelIds: Set<String> {
-        Set(showRecords.filter(\.isActive).map(\.channelId))
+        Set(showRecords.filter { $0.isActive && !$0.isPlaylistBacked }.map(\.channelId))
     }
 
     init(showShorts: Bool, searchQuery: String) {
