@@ -162,6 +162,13 @@ can't overrule either one. Channels marks its shows with a small screen icon.
 A show's episodes are every non-Short video from its channel, resolved live,
 so a new upload is an episode the moment it lands.
 
+Channels itself has two presentations, toggled from the toolbar: the
+grouped list, and an avatar grid of square channel art with the full name
+wrapped beneath (never truncated). Both read the same category grouping and
+draw the same show/not-show split; the toggle is remembered across launches.
+Tapping a tile opens the channel page, and long-press offers the same menu
+as the list row — categories, Priority, and the show flag.
+
 ### Resume and the 90% rule
 
 The player remembers where you stopped and opens there next time. Two

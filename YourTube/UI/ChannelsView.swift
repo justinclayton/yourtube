@@ -1,19 +1,39 @@
 import SwiftUI
 import SwiftData
 
+/// Which of the two Channels presentations is showing. Persisted, so the
+/// choice survives a relaunch the way the Shows grid's category chip does.
+enum ChannelsPresentation: String {
+    case list, grid
+}
+
 /// Browse the feed one subscribed channel at a time, grouped by category. A
 /// channel with several categories is listed under each of them; Priority is
-/// the first group.
+/// the first group. A toolbar toggle switches between this grouped list and
+/// an avatar grid (`ChannelsGridView`); both read the same grouping and
+/// share the same long-press menu (`ChannelRowMenu`), so they can't drift
+/// out of sync.
 struct ChannelsView: View {
     @AppStorage(SettingsKeys.showShorts) private var showShorts = false
+    @AppStorage(SettingsKeys.channelsPresentation) private var presentation = ChannelsPresentation.list
     /// Local, name-only filter over cached subscriptions; see `LocalSearch`.
     @State private var searchQuery = ""
 
     var body: some View {
         NavigationStack {
-            ChannelList(showShorts: showShorts, searchQuery: searchQuery)
+            ChannelList(showShorts: showShorts, searchQuery: searchQuery, presentation: presentation)
                 .navigationTitle("Channels")
                 .searchable(text: $searchQuery, prompt: "Search channels")
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            presentation = presentation == .list ? .grid : .list
+                        } label: {
+                            Image(systemName: presentation == .list ? "square.grid.3x3" : "list.bullet")
+                        }
+                        .accessibilityLabel(presentation == .list ? "Show as grid" : "Show as list")
+                    }
+                }
         }
     }
 }
@@ -24,6 +44,7 @@ private struct ChannelList: View {
     @Environment(AppServices.self) private var services
     let showShorts: Bool
     let searchQuery: String
+    let presentation: ChannelsPresentation
 
     @Query(sort: \Subscription.title) private var allSubscriptions: [Subscription]
     /// Subscriptions narrowed by the search field; everything when it's empty.
@@ -53,24 +74,17 @@ private struct ChannelList: View {
         Set(showRecords.filter(\.isActive).map(\.channelId))
     }
 
-    init(showShorts: Bool, searchQuery: String) {
+    init(showShorts: Bool, searchQuery: String, presentation: ChannelsPresentation) {
         self.showShorts = showShorts
         self.searchQuery = searchQuery
+        self.presentation = presentation
         _unwatched = Query(filter: showShorts
             ? #Predicate<Video> { !$0.isWatched }
             : #Predicate<Video> { !$0.isWatched && !$0.isLikelyShort }
         )
     }
 
-    private struct Group: Identifiable {
-        let id: String
-        let title: String
-        let collection: VideoCollection?
-        let channels: [Subscription]
-        let unwatched: Int
-    }
-
-    private var groups: [Group] {
+    private var groups: [ChannelGroup] {
         let unwatchedByChannel = unwatched.reduce(into: [String: Int]()) {
             $0[$1.channelId, default: 0] += 1
         }
@@ -92,12 +106,12 @@ private struct ChannelList: View {
             subs.reduce(0) { $0 + (unwatchedByChannel[$1.channelId] ?? 0) }
         }
 
-        var result: [Group] = categories.compactMap { c in
+        var result: [ChannelGroup] = categories.compactMap { c in
             guard let subs = byCollection[c.persistentModelID], !subs.isEmpty else { return nil }
-            return Group(id: c.name, title: c.name, collection: c, channels: subs, unwatched: count(subs))
+            return ChannelGroup(id: c.name, title: c.name, collection: c, channels: subs, unwatched: count(subs))
         }
         if !uncategorized.isEmpty {
-            result.append(Group(
+            result.append(ChannelGroup(
                 id: CategoryManager.uncategorizedName,
                 title: CategoryManager.uncategorizedName,
                 collection: nil,
@@ -121,7 +135,7 @@ private struct ChannelList: View {
             let unwatchedByChannel = unwatched.reduce(into: [String: Int]()) {
                 $0[$1.channelId, default: 0] += 1
             }
-            List {
+            VStack(spacing: 0) {
                 if case .running(let done, let total) = services.categories.status {
                     HStack {
                         ProgressView(value: Double(done), total: Double(max(1, total)))
@@ -130,62 +144,25 @@ private struct ChannelList: View {
                             .foregroundStyle(.secondary)
                             .monospacedDigit()
                     }
+                    .padding(.horizontal)
+                    .padding(.vertical, 8)
                 }
-                ForEach(groups) { group in
-                    Section {
-                        if !collapsed.contains(group.id) {
-                            // A channel can appear in several groups, so the
-                            // row identity has to include the group.
-                            ForEach(group.channels, id: \.channelId) { subscription in
-                                NavigationLink {
-                                    ChannelView(subscription: subscription, showShorts: showShorts)
-                                } label: {
-                                    ChannelRow(
-                                        subscription: subscription,
-                                        unwatchedCount: unwatchedByChannel[subscription.channelId] ?? 0,
-                                        isShow: showChannelIds.contains(subscription.channelId)
-                                    )
-                                }
-                                .swipeActions(edge: .leading) {
-                                    Button {
-                                        filing = subscription
-                                    } label: {
-                                        Label("Categories", systemImage: "folder")
-                                    }
-                                    .tint(.indigo)
-                                    priorityButton(for: subscription)
-                                        .tint(.orange)
-                                    showButton(for: subscription)
-                                        .tint(.purple)
-                                }
-                                .contextMenu {
-                                    Button("Categories…", systemImage: "folder") {
-                                        filing = subscription
-                                    }
-                                    priorityButton(for: subscription)
-                                    showButton(for: subscription)
-                                }
-                            }
-                        }
-                    } header: {
-                        GroupHeader(
-                            title: group.title,
-                            channelCount: group.channels.count,
-                            unwatched: group.unwatched,
-                            isCollapsed: collapsed.contains(group.id)
-                        ) {
-                            withAnimation(.snappy) {
-                                if collapsed.contains(group.id) {
-                                    collapsed.remove(group.id)
-                                } else {
-                                    collapsed.insert(group.id)
-                                }
-                            }
-                        }
-                    }
+                switch presentation {
+                case .list:
+                    listBody(unwatchedByChannel: unwatchedByChannel)
+                case .grid:
+                    ChannelsGridView(
+                        groups: groups,
+                        unwatchedByChannel: unwatchedByChannel,
+                        showChannelIds: showChannelIds,
+                        priorityChannelIds: priorityChannelIds,
+                        showShorts: showShorts,
+                        collapsed: $collapsed,
+                        onFile: { filing = $0 },
+                        onError: { channelError = $0 }
+                    )
                 }
             }
-            .listStyle(.plain)
             .sheet(item: $filing) { subscription in
                 CategoryPickerSheet(subscription: subscription, categories: categories)
             }
@@ -200,12 +177,101 @@ private struct ChannelList: View {
         }
     }
 
+    private func listBody(unwatchedByChannel: [String: Int]) -> some View {
+        List {
+            ForEach(groups) { group in
+                Section {
+                    if !collapsed.contains(group.id) {
+                        // A channel can appear in several groups, so the
+                        // row identity has to include the group.
+                        ForEach(group.channels, id: \.channelId) { subscription in
+                            let menu = ChannelRowMenu(
+                                subscription: subscription,
+                                isPriority: priorityChannelIds.contains(subscription.channelId),
+                                isShow: showChannelIds.contains(subscription.channelId),
+                                services: services,
+                                onFile: { filing = subscription },
+                                onError: { channelError = $0 }
+                            )
+                            NavigationLink {
+                                ChannelView(subscription: subscription, showShorts: showShorts)
+                            } label: {
+                                ChannelRow(
+                                    subscription: subscription,
+                                    unwatchedCount: unwatchedByChannel[subscription.channelId] ?? 0,
+                                    isShow: showChannelIds.contains(subscription.channelId)
+                                )
+                            }
+                            .swipeActions(edge: .leading) {
+                                menu.categoriesButton.tint(.indigo)
+                                menu.priorityButton.tint(.orange)
+                                menu.showButton.tint(.purple)
+                            }
+                            .contextMenu {
+                                menu.contextMenuContent
+                            }
+                        }
+                    }
+                } header: {
+                    GroupHeader(
+                        title: group.title,
+                        channelCount: group.channels.count,
+                        unwatched: group.unwatched,
+                        isCollapsed: collapsed.contains(group.id)
+                    ) {
+                        withAnimation(.snappy) {
+                            if collapsed.contains(group.id) {
+                                collapsed.remove(group.id)
+                            } else {
+                                collapsed.insert(group.id)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .listStyle(.plain)
+    }
+}
+
+/// One category section from `ChannelList.groups`: shared file-scope so
+/// `ChannelsGridView` groups its tiles exactly the way the list groups its
+/// rows.
+struct ChannelGroup: Identifiable {
+    let id: String
+    let title: String
+    let collection: VideoCollection?
+    let channels: [Subscription]
+    let unwatched: Int
+}
+
+/// The categories sheet, Priority toggle, and show flag toggle for one
+/// channel — the actions the list row's swipe/long-press menu and the grid
+/// tile's long-press menu both offer. Not a `View`: swipe actions need a
+/// distinct tint per button applied by the caller, while the context menu
+/// just lists the three together, so each button is exposed separately
+/// rather than baked into one fixed layout.
+struct ChannelRowMenu {
+    let subscription: Subscription
+    let isPriority: Bool
+    let isShow: Bool
+    let services: AppServices
+    let onFile: () -> Void
+    let onError: (String) -> Void
+
+    var categoriesButton: some View {
+        Button {
+            onFile()
+        } label: {
+            Label("Categories", systemImage: "folder")
+        }
+    }
+
     /// One tap in or out of Priority. Separate from the category picker
     /// because it's the action taken most, and it shouldn't lock the
     /// channel's topics against the classifier the way manual filing does.
-    private func priorityButton(for subscription: Subscription) -> some View {
-        let isPriority = priorityChannelIds.contains(subscription.channelId)
-        return Button {
+    var priorityButton: some View {
+        Button {
             do {
                 try services.categories.setPriority(
                     !isPriority,
@@ -213,7 +279,7 @@ private struct ChannelList: View {
                     channelTitle: subscription.title
                 )
             } catch {
-                channelError = error.localizedDescription
+                onError(error.localizedDescription)
             }
         } label: {
             Label(
@@ -227,9 +293,8 @@ private struct ChannelList: View {
     /// be one stop. Both directions are recorded, not just "yes": marking a
     /// channel "Not a show" is a standing decision the automatic detector,
     /// when it lands, isn't allowed to overrule.
-    private func showButton(for subscription: Subscription) -> some View {
-        let isShow = showChannelIds.contains(subscription.channelId)
-        return Button {
+    var showButton: some View {
+        Button {
             do {
                 try services.shows.setIsShow(
                     !isShow,
@@ -237,7 +302,7 @@ private struct ChannelList: View {
                     channelTitle: subscription.title
                 )
             } catch {
-                channelError = error.localizedDescription
+                onError(error.localizedDescription)
             }
         } label: {
             Label(
@@ -246,9 +311,15 @@ private struct ChannelList: View {
             )
         }
     }
+
+    @ViewBuilder var contextMenuContent: some View {
+        categoriesButton
+        priorityButton
+        showButton
+    }
 }
 
-private struct GroupHeader: View {
+struct GroupHeader: View {
     let title: String
     let channelCount: Int
     let unwatched: Int
