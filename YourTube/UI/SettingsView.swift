@@ -12,6 +12,9 @@ enum SettingsKeys {
     /// Max videos per channel per day before the rest fold into "+N more"; 0 = off.
     static let channelDailyCap = "settings.channelDailyCap"
     static let defaultChannelDailyCap = 2
+    /// Whether Channels shows the grouped list or the avatar grid. See
+    /// `ChannelsPresentation`.
+    static let channelsPresentation = "settings.channelsPresentation"
 }
 
 struct SettingsView: View {

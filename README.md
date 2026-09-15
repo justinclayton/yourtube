@@ -213,6 +213,13 @@ belongs to a show and a later episode exists — it swaps the player to that
 episode in place, never leaving the show. It's absent on a non-show video and
 on a show's newest episode. There's no autoplay of any kind.
 
+Channels itself has two presentations, toggled from the toolbar: the
+grouped list, and an avatar grid of square channel art with the full name
+wrapped beneath (never truncated). Both read the same category grouping and
+draw the same show/not-show split; the toggle is remembered across launches.
+Tapping a tile opens the channel page, and long-press offers the same menu
+as the list row — categories, Priority, and the show flag.
+
 ### Resume and the 90% rule
 
 The player remembers where you stopped and opens there next time. Two
