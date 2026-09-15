@@ -53,6 +53,41 @@ final class ShowManagerTests: XCTestCase {
         return video
     }
 
+    @discardableResult
+    private func videoPublished(
+        _ id: String,
+        channelId: String,
+        on date: Date,
+        seconds: Int = 2_400,
+        watched: Bool = false
+    ) -> Video {
+        let video = Video(
+            videoId: id,
+            channelId: channelId,
+            channelTitle: channelId,
+            title: id,
+            videoDescription: "",
+            publishedAt: date,
+            durationSeconds: seconds,
+            isWatched: watched
+        )
+        context.insert(video)
+        return video
+    }
+
+    /// Noon on the given weekday (`Calendar` numbering, 1 = Sunday), that
+    /// many weeks back. Cadence is read off real weekdays, so the tests have
+    /// to post on them rather than at round intervals — and relative to the
+    /// day the suite runs, so a Tuesday show is a Tuesday show on any Tuesday.
+    private func weekday(_ weekday: Int, weeksAgo: Int, calendar: Calendar = .current) -> Date {
+        var day = calendar.startOfDay(for: .now)
+        while calendar.component(.weekday, from: day) != weekday {
+            day = calendar.date(byAdding: .day, value: -1, to: day)!
+        }
+        return calendar.date(byAdding: .day, value: -7 * weeksAgo, to: day)!
+            .addingTimeInterval(12 * 3_600)
+    }
+
     // MARK: - Flagging
 
     func testMarkingAChannelPutsItInTheCatalogueAndUnmarkingTakesItOut() throws {
@@ -142,6 +177,39 @@ final class ShowManagerTests: XCTestCase {
         XCTAssertEqual(try manager.unwatchedCount(for: show), 2, "hidden episodes don't nag")
     }
 
+    // MARK: - Next episode
+
+    /// The player's "Next episode" action: chronologically after the current
+    /// video within its own show, regardless of play order.
+    func testNextEpisodeIsTheOneReleasedImmediatelyAfterWithinTheSameShow() throws {
+        let show = try manager.markAsShow(channelId: "UC-news", channelTitle: "Newsline Nightly")
+        let oldest = video("ep-old", channelId: "UC-news", daysAgo: 3)
+        let middle = video("ep-middle", channelId: "UC-news", daysAgo: 2)
+        let newest = video("ep-new", channelId: "UC-news", daysAgo: 1)
+        try context.save()
+
+        XCTAssertEqual(try manager.nextEpisode(after: oldest)?.videoId, middle.videoId,
+                       "the middle episode, not the newest, follows the oldest")
+        XCTAssertEqual(try manager.nextEpisode(after: middle)?.videoId, newest.videoId)
+        XCTAssertNil(try manager.nextEpisode(after: newest), "nothing follows the newest episode")
+        XCTAssertEqual(show.playOrder, .newestFirst, "resolution doesn't depend on play order")
+    }
+
+    func testNextEpisodeIgnoresAnotherChannelsVideoWithTheSameId() throws {
+        try manager.markAsShow(channelId: "UC-news", channelTitle: "Newsline")
+        let stray = video("elsewhere", channelId: "UC-other", daysAgo: 1)
+        try context.save()
+
+        XCTAssertNil(try manager.nextEpisode(after: stray), "not a show, and not this show's episode")
+    }
+
+    func testNextEpisodeIsNilForAVideoFromAChannelThatIsNotAShow() throws {
+        let notAShow = video("standalone", channelId: "UC-plain", daysAgo: 1)
+        try context.save()
+
+        XCTAssertNil(try manager.nextEpisode(after: notAShow))
+    }
+
     // MARK: - Unwatched counts
 
     func testUnwatchedCountIgnoresWatchedAndShorts() throws {
@@ -199,6 +267,206 @@ final class ShowManagerTests: XCTestCase {
 
         let all = try context.fetch(FetchDescriptor<Video>())
         XCTAssertEqual(ShowManager.unwatchedCounts(from: all, shows: [show])[show.id], 3)
+    }
+
+    // MARK: - Play next
+
+    /// The show page's one button, so what it opens is worth pinning under
+    /// both play orders and against a half-watched episode.
+    func testPlayNextIsTheNewestUnwatchedWhenTheShowPlaysNewestFirst() throws {
+        let show = try manager.markAsShow(channelId: "UC-news", channelTitle: "Newsline")
+        video("newest", channelId: "UC-news", daysAgo: 1)
+        video("middle", channelId: "UC-news", daysAgo: 2)
+        video("oldest", channelId: "UC-news", daysAgo: 3)
+        try context.save()
+
+        XCTAssertEqual(try manager.nextUp(of: show)?.videoId, "newest")
+    }
+
+    func testPlayNextIsTheOldestUnwatchedWhenTheShowPlaysOldestFirst() throws {
+        let show = try manager.markAsShow(channelId: "UC-pod", channelTitle: "Second Take")
+        show.playOrder = .oldestFirst
+        video("newest", channelId: "UC-pod", daysAgo: 1)
+        video("middle", channelId: "UC-pod", daysAgo: 2)
+        video("oldest", channelId: "UC-pod", daysAgo: 3, watched: true)
+        try context.save()
+
+        XCTAssertEqual(try manager.nextUp(of: show)?.videoId, "middle",
+                       "a backlog is walked forwards, but not back over what's watched")
+    }
+
+    func testAnEpisodeInProgressWinsUnderEitherPlayOrder() throws {
+        let show = try manager.markAsShow(channelId: "UC-news", channelTitle: "Newsline")
+        video("newest", channelId: "UC-news", daysAgo: 1)
+        let started = video("middle", channelId: "UC-news", daysAgo: 2)
+        video("oldest", channelId: "UC-news", daysAgo: 3)
+        started.resumePositionSeconds = 900
+        started.lastPlayedAt = Date(timeIntervalSinceNow: -3_600)
+        try context.save()
+
+        XCTAssertEqual(try manager.nextUp(of: show)?.videoId, "middle")
+        show.playOrder = .oldestFirst
+        XCTAssertEqual(try manager.nextUp(of: show)?.videoId, "middle",
+                       "the one you walked away from is the one you meant")
+    }
+
+    /// The thirty-second rule from `PlaybackProgress`: a glance isn't a start,
+    /// so it mustn't hijack Play next either.
+    func testAGlanceAtAnEpisodeDoesNotCountAsInProgress() throws {
+        let show = try manager.markAsShow(channelId: "UC-news", channelTitle: "Newsline")
+        video("newest", channelId: "UC-news", daysAgo: 1)
+        let glanced = video("middle", channelId: "UC-news", daysAgo: 2)
+        glanced.resumePositionSeconds = 12
+        glanced.lastPlayedAt = .now
+        try context.save()
+
+        XCTAssertEqual(try manager.nextUp(of: show)?.videoId, "newest")
+    }
+
+    func testPlayNextIsNothingWhenTheShowIsCaughtUp() throws {
+        let show = try manager.markAsShow(channelId: "UC-news", channelTitle: "Newsline")
+        video("seen-1", channelId: "UC-news", daysAgo: 1, watched: true)
+        video("seen-2", channelId: "UC-news", daysAgo: 2, watched: true)
+        try context.save()
+
+        XCTAssertNil(try manager.nextUp(of: show))
+    }
+
+    /// The show page lists episodes in air order even for a backlog watched
+    /// forwards: the list is read newest first, and Play next is the thing
+    /// that walks the other way.
+    func testThePageListsNewestFirstWhateverThePlayOrder() throws {
+        let show = try manager.markAsShow(channelId: "UC-pod", channelTitle: "Second Take")
+        show.playOrder = .oldestFirst
+        video("newest", channelId: "UC-pod", daysAgo: 1)
+        video("middle", channelId: "UC-pod", daysAgo: 2)
+        video("oldest", channelId: "UC-pod", daysAgo: 3)
+        video("short", channelId: "UC-pod", daysAgo: 1.5, short: true)
+        video("elsewhere", channelId: "UC-other", daysAgo: 1)
+        try context.save()
+
+        let all = try context.fetch(FetchDescriptor<Video>())
+        XCTAssertEqual(ShowManager.episodesNewestFirst(from: all, of: show).map(\.videoId),
+                       ["newest", "middle", "oldest"])
+        XCTAssertEqual(ShowManager.episodes(from: all, of: show).map(\.videoId),
+                       try manager.episodes(of: show).map(\.videoId),
+                       "the live-query path and the fetching one agree")
+    }
+
+    // MARK: - Mark all watched
+
+    func testMarkAllWatchedClearsTheBadgeAndTheEarmarks() throws {
+        let show = try manager.markAsShow(channelId: "UC-news", channelTitle: "Newsline")
+        let earmarked = video("ep-1", channelId: "UC-news", daysAgo: 1)
+        earmarked.savedForLaterAt = .now
+        earmarked.upNextOrder = 1
+        let started = video("ep-2", channelId: "UC-news", daysAgo: 2)
+        started.resumePositionSeconds = 900
+        video("ep-3", channelId: "UC-news", daysAgo: 3, watched: true)
+        try context.save()
+
+        XCTAssertEqual(try manager.markAllWatched(of: show), 2, "the watched one needed nothing")
+        XCTAssertEqual(try manager.unwatchedCount(for: show), 0)
+        XCTAssertNil(try manager.nextUp(of: show))
+        XCTAssertFalse(earmarked.isInUpNext, "a finished episode has no business waiting")
+        XCTAssertNil(started.resumePositionSeconds)
+    }
+
+    func testMarkAllWatchedLeavesEpisodesTheRetentionWindowHides() throws {
+        let show = try manager.markAsShow(channelId: "UC-news", channelTitle: "Newsline")
+        show.retentionCount = 2
+        for day in 1...4 {
+            video("ep-\(day)", channelId: "UC-news", daysAgo: Double(day))
+        }
+        try context.save()
+
+        XCTAssertEqual(try manager.markAllWatched(of: show), 2)
+        let hidden = try XCTUnwrap(context.fetch(FetchDescriptor<Video>()).first { $0.videoId == "ep-4" })
+        XCTAssertFalse(hidden.isWatched, "clearing a backlog doesn't reach behind the page")
+    }
+
+    // MARK: - Cadence and typical duration
+
+    func testCadenceIsTheWeekdaysTheShowHasPostedOnAtLeastTwice() throws {
+        let show = try manager.markAsShow(channelId: "UC-news", channelTitle: "The Bellwether")
+        for week in 0..<3 {
+            videoPublished("tue-\(week)", channelId: "UC-news", on: weekday(3, weeksAgo: week + 1))
+            videoPublished("fri-\(week)", channelId: "UC-news", on: weekday(6, weeksAgo: week + 1))
+        }
+        // One Sunday special is an accident, not a habit.
+        videoPublished("sun", channelId: "UC-news", on: weekday(1, weeksAgo: 2))
+        try context.save()
+
+        XCTAssertEqual(try manager.cadenceWeekdays(of: show), [3, 6])
+    }
+
+    func testCadenceIsEmptyUntilAShowHasAHabit() throws {
+        let show = try manager.markAsShow(channelId: "UC-new", channelTitle: "Brand New")
+        videoPublished("one", channelId: "UC-new", on: weekday(3, weeksAgo: 1))
+        try context.save()
+
+        XCTAssertTrue(try manager.cadenceWeekdays(of: show).isEmpty)
+    }
+
+    func testCadenceOnlyCountsEpisodesTheRetentionWindowKeeps() throws {
+        let show = try manager.markAsShow(channelId: "UC-news", channelTitle: "Newsline")
+        for week in 0..<3 {
+            videoPublished("tue-\(week)", channelId: "UC-news", on: weekday(3, weeksAgo: week + 1))
+        }
+        for week in 0..<3 {
+            videoPublished("sat-\(week)", channelId: "UC-news", on: weekday(7, weeksAgo: week + 4))
+        }
+        try context.save()
+        XCTAssertEqual(try manager.cadenceWeekdays(of: show), [3, 7])
+
+        show.retentionCount = 3
+        XCTAssertEqual(try manager.cadenceWeekdays(of: show), [3],
+                       "a show that moved night stops claiming the old one")
+    }
+
+    func testTypicalDurationIsTheMedianEpisodeLength() throws {
+        let show = try manager.markAsShow(channelId: "UC-news", channelTitle: "Newsline")
+        // One feature-length special mustn't move the number the show is
+        // described by, which is why it's the median and not the mean.
+        for (index, seconds) in [1_500, 1_800, 2_100, 2_400, 21_600].enumerated() {
+            video("ep-\(index)", channelId: "UC-news", daysAgo: Double(index + 1), seconds: seconds)
+        }
+        try context.save()
+
+        XCTAssertEqual(try manager.typicalDuration(of: show), 2_100)
+    }
+
+    func testTypicalDurationIsNothingForAShowWithNoEpisodes() throws {
+        let show = try manager.markAsShow(channelId: "UC-quiet", channelTitle: "Nothing Yet")
+        XCTAssertNil(try manager.typicalDuration(of: show))
+        XCTAssertNil(try manager.cadenceDescription(of: show))
+    }
+
+    func testCadenceLineNamesTheWeekdaysAndTheTypicalLength() throws {
+        let show = try manager.markAsShow(channelId: "UC-news", channelTitle: "The Bellwether")
+        for week in 0..<2 {
+            videoPublished("tue-\(week)", channelId: "UC-news", on: weekday(3, weeksAgo: week + 1), seconds: 4_500)
+            videoPublished("fri-\(week)", channelId: "UC-news", on: weekday(6, weeksAgo: week + 1), seconds: 4_500)
+        }
+        try context.save()
+
+        let symbols = Calendar.current.shortWeekdaySymbols
+        XCTAssertEqual(try manager.cadenceDescription(of: show),
+                       "Posts \(symbols[2]), \(symbols[5]) · about 1 hr 15 min")
+    }
+
+    /// A typical length is a shape, not a measurement: it rounds.
+    func testApproximateLengthRoundsToFiveMinutes() {
+        XCTAssertEqual(ShowManager.approximateLength(3_540), "1 hr")
+        XCTAssertEqual(ShowManager.approximateLength(3_780), "1 hr 5 min")
+        XCTAssertEqual(ShowManager.approximateLength(2_580), "45 min")
+        XCTAssertEqual(ShowManager.approximateLength(45), "5 min", "nothing rounds away to nothing")
+        XCTAssertNil(ShowManager.approximateLength(0))
+    }
+
+    func testCadenceLineStandsAloneWhenTheShowHasNoRegularDay() {
+        let line = ShowManager.cadenceDescription(weekdays: [], typicalDuration: 2_700)
+        XCTAssertEqual(line, "Episodes about 45 min")
     }
 
     // MARK: - Surviving an automatic pass

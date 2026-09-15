@@ -28,7 +28,7 @@ struct ShowVerdict: Sendable, Equatable {
 /// moment it lands, with nothing to reconcile.
 @MainActor
 final class ShowManager {
-    private let modelContext: ModelContext
+    let modelContext: ModelContext
 
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
@@ -164,12 +164,12 @@ final class ShowManager {
     }
 
     /// "Keep the last N": the newest N episodes, given a newest-first list.
-    private nonisolated static func retained(_ newestFirst: [Video], count: Int?) -> [Video] {
+    nonisolated static func retained(_ newestFirst: [Video], count: Int?) -> [Video] {
         guard let count, count >= 0 else { return newestFirst }
         return Array(newestFirst.prefix(count))
     }
 
-    private nonisolated static func order(_ newestFirst: [Video], by playOrder: PlayOrder) -> [Video] {
+    nonisolated static func order(_ newestFirst: [Video], by playOrder: PlayOrder) -> [Video] {
         playOrder == .newestFirst ? newestFirst : Array(newestFirst.reversed())
     }
 

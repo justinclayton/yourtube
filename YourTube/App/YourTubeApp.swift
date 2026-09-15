@@ -59,6 +59,7 @@ final class AppServices {
     let feed: FeedRefresher
     let categories: CategoryManager
     let upNext: UpNextQueue
+    let titles: TitleCleaner
     let playback: PlaybackProgress
     let shows: ShowManager
     let showDetector: ShowDetectionRunner
@@ -79,6 +80,7 @@ final class AppServices {
         )
         let upNext = UpNextQueue(modelContext: modelContext)
         self.upNext = upNext
+        self.titles = TitleCleaner(modelContext: modelContext)
         self.playback = PlaybackProgress(modelContext: modelContext, upNext: upNext)
         let shows = ShowManager(modelContext: modelContext)
         self.shows = shows
