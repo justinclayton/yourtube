@@ -218,7 +218,8 @@ private struct SubscriptionFeedList: View {
                             } label: {
                                 HStack(spacing: 12) {
                                     ChannelAvatar(url: subscription.thumbnailURL, size: 36)
-                                    Text(subscription.title).lineLimit(1)
+                                    Text(subscription.title)
+                                        .fixedSize(horizontal: false, vertical: true)
                                 }
                             }
                         }
