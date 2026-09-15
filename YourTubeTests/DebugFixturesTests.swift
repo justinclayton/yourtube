@@ -60,12 +60,14 @@ final class DebugFixturesTests: XCTestCase {
         }
 
         // A daily show with cut-down segments, so the show page has something
-        // to hide behind its segment toggle.
+        // to hide behind its segment toggle: the channel is mostly clips, and
+        // the page is meant to list the news hours alone.
         let newsline = try XCTUnwrap(shows.first { $0.title == "Newsline Nightly" })
-        let episodes = try manager.episodes(of: newsline)
-        XCTAssertGreaterThan(episodes.filter { $0.durationSeconds < 900 }.count,
-                             episodes.filter { $0.durationSeconds > 1_800 }.count,
-                             "more segments than full episodes")
+        let listing = try manager.listing(of: newsline)
+        XCTAssertGreaterThan(listing.segments.count, listing.episodes.count,
+                             "more cut-downs than full episodes")
+        XCTAssertTrue(listing.episodes.allSatisfy { $0.durationSeconds > 1_800 })
+        XCTAssertTrue(listing.segments.allSatisfy { $0.durationSeconds < 900 })
         // A backlog podcast is watched forwards.
         let podcast = try XCTUnwrap(shows.first { $0.title == "Second Take" })
         XCTAssertEqual(podcast.playOrder, .oldestFirst)

@@ -134,21 +134,23 @@ final class ShowManager {
 
     // MARK: - Membership
 
-    /// The show's episodes, in its play order, with the retention window
-    /// applied.
+    /// The show's episodes, in its play order, with segments and the
+    /// retention window applied.
     ///
     /// A channel-backed show's episodes are every non-Short video from its
     /// channel; a playlist-backed show's are the ones the playlist holds, as
     /// of its last membership refresh. Shorts are never episodes of anything
-    /// either way — a playlist can contain one, and it still isn't an episode.
+    /// either way — a playlist can contain one, and it still isn't an episode
+    /// — and neither are the cut-downs of an episode, whatever the source
+    /// (see `ShowManager+Segments`).
     func episodes(of show: Show) throws -> [Video] {
-        let newestFirst = try episodesNewestFirst(of: show)
-        return Self.order(Self.retained(newestFirst, count: show.retentionCount), by: show.playOrder)
+        Self.order(try listing(of: show).episodes, by: show.playOrder)
     }
 
-    /// The show's episodes in air order, newest first, before the retention
-    /// window. The one place membership is resolved against the store.
-    private func episodesNewestFirst(of show: Show) throws -> [Video] {
+    /// Every video from the show's source, newest first, before anything is
+    /// classified or hidden. The raw material for `listing(of:)`, and the one
+    /// place membership is resolved against the store.
+    func sourceVideos(of show: Show) throws -> [Video] {
         let byDate = [SortDescriptor(\Video.publishedAt, order: .reverse)]
         switch show.source {
         case .channel(let channelId):
@@ -166,7 +168,9 @@ final class ShowManager {
         }
     }
 
-    /// How many of a show's episodes are still unwatched. Zero means the grid
+    /// How many of a show's episodes are still unwatched. Segments and the
+    /// episodes the retention window hides are not counted: a badge should
+    /// only ever ask for what the show page is offering. Zero means the grid
     /// draws no badge at all.
     func unwatchedCount(for show: Show) throws -> Int {
         try episodes(of: show).filter { !$0.isWatched }.count
@@ -176,8 +180,10 @@ final class ShowManager {
     /// videos the caller already has. The grid feeds it a live `@Query` so the
     /// badges follow the store without a fetch per poster.
     ///
-    /// `videos` may hold anything; Shorts and other channels' videos are
-    /// filtered out here, so the caller's query doesn't have to be exact.
+    /// `videos` may hold anything; Shorts and videos outside the show's
+    /// source are filtered out by `listing`, so the caller's query doesn't
+    /// have to be exact. Grouping by channel first only narrows the work for
+    /// channel-backed shows; a playlist's members can come from anywhere.
     nonisolated static func unwatchedCounts(from videos: [Video], shows: [Show]) -> [String: Int] {
         let candidates = videos.filter { !$0.isLikelyShort }
         let byChannel = Dictionary(grouping: candidates, by: \.channelId)
@@ -187,11 +193,10 @@ final class ShowManager {
             case .channel(let channelId):
                 pool = byChannel[channelId] ?? []
             case .playlist:
-                let ids = Set(show.memberVideoIds)
-                pool = candidates.filter { ids.contains($0.videoId) }
+                pool = candidates
             }
-            let episodes = pool.sorted { $0.publishedAt > $1.publishedAt }
-            counts[show.id] = retained(episodes, count: show.retentionCount).filter { !$0.isWatched }.count
+            counts[show.id] = listing(from: members(from: pool, of: show), of: show)
+                .episodes.filter { !$0.isWatched }.count
         }
     }
 

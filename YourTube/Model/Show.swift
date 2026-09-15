@@ -75,6 +75,22 @@ enum ShowArtPreference: String, Codable, Sendable {
 /// `playlistItemIds`, and refreshed when the show is opened.
 @Model
 final class Show {
+    /// A video shorter than half a typical episode is a cut-down of one. Half
+    /// is low enough that a short episode is still an episode, and high enough
+    /// to catch a twenty-minute extract from an hour.
+    static let defaultSegmentThreshold = 0.5
+
+    /// What the show's settings offer for `segmentThreshold`: a tenth of an
+    /// episode is as permissive as the rule gets before every clip is an
+    /// episode, nine tenths as strict as it gets before every episode is a
+    /// clip.
+    static let segmentThresholdRange = 0.1...0.9
+
+    /// The retention windows the show's settings offer, shortest first.
+    /// Presets rather than a free number: "keep the last N" is a shape of
+    /// backlog, not a measurement.
+    static let retentionOptions = [5, 10, 25, 50]
+
     @Attribute(.unique) var id: String
     /// `"channel"` or `"playlist"`; see `source`.
     var sourceKind: String
@@ -90,6 +106,10 @@ final class Show {
     /// and the unwatched count. Nil keeps everything. Nothing is deleted,
     /// the same policy as Shorts hiding.
     var retentionCount: Int?
+    /// How short a video has to be, as a fraction of this show's typical
+    /// episode, before it counts as a segment cut from one. A half by
+    /// default; see `ShowManager+Segments`.
+    var segmentThreshold: Double = Show.defaultSegmentThreshold
     var artPreferenceRaw: String
     /// Why the detector flagged this channel, in its own words, so a guess can
     /// be read and trusted or corrected. Empty for a hand-made flag.
@@ -118,6 +138,7 @@ final class Show {
         override: ShowOverride = .none,
         playOrder: PlayOrder = .newestFirst,
         retentionCount: Int? = nil,
+        segmentThreshold: Double = Show.defaultSegmentThreshold,
         artPreference: ShowArtPreference = .channelArt
     ) {
         self.id = source.showId
@@ -135,6 +156,7 @@ final class Show {
         self.overrideRaw = override.rawValue
         self.playOrderRaw = playOrder.rawValue
         self.retentionCount = retentionCount
+        self.segmentThreshold = segmentThreshold
         self.artPreferenceRaw = artPreference.rawValue
         self.createdAt = .now
     }

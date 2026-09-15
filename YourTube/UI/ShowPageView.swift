@@ -27,6 +27,11 @@ struct ShowPageView: View {
     /// lists exactly what the catalogue counts.
     @Query private var channelVideos: [Video]
     @State private var isShowingSettings = false
+    /// Segments start hidden every time the page opens: the full episodes are
+    /// what a show is, and the cut-downs are there when they're asked for.
+    /// Not stored on the show — it's a way of looking at the page, not a
+    /// property of the show.
+    @State private var isShowingSegments = false
     /// Which season the list is narrowed to, by index into `seasonNames`, or
     /// nil for all of them. Only a show with seasons offers the picker.
     @State private var season: Int?
@@ -50,22 +55,36 @@ struct ShowPageView: View {
         )
     }
 
-    /// What the page lists: air order, newest at the top, whatever the play
-    /// order, narrowed to the chosen season. Play next is the thing that
-    /// respects the play order.
-    private var episodes: [Video] {
-        inSeason(ShowManager.episodesNewestFirst(from: channelVideos, of: show))
+    /// The raw material the page classifies: the show's members — its
+    /// channel's uploads or its playlist's items — narrowed to the chosen
+    /// season.
+    ///
+    /// The season is applied *before* classification rather than after, so
+    /// the whole listing is about one thing: the segments behind the toggle,
+    /// the retention window and the footer all describe the season in front
+    /// of you. Filtering afterwards would leave an older series empty on a
+    /// show told to keep only its last few episodes, which is not what
+    /// picking that series means.
+    private var seasonVideos: [Video] {
+        ShowManager.episodes(
+            ShowManager.members(from: channelVideos, of: show),
+            inSeason: season,
+            of: show
+        )
+    }
+
+    /// What the page has to work with: the episodes it lists, the segments
+    /// behind the toggle, and what the retention window is holding back. In
+    /// air order, newest at the top, whatever the play order.
+    private var listing: ShowListing {
+        ShowManager.listing(from: seasonVideos, of: show)
     }
 
     /// The same episodes in the show's play order, which is what decides
     /// which one Play next opens. It follows the season picker too: the
     /// button should open what the list in front of you says is next.
     private var episodesInPlayOrder: [Video] {
-        inSeason(ShowManager.episodes(from: channelVideos, of: show))
-    }
-
-    private func inSeason(_ episodes: [Video]) -> [Video] {
-        ShowManager.episodes(episodes, inSeason: season, of: show)
+        ShowManager.order(listing.episodes, by: show.playOrder)
     }
 
     private var subscription: Subscription? {
@@ -73,8 +92,14 @@ struct ShowPageView: View {
     }
 
     var body: some View {
-        let episodes = episodes
+        let listing = listing
+        let episodes = listing.episodes
         let unwatched = episodes.filter { !$0.isWatched }.count
+        // Segments sit among the episodes in air order rather than in a list
+        // of their own: a clip means something next to the episode it came
+        // from, and nowhere else.
+        let listed = isShowingSegments ? listing.everything : episodes
+        let segmentIds = Set(listing.segments.map(\.videoId))
         List {
             Section {
                 header(episodes: episodes, unwatched: unwatched)
@@ -82,13 +107,18 @@ struct ShowPageView: View {
                     .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
             }
             Section {
-                ForEach(episodes) { episode in
-                    row(episode)
+                ForEach(listed) { episode in
+                    row(episode, isSegment: segmentIds.contains(episode.videoId))
                 }
             } header: {
-                Text(episodes.isEmpty
-                     ? "No episodes yet"
-                     : "\(unwatched) unwatched of \(episodes.count)")
+                episodesHeader(listing: listing, unwatched: unwatched)
+            } footer: {
+                if let summary = listing.hiddenSummary(revealingSegments: isShowingSegments) {
+                    Text(summary)
+                        .font(.caption)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 4)
+                }
             }
         }
         .listStyle(.plain)
@@ -107,7 +137,7 @@ struct ShowPageView: View {
             PlayerView(video: episode)
         }
         .sheet(isPresented: $isShowingSettings) {
-            ShowSettingsSheet(show: show)
+            ShowSettingsSheet(show: show, videos: channelVideos)
         }
         .task { await refreshMembershipIfNeeded() }
     }
@@ -220,9 +250,38 @@ struct ShowPageView: View {
 
     // MARK: - Episodes
 
-    private func row(_ episode: Video) -> some View {
+    /// The list's header counts episodes, not rows: the count means the same
+    /// thing as the badge on the poster whether or not the segments are
+    /// showing. The toggle sits beside it because that's the count it
+    /// explains.
+    @ViewBuilder
+    private func episodesHeader(listing: ShowListing, unwatched: Int) -> some View {
+        HStack {
+            Text(listing.episodes.isEmpty
+                 ? "No episodes yet"
+                 : "\(unwatched) unwatched of \(listing.episodes.count)")
+            Spacer(minLength: 8)
+            if !listing.segments.isEmpty {
+                Button(isShowingSegments
+                       ? "Hide segments"
+                       : "Show \(listing.segments.count) segments") {
+                    withAnimation { isShowingSegments.toggle() }
+                }
+                .font(.caption.weight(.medium))
+                .textCase(nil)
+                .buttonStyle(.borderless)
+            }
+        }
+    }
+
+    private func row(_ episode: Video, isSegment: Bool) -> some View {
         NavigationLink(value: episode) {
-            ShowEpisodeRow(episode: episode, show: show, avatarURL: subscription?.thumbnailURL)
+            ShowEpisodeRow(
+                episode: episode,
+                show: show,
+                avatarURL: subscription?.thumbnailURL,
+                isSegment: isSegment
+            )
         }
         .swipeActions(edge: .leading) {
             Button {
@@ -260,6 +319,9 @@ private struct ShowEpisodeRow: View {
     let episode: Video
     let show: Show
     let avatarURL: String?
+    /// A revealed cut-down, which is labelled so that a list showing both
+    /// never leaves you wondering which is the real episode.
+    var isSegment = false
 
     /// The show's art preference decides the row's art too, so the page and
     /// the cards it feeds agree.
@@ -284,6 +346,14 @@ private struct ShowEpisodeRow: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .foregroundStyle(episode.isWatched ? .secondary : .primary)
                 HStack(spacing: 6) {
+                    if isSegment {
+                        Text("Segment")
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 4))
+                            .foregroundStyle(.secondary)
+                    }
                     Text(episode.formattedDuration)
                         .monospacedDigit()
                     Text(episode.publishedAt, format: .relative(presentation: .named))
@@ -311,12 +381,31 @@ private struct ShowEpisodeRow: View {
     }
 }
 
-/// The per-show settings: the two choices that change how the show behaves
-/// elsewhere in the app, reachable from the page they affect.
+/// The per-show settings: the choices that change how this show behaves
+/// elsewhere in the app, reachable from the page they affect. Two of them —
+/// the segment threshold and the retention window — decide what the page
+/// lists at all, so they report what they're doing to the show's videos while
+/// they're being set.
 private struct ShowSettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Bindable var show: Show
+    /// The show's videos, so the sheet can say what a setting is doing to
+    /// them while it's being moved rather than only after it's dismissed.
+    let videos: [Video]
+
+    private var listing: ShowListing {
+        ShowManager.listing(from: videos, of: show)
+    }
+
+    /// "Keep everything" is a retention count of nil, which a `Picker` can't
+    /// tag; zero stands in for it here and nowhere else.
+    private var retention: Binding<Int> {
+        Binding(
+            get: { show.retentionCount ?? 0 },
+            set: { show.retentionCount = $0 == 0 ? nil : $0 }
+        )
+    }
 
     var body: some View {
         NavigationStack {
@@ -331,6 +420,8 @@ private struct ShowSettingsSheet: View {
                 } footer: {
                     Text("Newest first suits a daily news show. Oldest first walks a backlog forwards, which is how a podcast is meant to be heard. Either way, an episode you're partway through is offered first.")
                 }
+                segmentsSection
+                retentionSection
                 Section {
                     Picker("Card art", selection: $show.artPreference) {
                         Text("Channel art").tag(ShowArtPreference.channelArt)
@@ -352,6 +443,63 @@ private struct ShowSettingsSheet: View {
                     }
                 }
             }
+        }
+    }
+
+    /// The segment rule, with its consequence shown as it's moved: the number
+    /// under the slider is the length the show is about to draw the line at
+    /// and how many of its videos fall below it. A setting whose effect you
+    /// can only see after dismissing the sheet is a setting you have to guess
+    /// at.
+    @ViewBuilder
+    private var segmentsSection: some View {
+        Section {
+            Slider(
+                value: $show.segmentThreshold,
+                in: Show.segmentThresholdRange,
+                step: 0.05
+            ) {
+                Text("Segment threshold")
+            } minimumValueLabel: {
+                Text("10%")
+                    .font(.caption2)
+            } maximumValueLabel: {
+                Text("90%")
+                    .font(.caption2)
+            }
+            LabeledContent("Segments are shorter than", value: thresholdDescription)
+                .font(.subheadline)
+        } header: {
+            Text("Segments")
+        } footer: {
+            Text("A news hour posts its full episode and then cuts clips out of it. A video shorter than this much of a typical episode is taken to be one of those clips: hidden on this page unless you ask for it, and left out of the show's unwatched count. It stays in the feed either way.")
+        }
+    }
+
+    /// The length the slider currently draws the line at, and what that does
+    /// to the videos the show already has.
+    private var thresholdDescription: String {
+        let percent = Int((show.segmentThreshold * 100).rounded())
+        guard let typical = listing.typicalEpisodeDuration,
+              let length = ShowManager.approximateLength(typical * show.segmentThreshold) else {
+            return "\(percent)% of an episode"
+        }
+        return "\(length) · \(listing.segmentCount) of \(listing.sourceCount)"
+    }
+
+    @ViewBuilder
+    private var retentionSection: some View {
+        Section {
+            Picker("Keep", selection: retention) {
+                Text("All episodes").tag(0)
+                ForEach(Show.retentionOptions, id: \.self) { count in
+                    Text("Last \(count) episodes").tag(count)
+                }
+            }
+        } header: {
+            Text("Retention")
+        } footer: {
+            Text("Keeping the last few episodes stops a daily show piling up a backlog you feel obliged to clear. The older ones are hidden from this page and its counts, never deleted, and they stay in the feed.")
         }
     }
 }

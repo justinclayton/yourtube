@@ -10,18 +10,29 @@ import Foundation
 /// concern). It never reaches into another show: a video that isn't part of
 /// any show, or that's already the newest episode of its show, resolves to
 /// nil, and the player hides the button rather than falling back to autoplay.
+///
+/// It lands on episodes only. A segment is a cut-down of an episode the
+/// viewer has just been offered whole, so following one with another would be
+/// the app repeating itself; watching a segment moves you on to the next full
+/// episode instead.
 extension ShowManager {
     /// The episode published immediately after `video` within its own show.
     /// Nil when `video` doesn't belong to a show, when it isn't itself an
-    /// episode (a Short, say), or when it's already the newest one.
+    /// episode or a segment of one (a Short, say), or when nothing has aired
+    /// since.
     func nextEpisode(after video: Video) throws -> Video? {
         guard let show = try show(containing: video) else { return nil }
         let oldestFirst = try episodes(of: show).sorted { $0.publishedAt < $1.publishedAt }
-        guard let index = oldestFirst.firstIndex(where: { $0.videoId == video.videoId }) else {
+        if let index = oldestFirst.firstIndex(where: { $0.videoId == video.videoId }) {
+            let nextIndex = index + 1
+            return nextIndex < oldestFirst.count ? oldestFirst[nextIndex] : nil
+        }
+        // A segment, or a video the retention window hides: the show still
+        // goes on from where it sits in time.
+        guard try sourceVideos(of: show).contains(where: { $0.videoId == video.videoId }) else {
             return nil
         }
-        let nextIndex = index + 1
-        return nextIndex < oldestFirst.count ? oldestFirst[nextIndex] : nil
+        return oldestFirst.first { $0.publishedAt > video.publishedAt }
     }
 
     /// The show a video is an episode of, or nil when it belongs to none.

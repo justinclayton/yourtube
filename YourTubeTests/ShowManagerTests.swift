@@ -136,7 +136,7 @@ final class ShowManagerTests: XCTestCase {
 
     // MARK: - Membership
 
-    func testEpisodesAreEveryNonShortVideoFromTheChannel() throws {
+    func testEpisodesAreEveryFullLengthNonShortVideoFromTheChannel() throws {
         let show = try manager.markAsShow(channelId: "UC-news", channelTitle: "Newsline")
         video("full-1", channelId: "UC-news", daysAgo: 1, seconds: 3_000)
         video("segment-1", channelId: "UC-news", daysAgo: 1.1, seconds: 480)
@@ -146,8 +146,9 @@ final class ShowManagerTests: XCTestCase {
         try context.save()
 
         let episodes = try manager.episodes(of: show)
-        XCTAssertEqual(episodes.map(\.videoId), ["full-1", "segment-1", "full-2"],
-                       "Shorts are never episodes, and neither is another channel's video")
+        XCTAssertEqual(episodes.map(\.videoId), ["full-1", "full-2"],
+                       "Shorts are never episodes, nor is another channel's video, nor a cut-down")
+        XCTAssertEqual(try manager.segments(of: show).map(\.videoId), ["segment-1"])
     }
 
     func testEpisodesFollowThePlayOrder() throws {
@@ -175,6 +176,200 @@ final class ShowManagerTests: XCTestCase {
         show.retentionCount = 2
         XCTAssertEqual(try manager.episodes(of: show).map(\.videoId), ["ep-1", "ep-2"])
         XCTAssertEqual(try manager.unwatchedCount(for: show), 2, "hidden episodes don't nag")
+
+        show.retentionCount = nil
+        XCTAssertEqual(try manager.episodes(of: show).count, 6, "clearing it restores the full list")
+    }
+
+    // MARK: - Segments
+
+    /// A news hour, the shape the rule exists for: one full episode a night,
+    /// each trailed by clips cut out of it, so the cut-downs outnumber the
+    /// episodes three to one and the plain median of the channel is a clip.
+    @discardableResult
+    private func newsShow(
+        nights: Int = 5,
+        episodeSeconds: Int = 3_180,
+        segmentSeconds: [Int] = [620, 480, 405]
+    ) throws -> Show {
+        let show = try manager.markAsShow(channelId: "UC-news", channelTitle: "Newsline Nightly")
+        for night in 1...nights {
+            video("ep-\(night)", channelId: "UC-news", daysAgo: Double(night), seconds: episodeSeconds)
+            for (index, seconds) in segmentSeconds.enumerated() {
+                video("ep-\(night)-seg-\(index)", channelId: "UC-news",
+                      daysAgo: Double(night) - 0.1 * Double(index + 1), seconds: seconds)
+            }
+        }
+        try context.save()
+        return show
+    }
+
+    func testCutDownsAreSegmentsEvenWhenTheyOutnumberTheEpisodes() throws {
+        let show = try newsShow()
+
+        XCTAssertEqual(try manager.episodes(of: show).map(\.videoId),
+                       ["ep-1", "ep-2", "ep-3", "ep-4", "ep-5"],
+                       "the full episodes, and only those, even though they're a quarter of the channel")
+        XCTAssertEqual(try manager.segments(of: show).count, 15)
+        XCTAssertEqual(try manager.listing(of: show).typicalEpisodeDuration, 3_180,
+                       "the typical length of a news hour is the hour, not the clips cut from it")
+        XCTAssertEqual(try manager.episodesAndSegments(of: show).count, 20,
+                       "the toggle reveals them; nothing is lost")
+    }
+
+    /// Hiding is presentation only, the same policy as Shorts: the feed and
+    /// everything else still see every video.
+    func testHiddenSegmentsAndOlderEpisodesAreStillInTheStore() throws {
+        let show = try newsShow()
+        show.retentionCount = 2
+
+        XCTAssertEqual(try manager.episodes(of: show).count, 2)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Video>()).count, 20,
+                       "nothing is deleted, so the feed still lists every one of them")
+    }
+
+    /// The rule's edge, which is where a per-show threshold has to be exact:
+    /// half of a typical episode to the second.
+    func testAVideoIsASegmentJustUnderTheThresholdAndAnEpisodeAtIt() throws {
+        let show = try manager.markAsShow(channelId: "UC-news", channelTitle: "Newsline")
+        for night in 1...5 {
+            video("ep-\(night)", channelId: "UC-news", daysAgo: Double(night), seconds: 3_000)
+        }
+        let candidate = video("candidate", channelId: "UC-news", daysAgo: 0.5, seconds: 1_499)
+        try context.save()
+
+        XCTAssertEqual(try manager.listing(of: show).typicalEpisodeDuration, 3_000)
+        XCTAssertEqual(try manager.segments(of: show).map(\.videoId), ["candidate"],
+                       "a second under half an episode is a cut-down of one")
+
+        candidate.durationSeconds = 1_500
+        XCTAssertTrue(try manager.segments(of: show).isEmpty)
+        XCTAssertTrue(try manager.episodes(of: show).contains { $0.videoId == "candidate" },
+                      "exactly half is still an episode")
+    }
+
+    func testChangingTheThresholdReclassifiesImmediately() throws {
+        let show = try manager.markAsShow(channelId: "UC-news", channelTitle: "Newsline")
+        for night in 1...5 {
+            video("ep-\(night)", channelId: "UC-news", daysAgo: Double(night), seconds: 3_000)
+        }
+        video("half-hour", channelId: "UC-news", daysAgo: 0.5, seconds: 1_800)
+        try context.save()
+
+        XCTAssertEqual(show.segmentThreshold, 0.5, "half by default")
+        XCTAssertTrue(try manager.segments(of: show).isEmpty, "a half-length instalment is an episode")
+        XCTAssertEqual(try manager.unwatchedCount(for: show), 6)
+
+        show.segmentThreshold = 0.7
+        XCTAssertEqual(try manager.segments(of: show).map(\.videoId), ["half-hour"],
+                       "a stricter show calls it a cut-down")
+        XCTAssertEqual(try manager.unwatchedCount(for: show), 5, "and stops counting it")
+
+        show.segmentThreshold = 0.5
+        XCTAssertTrue(try manager.segments(of: show).isEmpty, "and back again")
+    }
+
+    /// The reason "typical" isn't the longest episode: a show that runs one
+    /// election special mustn't spend the rest of the year calling its
+    /// ordinary episodes clips.
+    func testOneFeatureLengthSpecialDoesNotDemoteTheOrdinaryEpisodes() throws {
+        let show = try manager.markAsShow(channelId: "UC-news", channelTitle: "Newsline")
+        for (index, seconds) in [1_500, 1_800, 2_100, 2_400, 21_600].enumerated() {
+            video("ep-\(index)", channelId: "UC-news", daysAgo: Double(index + 1), seconds: seconds)
+        }
+        try context.save()
+
+        XCTAssertTrue(try manager.segments(of: show).isEmpty)
+        XCTAssertEqual(try manager.episodes(of: show).count, 5)
+    }
+
+    func testAShowWhoseEpisodesAreAllOfALengthHasNoSegments() throws {
+        let show = try manager.markAsShow(channelId: "UC-pod", channelTitle: "Second Take")
+        for (index, seconds) in [5_700, 6_240, 5_100, 6_600, 5_460, 5_880].enumerated() {
+            video("ep-\(index)", channelId: "UC-pod", daysAgo: Double(index + 1), seconds: seconds)
+        }
+        try context.save()
+
+        XCTAssertTrue(try manager.segments(of: show).isEmpty)
+        XCTAssertEqual(try manager.listing(of: show).typicalEpisodeDuration, 5_700)
+    }
+
+    /// An unmeasured video is listed rather than hidden: the app would rather
+    /// show something it can't measure than quietly bury it.
+    func testAVideoWithNoDurationYetIsAnEpisode() throws {
+        let show = try newsShow()
+        video("unmeasured", channelId: "UC-news", daysAgo: 0.1, seconds: 0)
+        try context.save()
+
+        XCTAssertTrue(try manager.episodes(of: show).contains { $0.videoId == "unmeasured" })
+    }
+
+    func testUnwatchedCountAndBadgesCountEpisodesOnly() throws {
+        let show = try newsShow()
+
+        XCTAssertEqual(try manager.unwatchedCount(for: show), 5,
+                       "five nights, not twenty videos")
+        let all = try context.fetch(FetchDescriptor<Video>())
+        XCTAssertEqual(ShowManager.unwatchedCounts(from: all, shows: [show])[show.id], 5,
+                       "the grid's batched count agrees with the page's")
+    }
+
+    func testUnwatchedCountUnderARetentionWindowCountsOnlyWhatThePageLists() throws {
+        let show = try newsShow(nights: 8)
+        show.retentionCount = 3
+
+        let listing = try manager.listing(of: show)
+        XCTAssertEqual(listing.episodes.map(\.videoId), ["ep-1", "ep-2", "ep-3"])
+        XCTAssertEqual(listing.hiddenByRetention, 5)
+        XCTAssertEqual(try manager.unwatchedCount(for: show), 3)
+
+        let all = try context.fetch(FetchDescriptor<Video>())
+        XCTAssertEqual(ShowManager.unwatchedCounts(from: all, shows: [show])[show.id], 3)
+        XCTAssertEqual(listing.segments.count, 9,
+                       "revealing segments doesn't drag back the era the window hides")
+    }
+
+    /// The footer under the list: how many are hidden, why, and that they're
+    /// still there.
+    func testTheFooterSaysWhatIsHiddenAndWhy() throws {
+        let show = try newsShow(nights: 8)
+        show.retentionCount = 3
+        let listing = try manager.listing(of: show)
+
+        let hidden = try XCTUnwrap(listing.hiddenSummary(revealingSegments: false))
+        XCTAssertTrue(hidden.hasPrefix("9 segments and 5 older episodes hidden."), hidden)
+        XCTAssertTrue(hidden.contains("still in the feed"), hidden)
+
+        let revealed = try XCTUnwrap(listing.hiddenSummary(revealingSegments: true))
+        XCTAssertTrue(revealed.hasPrefix("5 older episodes hidden."), revealed)
+
+        show.retentionCount = nil
+        XCTAssertNil(try manager.listing(of: show).hiddenSummary(revealingSegments: true),
+                     "a page showing everything it has says nothing")
+    }
+
+    func testPlayNextAndNextEpisodeSkipSegments() throws {
+        let show = try newsShow()
+        let all = try context.fetch(FetchDescriptor<Video>())
+        let segment = try XCTUnwrap(all.first { $0.videoId == "ep-2-seg-0" })
+
+        XCTAssertEqual(try manager.nextUp(of: show)?.videoId, "ep-1",
+                       "Play next opens the newest full episode, not the clip posted after it")
+        XCTAssertEqual(try manager.nextEpisode(after: segment)?.videoId, "ep-1",
+                       "watching a clip moves you on to the next full episode")
+
+        let episode = try XCTUnwrap(all.first { $0.videoId == "ep-3" })
+        XCTAssertEqual(try manager.nextEpisode(after: episode)?.videoId, "ep-2",
+                       "and an episode is followed by an episode")
+    }
+
+    func testMarkAllWatchedLeavesSegmentsAlone() throws {
+        let show = try newsShow()
+
+        XCTAssertEqual(try manager.markAllWatched(of: show), 5)
+        XCTAssertEqual(try manager.unwatchedCount(for: show), 0)
+        XCTAssertTrue(try manager.segments(of: show).allSatisfy { !$0.isWatched },
+                      "clearing a backlog doesn't reach behind the page")
     }
 
     // MARK: - Next episode
