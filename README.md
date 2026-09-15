@@ -204,6 +204,46 @@ both Continue Watching and Up Next. Opening the player on its own no longer
 marks anything watched, and the manual "Mark watched" button still works.
 All of this is on-device; YouTube's own watch history isn't API-accessible.
 
+## Titles
+
+YouTube titles carry two things at once: what the video is, and which channel
+it came from. The second is already on screen beside the title, so the app
+strips it. "Mamdani & Staten Island | The Weekly Show with Jon Stewart" reads
+as "Mamdani & Staten Island"; "Joe Rogan Experience #2549 - Jared Diamond"
+reads as "Jared Diamond" with **Ep. 2549** set beside the date.
+
+Only a channel's titles together can say which part is the repeat, so
+`TitleStripper` works on them as a set: it splits each title on the delimiters
+channels use for this (pipe, spaced dash, colon, bullet), lifts out an episode
+number ("#142", "Ep. 31", "S20 Ep.4", "Series 19 Episode 11"), drops segments
+that are nothing but a marker like "FULL EPISODE", and then removes the first
+or last segment when most of the channel's titles carry the same one.
+
+It errs towards leaving titles alone:
+
+- A channel with no repeated affix comes through byte-for-byte. A title
+  nothing is taken out of is never tidied either, so YouTube's own double
+  space or trailing ellipsis survives and the player doesn't set a duplicate
+  original beneath a line that reads the same.
+- A delimiter is not on its own evidence — Knowing Better pipes a different
+  series name onto every upload, and keeps all of them.
+- When every part of a title is boilerplate, nothing is stripped: Trolden's
+  "Funny And Lucky Moments - Hearthstone - Ep. 680" keeps its name and just
+  loses the number, because the alternative is a title that says nothing.
+- A phrasing that varies is beyond this pass. Off Menu names itself in every
+  title and words it differently each time, so tier one leaves it; that's what
+  the on-device rewrite (issue #27) is for.
+
+Cleaning runs in the background after launch and after each refresh, never in
+front of the feed: results are cached on `Video` (`cleanedTitle`,
+`episodeNumber`, `seasonNumber`) and a video with none yet shows its raw
+title. Each video records the `TitleStripper.version` that produced its
+result, exactly as the Shorts heuristic does, so bumping that constant
+re-cleans the whole store on the next launch with no migration.
+
+The player shows YouTube's original title under the cleaned one whenever the
+two differ, so nothing the app changed is hidden.
+
 ## Categories
 
 Subscribed channels are sorted into categories (Comedy, Music & Audio Gear,
@@ -343,6 +383,12 @@ Run with Cmd-U. Coverage is concentrated where the risk is:
   surviving an automatic detector pass.
 - `ChannelDailyCapTests` — the per-channel daily cap that folds a prolific
   channel's extra uploads into a "+N more" row.
+- `TitleStripperTests` — the title cleaner, driven against **real** per-channel
+  title lists captured from the signed-in store (the file says which lists are
+  captured and which are hand-written): shared prefix and suffix found and
+  removed, episode numbers extracted, unpatterned channels untouched.
+- `TitleCleanerTests` — the bookkeeping around it: channels judged against
+  their own titles, and a version bump re-cleaning stored videos.
 - `ISO8601DurationTests`, `PKCETests`, `SubscriptionTests`.
 
 **The Shorts corpus is synthetic.** The cases in
@@ -354,7 +400,11 @@ output before trusting the precision and recall figures.
 
 Built so far: sign-in, subscription feed with Shorts filtering, playback,
 Up Next, watched state, browse by channel, on-device channel categories with a
-category filter on the feed, and hand-flagged shows in the Your Shows grid.
+category filter on the feed, hand-flagged shows in the Your Shows grid, and
+deterministic title cleaning.
+
+Next for titles: the on-device model rewrite that calms what the pattern
+stripper can't reach (issue #27), reusing the same cache fields and version.
 
 Next: per-video categorisation for channels that mix topics, probably via
 `NLEmbedding` against the `VideoCollection` centroids that are already modelled.

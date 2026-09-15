@@ -72,6 +72,14 @@ enum DebugFixtures {
         Channel(id: "UC-conanfans", title: "Conan Clips Archive", categories: ["Comedy"], videos: [
             ("Late Night 1997: Triumph at Westminster", 100, 500, false),
         ]),
+        // Every title carries the show name after a pipe and an episode
+        // number, so the title cleaner has something to bite on signed out.
+        Channel(id: "UC-blocks", title: "Blocks Podcast", categories: ["Podcasts & Interviews"], videos: [
+            ("Ali Macofsky | Blocks Podcast w/ Neal Brennan | Ep. 214", 9, 4500, false),
+            ("Mark Normand | Blocks Podcast w/ Neal Brennan | Ep. 213", 33, 4200, false),
+            ("Bill Burr | Blocks Podcast w/ Neal Brennan | FULL EPISODE | Ep. 212", 58, 5100, false),
+            ("Tig Notaro | Blocks Podcast w/ Neal Brennan | Ep. 211", 80, 3900, false),
+        ]),
     ]
 
     /// Earmarked to Up Next, in this order. Neither is a channel's last
