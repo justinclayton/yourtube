@@ -29,6 +29,10 @@ enum DebugFixtures {
 
     @MainActor
     static func makeContainer() throws -> ModelContainer {
+        // The fixture store is new every launch but `UserDefaults` isn't, so
+        // the show detector would otherwise believe it had already examined
+        // these channels and leave the grid short of its heuristic show.
+        UserDefaults.standard.removeObject(forKey: ShowDetectionRunner.fingerprintsKey)
         let container = try ModelContainer(
             for: Video.self, Subscription.self, VideoCollection.self, ChannelRule.self, Show.self,
             configurations: ModelConfiguration(isStoredInMemoryOnly: true)
@@ -163,11 +167,33 @@ enum DebugFixtures {
 /// - **Newsline Nightly** — a weekday news hour, each full episode trailed by
 ///   three cut-down segments. Segments are ordinary videos, not Shorts, which
 ///   is exactly why a show has to tell them apart.
+///
+/// Two more exist for the detector rather than the grid:
+///
+/// - **The Rundown** — show-shaped and unflagged, so a fixture run shows the
+///   detector finding a show by itself, reasons and all.
+/// - **Off the Record** — just as show-shaped, and marked "Not a show" by
+///   hand. It's the one the detector must never pick up.
 extension DebugFixtures {
+    /// What the fixture store has already decided about a show-shaped channel,
+    /// so a run exercises all three states the detector has to respect.
+    private enum ShowFlag {
+        /// Flagged by hand: the detector must leave it alone.
+        case user
+        /// "Not a show" by hand: a tombstone the detector must not overturn,
+        /// on a channel it would otherwise flag.
+        case notAShow
+        /// No row at all — the detector's to find at launch.
+        case undecided
+    }
+
     private struct ShowChannel {
         var id: String
         var title: String
         var categories: [String]
+        var flag: ShowFlag = .user
+        /// YouTube's own category ID, a signal the detector reads.
+        var youtubeCategoryId: String?
         var playOrder: PlayOrder = .newestFirst
         /// Weekdays it posts on, `Calendar` numbering (1 = Sunday).
         var weekdays: Set<Int>
@@ -231,12 +257,53 @@ extension DebugFixtures {
             ],
             unwatched: 2
         ),
+        // Nothing decided about this one, so the detector finds it at launch
+        // and the grid gains a poster nobody flagged by hand.
+        ShowChannel(
+            id: "UC-rundown",
+            title: "The Rundown",
+            categories: ["News & Politics"],
+            flag: .undecided,
+            youtubeCategoryId: "25",
+            weekdays: [2, 5],
+            hour: 7,
+            episodes: [
+                ("The Rundown: Ep. 88 — the week in one hour", 3_720),
+                ("The Rundown: Ep. 87 — what the vote changed", 3_960),
+                ("The Rundown: Ep. 86 — the case for patience", 3_480),
+                ("The Rundown: Ep. 85 — borders and budgets", 4_080),
+                ("The Rundown: Ep. 84 — the long recount", 3_600),
+                ("The Rundown: Ep. 83 — a quiet fortnight", 3_840),
+                ("The Rundown: Ep. 82 — the committee hearings", 3_540),
+            ],
+            unwatched: 4
+        ),
+        // Show-shaped in every way the detector can see, and the user has
+        // said no. It must stay out of Your Shows however many passes run.
+        ShowChannel(
+            id: "UC-offtherecord",
+            title: "Off the Record",
+            categories: ["Podcasts & Interviews"],
+            flag: .notAShow,
+            youtubeCategoryId: "24",
+            weekdays: [4],
+            hour: 11,
+            episodes: [
+                ("Off the Record #61 — the touring years", 4_500),
+                ("Off the Record #60 — leaving the label", 5_100),
+                ("Off the Record #59 — writing in hotel rooms", 4_260),
+                ("Off the Record #58 — the first record", 4_920),
+                ("Off the Record #57 — session players", 4_380),
+                ("Off the Record #56 — a life in studios", 5_040),
+            ],
+            unwatched: 3
+        ),
     ]
 
     /// Seeds the show-shaped channels, their videos, and the `Show` rows that
-    /// put them in Your Shows. Flagged as the user would flag them by hand, so
-    /// a fixture run shows the grid populated without anything automatic
-    /// having to run.
+    /// put them in Your Shows. Three are flagged as the user would flag them
+    /// by hand, so the grid is populated without anything automatic having to
+    /// run; the other two are left for the detector to get right and wrong.
     static func seedShows(
         _ context: ModelContext,
         collections: [String: VideoCollection],
@@ -260,13 +327,26 @@ extension DebugFixtures {
                     isUserSet: true
                 ))
             }
-            context.insert(Show(
-                source: .channel(id: channel.id),
-                title: channel.title,
-                flagOrigin: .user,
-                override: .forceShow,
-                playOrder: channel.playOrder
-            ))
+            switch channel.flag {
+            case .user:
+                context.insert(Show(
+                    source: .channel(id: channel.id),
+                    title: channel.title,
+                    flagOrigin: .user,
+                    override: .forceShow,
+                    playOrder: channel.playOrder
+                ))
+            case .notAShow:
+                context.insert(Show(
+                    source: .channel(id: channel.id),
+                    title: channel.title,
+                    flagOrigin: .user,
+                    override: .forceNotShow,
+                    playOrder: channel.playOrder
+                ))
+            case .undecided:
+                break
+            }
 
             let dates = recentDates(
                 onWeekdays: channel.weekdays,
@@ -316,6 +396,7 @@ extension DebugFixtures {
             videoDescription: "Fixture episode of \(channel.title).",
             publishedAt: publishedAt,
             durationSeconds: seconds,
+            youtubeCategoryId: channel.youtubeCategoryId,
             isLikelyShort: false,
             isWatched: isWatched,
             classifierVersion: ShortsHeuristic.version

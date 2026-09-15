@@ -62,6 +62,7 @@ final class AppServices {
     let titles: TitleCleaner
     let playback: PlaybackProgress
     let shows: ShowManager
+    let showDetector: ShowDetectionRunner
 
     init(config: AppConfig.Values, modelContext: ModelContext) {
         let auth = AuthController(config: config)
@@ -81,6 +82,8 @@ final class AppServices {
         self.upNext = upNext
         self.titles = TitleCleaner(modelContext: modelContext)
         self.playback = PlaybackProgress(modelContext: modelContext, upNext: upNext)
-        self.shows = ShowManager(modelContext: modelContext)
+        let shows = ShowManager(modelContext: modelContext)
+        self.shows = shows
+        self.showDetector = ShowDetectionRunner(modelContext: modelContext, shows: shows)
     }
 }

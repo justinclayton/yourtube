@@ -184,10 +184,29 @@ what makes it a show and not a video.
 
 Flag a channel as a show from the Channels tab: swipe it, long-press it, or
 use its Categories sheet. Both answers are recorded — "Not a show" is stored
-as a standing decision, so the automatic show detector, when it arrives,
-can't overrule either one. Channels marks its shows with a small screen icon.
-A show's episodes are every non-Short video from its channel, resolved live,
-so a new upload is an episode the moment it lands.
+as a standing decision, so the automatic detector below can't overrule either
+one. Channels marks its shows with a small screen icon. A show's episodes are
+every non-Short video from its channel, resolved live, so a new upload is an
+episode the moment it lands.
+
+### Guessing which channels are shows
+
+Most shows file themselves. After a refresh (and at launch) a detector reads
+each channel's stored videos and guesses, so Your Shows fills up without your
+doing anything. It's guesswork of the same kind as the Shorts heuristic: a
+channel has to have a few full-length uploads to be considered at all, and
+then several weak signals are summed against a threshold — a median duration
+over twenty minutes, a regular posting slot, numbered episode titles,
+YouTube's own News & Politics or Entertainment category, and "podcast" or
+"episode" in the descriptions. No single signal is enough, because long
+videos alone are a maker channel and a reliable schedule alone is a vlog.
+
+Every guess says why. The show page and the channel's Categories sheet list
+the reasons the detector found, so a wrong one can be recognised and
+corrected rather than just overturned. Corrections are permanent: a channel
+you have flagged either way is skipped entirely by every later pass, and a
+show you created by hand is never taken back. Channels are examined once and
+then only again when their uploads actually move.
 
 The player offers a Next episode button whenever the video it's playing
 belongs to a show and a later episode exists — it swaps the player to that
@@ -317,7 +336,7 @@ YourTube/
   API/        YouTube Data API client, DTOs, quota tracking
   Feed/       Refresh algorithm, Shorts heuristic, thumbnail analysis
   UpNext/     The earmark list behind the Shows tab
-  Shows/      The show catalogue behind Your Shows
+  Shows/      The show catalogue behind Your Shows, and the show detector
   Categorize/ On-device channel classification, category management
   Model/      SwiftData models
   UI/         SwiftUI views
@@ -350,9 +369,11 @@ simulator.
 
 Debug builds accept a `-seedFixtures` launch argument. The app then opens an
 in-memory store pre-filled with a few subscriptions, categories, videos, and
-three show-shaped channels — a twice-weekly long-form interview show, a
-numbered weekly podcast, and a weekday news hour with cut-down segments (see
-`DebugFixtures.swift`) and skips `Config.plist`, so it runs signed out
+five show-shaped channels — a twice-weekly long-form interview show, a
+numbered weekly podcast, a weekday news hour with cut-down segments, one left
+unflagged for the detector to find at launch, and one marked "Not a show" that
+it must never pick up (see `DebugFixtures.swift`) — and skips `Config.plist`,
+so it runs signed out
 with the re-auth banner showing. Use it to poke at local-only features such
 as search, category chips, and the daily cap on a fresh simulator, or after
 the weekly token expiry. Nothing touches disk; relaunch without the flag to
@@ -366,7 +387,11 @@ The `yourtube-sim-fixtures` entry in `.claude/launch.json` carries it.
 
 Run with Cmd-U. Coverage is concentrated where the risk is:
 
-- `ShortsHeuristicTests` — the only component that guesses.
+- `ShortsHeuristicTests` and `ShowDetectorTests` — the two components that
+  guess. The show detector is run against a corpus of the six shapes that sit
+  on its boundary: a twice-weekly news show, a numbered podcast, a daily news
+  show buried in its own segments, a maker channel, a vlog, and a clips
+  channel.
 - `FeedRefresherTests` — a refresh against stubbed API and thumbnail
   responses. Pins that a new video never reaches the store before its Shorts
   verdict, since the feed observes the store live.
@@ -381,6 +406,9 @@ Run with Cmd-U. Coverage is concentrated where the risk is:
   weekdays and typical duration behind the show page's habit line, and the
   thing most worth pinning — a hand-made show flag, in either direction,
   surviving an automatic detector pass.
+- `ShowDetectionRunnerTests` — the pass that joins the detector to the
+  catalogue: what it flags, what it is forbidden to touch, and the fingerprint
+  that stops it re-judging a channel whose uploads haven't moved.
 - `ChannelDailyCapTests` — the per-channel daily cap that folds a prolific
   channel's extra uploads into a "+N more" row.
 - `TitleStripperTests` — the title cleaner, driven against **real** per-channel
@@ -391,17 +419,19 @@ Run with Cmd-U. Coverage is concentrated where the risk is:
   their own titles, and a version bump re-cleaning stored videos.
 - `ISO8601DurationTests`, `PKCETests`, `SubscriptionTests`.
 
-**The Shorts corpus is synthetic.** The cases in
-`ShortsHeuristicTests.corpus` are hand-written to cover the decision boundary,
-not captured from live API responses. Replace them with real `videos.list`
-output before trusting the precision and recall figures.
+**The Shorts corpus is synthetic**, and so is the show detector's. The cases
+in `ShortsHeuristicTests.corpus` and `ShowDetectorTests` are hand-written to
+cover the decision boundary, not captured from live API responses. Replace
+them with real `videos.list` output before trusting the precision and recall
+figures.
 
 ## Roadmap
 
 Built so far: sign-in, subscription feed with Shorts filtering, playback,
 Up Next, watched state, browse by channel, on-device channel categories with a
-category filter on the feed, hand-flagged shows in the Your Shows grid, and
-deterministic title cleaning.
+category filter on the feed, shows in the Your Shows grid — flagged by
+hand or guessed, with reasons, by the show detector — and deterministic
+title cleaning.
 
 Next for titles: the on-device model rewrite that calms what the pattern
 stripper can't reach (issue #27), reusing the same cache fields and version.
