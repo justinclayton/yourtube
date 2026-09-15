@@ -14,8 +14,9 @@ import SwiftData
 ///
 /// The data is chosen to be awkward on purpose: diacritics, mixed case, a
 /// channel name that also appears in another channel's titles, a prolific
-/// channel to trip the daily cap, a few Shorts, and two earmarked videos so
-/// Up Next shows its two-column grid.
+/// channel to trip the daily cap, a few Shorts, two earmarked videos so
+/// Up Next shows its two-column grid, and one left partway through so
+/// Continue Watching has a card.
 enum DebugFixtures {
     static let launchArgument = "-seedFixtures"
 
@@ -77,6 +78,10 @@ enum DebugFixtures {
     /// video, which the seed marks watched.
     private static let upNext = ["UC-teamcoco-1", "UC-nasa-3"]
 
+    /// Partway through, in seconds, so Continue Watching has something to
+    /// show. Neither earmarked nor watched, so it's the section's own.
+    private static let inProgress = ["UC-lmnc-0": 620.0]
+
     private static func seed(_ context: ModelContext) throws {
         let collections = Dictionary(
             uniqueKeysWithValues: CategoryManager.defaultCategoryNames.enumerated().map { index, name in
@@ -124,6 +129,8 @@ enum DebugFixtures {
                     isWatched: index == channel.videos.count - 1,
                     savedForLaterAt: position.map { Date(timeIntervalSinceNow: -Double($0 + 1) * 86_400) },
                     upNextOrder: position.map { $0 + 1 },
+                    resumePositionSeconds: inProgress[videoId],
+                    lastPlayedAt: inProgress[videoId].map { _ in Date(timeIntervalSinceNow: -7200) },
                     classifierVersion: ShortsHeuristic.version
                 ))
             }

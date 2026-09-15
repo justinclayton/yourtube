@@ -22,6 +22,7 @@ before you build this.
 | Up Next (earmarks), watched state | Works, stored **on-device**. YouTube's own Watch Later isn't API-accessible, and this app doesn't try to mirror it. |
 | Search | Works, **local only**: filters cached titles and channel names on device. The API's search endpoint costs 100 quota units per call, so it isn't used. |
 | Playback | Works, via YouTube's IFrame player. |
+| Resume position | Works, stored **on-device**. The player reports where it got to; past 90% counts as watched. |
 | Background audio | **Not possible.** YouTube kills embedded playback server-side after screen lock. |
 | Picture-in-Picture | Only from native fullscreen. |
 | Watch history | **Not possible.** Removed from the API years ago. |
@@ -132,8 +133,21 @@ finishing a video (marking it watched) takes it off the list. Videos saved
 under the old Watch Later tab were moved into Up Next in the order they were
 saved.
 
-Continue Watching and the show grid land on the same tab in follow-up work;
-see the PRD in issue #17.
+Above Up Next sits **Continue Watching**: videos you started and haven't
+finished, most recently played first, with a progress bar over the art and
+the time left. It fills itself from playback and empties itself, and it's
+hidden when there's nothing in progress. The show grid lands on the same tab
+in follow-up work; see the PRD in issue #17.
+
+### Resume and the 90% rule
+
+The player remembers where you stopped and opens there next time. Two
+thresholds decide what that means: under thirty seconds in counts as never
+started (so a glance at a video doesn't clutter Continue Watching), and past
+90% of the duration counts as watched — no tap needed, and the video leaves
+both Continue Watching and Up Next. Opening the player on its own no longer
+marks anything watched, and the manual "Mark watched" button still works.
+All of this is on-device; YouTube's own watch history isn't API-accessible.
 
 ## Categories
 
