@@ -230,10 +230,9 @@ final class TitleCleaner {
     @discardableResult
     private func rewritePending() async -> Bool {
         guard let rewriter else { return false }
-        let pending: [Video]
-        let titles: [String: String]
+        let pending: [(video: Video, showTitle: String)]
         do {
-            (pending, titles) = try pendingRewrites()
+            pending = try pendingRewrites()
         } catch {
             rewriteStatus = .failed(error.localizedDescription)
             return false
@@ -247,12 +246,12 @@ final class TitleCleaner {
         lastRewriteFailures = 0
         var completed = 0
 
-        for video in pending {
+        for (video, showTitle) in pending {
             if Task.isCancelled { break }
             guard let stripped = video.strippedTitle else { continue }
             let request = TitleRewriteRequest(
                 strippedTitle: stripped,
-                showTitle: titles[video.channelId] ?? video.channelTitle
+                showTitle: showTitle
             )
             do {
                 let answer = try await rewriter.rewrite(request)
@@ -281,21 +280,38 @@ final class TitleCleaner {
         return true
     }
 
-    /// Show episodes that tier one has cleaned and tier two hasn't seen, plus
-    /// the show title to name each one under.
+    /// Show episodes that tier one has cleaned and tier two hasn't seen, each
+    /// paired with the title of the show to name it under.
     ///
-    /// A video belongs to a show when its channel is in the catalogue and it
-    /// isn't a Short — the same membership `ShowManager` resolves, read here
-    /// as a channel-ID set because this is a pass over the store rather than
-    /// over one show.
-    private func pendingRewrites() throws -> ([Video], [String: String]) {
+    /// Membership is the one `ShowManager` resolves, inverted into lookups
+    /// because this is a pass over the store rather than over one show: a
+    /// channel-backed show's episodes are every non-Short video from its
+    /// channel, a playlist-backed show's are only the videos the playlist
+    /// holds. The host channel of a playlist-backed show is *not* a show, so
+    /// its other uploads keep their tier-one title.
+    ///
+    /// Precedence follows `show(containing:)`: a channel-backed show wins over
+    /// a playlist-backed one on the same channel, and a playlist's member that
+    /// came from a guest channel is still named under the playlist's show.
+    private func pendingRewrites() throws -> [(video: Video, showTitle: String)] {
         let shows = try shows.shows()
-        guard !shows.isEmpty else { return ([], [:]) }
-        let titleByChannel = Dictionary(
-            shows.map { ($0.channelId, $0.title) },
-            uniquingKeysWith: { first, _ in first }
-        )
-        let channelIds = Set(titleByChannel.keys)
+        guard !shows.isEmpty else { return [] }
+        var titleByChannel: [String: String] = [:]
+        var titleByMemberVideo: [String: String] = [:]
+        // `shows()` is alphabetical, so first-wins is a stable choice when two
+        // playlists claim the same video.
+        for show in shows {
+            switch show.source {
+            case .channel(let channelId):
+                if titleByChannel[channelId] == nil { titleByChannel[channelId] = show.title }
+            case .playlist:
+                for videoId in show.memberVideoIds where titleByMemberVideo[videoId] == nil {
+                    titleByMemberVideo[videoId] = show.title
+                }
+            }
+        }
+        guard !titleByChannel.isEmpty || !titleByMemberVideo.isEmpty else { return [] }
+
         let current = Self.version
         let candidates = try modelContext.fetch(FetchDescriptor<Video>(
             predicate: #Predicate {
@@ -303,6 +319,10 @@ final class TitleCleaner {
             },
             sortBy: [SortDescriptor(\.publishedAt, order: .reverse)]
         ))
-        return (candidates.filter { channelIds.contains($0.channelId) }, titleByChannel)
+        return candidates.compactMap { video in
+            guard let title = titleByChannel[video.channelId] ?? titleByMemberVideo[video.videoId]
+            else { return nil }
+            return (video, title)
+        }
     }
 }

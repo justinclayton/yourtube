@@ -259,6 +259,92 @@ final class TitleCleanerTests: XCTestCase {
         XCTAssertTrue(rewriter.log.requests.allSatisfy { $0.showTitle == "QI" })
     }
 
+    /// A playlist-backed show, made the way `ShowManager` makes one so its
+    /// membership lands where the cleaner reads it.
+    @discardableResult
+    private func makePlaylistShow(
+        _ title: String,
+        channelId: String,
+        playlistId: String,
+        videoIds: [String]
+    ) throws -> Show {
+        let manager = ShowManager(modelContext: context)
+        let show = try manager.addPlaylistShow(
+            [PlaylistChoice(playlistId: playlistId, title: title)],
+            channelId: channelId,
+            title: title
+        )
+        try manager.setPlaylistItems(videoIds, playlistId: playlistId, of: show)
+        return show
+    }
+
+    /// REAL: Team Coco hosts "Conan O'Brien Needs a Friend" as a playlist and
+    /// posts a great deal else besides. Only the playlist's own members are
+    /// episodes, so only they are rewritten — and the host channel's other
+    /// uploads must not be handed the podcast's name.
+    func testOnlyAPlaylistShowsMembersAreRewritten() async throws {
+        seed(
+            [
+                "Ted Danson Needs A Friend",
+                "Conan Reacts To His Own Monologue",
+                "Michelle Obama Returns",
+                "Clueless Gamer Plays Death Stranding",
+                "Timothee Chalamet Drops In",
+                "Conan Visits A Haunted House",
+            ],
+            channelId: "UC-coco"
+        )
+        try makePlaylistShow(
+            "Conan O'Brien Needs a Friend",
+            channelId: "UC-coco",
+            playlistId: "PL-friend",
+            videoIds: ["UC-coco-0", "UC-coco-2", "UC-coco-4"]
+        )
+
+        let rewriter = StubRewriter()
+        await makeCleaner(rewriter).cleanStale()
+
+        let byId = Dictionary(uniqueKeysWithValues: try stored(channelId: "UC-coco").map { ($0.videoId, $0) })
+        XCTAssertEqual(byId["UC-coco-0"]?.displayTitle, "Ted Danson needs a friend")
+        XCTAssertEqual(byId["UC-coco-2"]?.displayTitle, "Michelle Obama returns")
+        XCTAssertEqual(byId["UC-coco-4"]?.displayTitle, "Timothee Chalamet drops in")
+        // The channel's other uploads are nobody's episodes: tier one's title
+        // stands, untouched by the model.
+        XCTAssertEqual(byId["UC-coco-1"]?.displayTitle, "Conan Reacts To His Own Monologue")
+        XCTAssertEqual(byId["UC-coco-3"]?.displayTitle, "Clueless Gamer Plays Death Stranding")
+        XCTAssertEqual(byId["UC-coco-5"]?.displayTitle, "Conan Visits A Haunted House")
+        XCTAssertEqual(
+            ["UC-coco-1", "UC-coco-3", "UC-coco-5"].compactMap { byId[$0]?.isTitleRewritten },
+            [false, false, false]
+        )
+        XCTAssertEqual(
+            Set(rewriter.log.requests.map(\.strippedTitle)),
+            ["Ted Danson Needs A Friend", "Michelle Obama Returns", "Timothee Chalamet Drops In"]
+        )
+        XCTAssertTrue(rewriter.log.requests.allSatisfy { $0.showTitle == "Conan O'Brien Needs a Friend" })
+    }
+
+    /// A playlist may hold a guest channel's video, and that video is still an
+    /// episode of the podcast — named under it, not under the channel it was
+    /// uploaded to.
+    func testAPlaylistMemberFromAnotherChannelIsNamedUnderTheShow() async throws {
+        seed(["Ted Danson Needs A Friend"], channelId: "UC-coco")
+        seed(["The Crossover Episode"], channelId: "UC-guest")
+        try makePlaylistShow(
+            "Conan O'Brien Needs a Friend",
+            channelId: "UC-coco",
+            playlistId: "PL-friend",
+            videoIds: ["UC-coco-0", "UC-guest-0"]
+        )
+
+        let rewriter = StubRewriter()
+        await makeCleaner(rewriter).cleanStale()
+
+        XCTAssertEqual(try stored(channelId: "UC-guest")[0].displayTitle, "The crossover episode")
+        XCTAssertTrue(rewriter.log.requests.allSatisfy { $0.showTitle == "Conan O'Brien Needs a Friend" })
+        XCTAssertEqual(rewriter.log.requests.count, 2)
+    }
+
     /// Shorts are never episodes of anything, so they're never rewritten.
     func testShortsAreNotRewritten() async throws {
         makeShow(channelId: "UC-qi", title: "QI")
