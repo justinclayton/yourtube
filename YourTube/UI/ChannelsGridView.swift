@@ -24,61 +24,65 @@ struct ChannelsGridView: View {
 
     private let columns = [GridItem(.adaptive(minimum: 84, maximum: 110), spacing: 16, alignment: .top)]
 
+    // Deliberately a plain ScrollView/LazyVStack, not a List: a List row is
+    // one hit-test target for the whole row, so a List Section holding a
+    // multi-item LazyVGrid mis-routes taps between the NavigationLinks
+    // packed into it. YourShowsSection's poster grid sidesteps the same
+    // trap the same way.
     var body: some View {
-        List {
-            ForEach(groups) { group in
-                Section {
-                    if !collapsed.contains(group.id) {
-                        LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
-                            // A channel can appear in several groups, so the
-                            // tile identity has to include the group, same
-                            // as the list row.
-                            ForEach(group.channels, id: \.channelId) { subscription in
-                                NavigationLink {
-                                    ChannelView(subscription: subscription, showShorts: showShorts)
-                                } label: {
-                                    ChannelTile(
-                                        subscription: subscription,
-                                        unwatchedCount: unwatchedByChannel[subscription.channelId] ?? 0,
-                                        isShow: showChannelIds.contains(subscription.channelId)
-                                    )
-                                }
-                                .buttonStyle(.plain)
-                                .contextMenu {
-                                    ChannelRowMenu(
-                                        subscription: subscription,
-                                        isPriority: priorityChannelIds.contains(subscription.channelId),
-                                        isShow: showChannelIds.contains(subscription.channelId),
-                                        services: services,
-                                        onFile: { onFile(subscription) },
-                                        onError: onError
-                                    ).contextMenuContent
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 22) {
+                ForEach(groups) { group in
+                    VStack(alignment: .leading, spacing: 12) {
+                        GroupHeader(
+                            title: group.title,
+                            channelCount: group.channels.count,
+                            unwatched: group.unwatched,
+                            isCollapsed: collapsed.contains(group.id)
+                        ) {
+                            withAnimation(.snappy) {
+                                if collapsed.contains(group.id) {
+                                    collapsed.remove(group.id)
+                                } else {
+                                    collapsed.insert(group.id)
                                 }
                             }
                         }
-                        .padding(.vertical, 12)
-                    }
-                } header: {
-                    GroupHeader(
-                        title: group.title,
-                        channelCount: group.channels.count,
-                        unwatched: group.unwatched,
-                        isCollapsed: collapsed.contains(group.id)
-                    ) {
-                        withAnimation(.snappy) {
-                            if collapsed.contains(group.id) {
-                                collapsed.remove(group.id)
-                            } else {
-                                collapsed.insert(group.id)
+                        if !collapsed.contains(group.id) {
+                            LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
+                                // A channel can appear in several groups, so
+                                // the tile identity has to include the
+                                // group, same as the list row.
+                                ForEach(group.channels, id: \.channelId) { subscription in
+                                    NavigationLink {
+                                        ChannelView(subscription: subscription, showShorts: showShorts)
+                                    } label: {
+                                        ChannelTile(
+                                            subscription: subscription,
+                                            unwatchedCount: unwatchedByChannel[subscription.channelId] ?? 0,
+                                            isShow: showChannelIds.contains(subscription.channelId)
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
+                                    .contextMenu {
+                                        ChannelRowMenu(
+                                            subscription: subscription,
+                                            isPriority: priorityChannelIds.contains(subscription.channelId),
+                                            isShow: showChannelIds.contains(subscription.channelId),
+                                            services: services,
+                                            onFile: { onFile(subscription) },
+                                            onError: onError
+                                        ).contextMenuContent
+                                    }
+                                }
                             }
                         }
                     }
+                    .padding(.horizontal, 16)
                 }
-                .listRowSeparator(.hidden)
-                .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
             }
+            .padding(.vertical, 12)
         }
-        .listStyle(.plain)
     }
 }
 
