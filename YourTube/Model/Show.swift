@@ -91,6 +91,9 @@ final class Show {
     /// the same policy as Shorts hiding.
     var retentionCount: Int?
     var artPreferenceRaw: String
+    /// Why the detector flagged this channel, in its own words, so a guess can
+    /// be read and trusted or corrected. Empty for a hand-made flag.
+    var detectorReasons: [String] = []
     /// Season names in running order, for a show built from several
     /// playlists. Empty for a show backed by one playlist, which has nothing
     /// to pick between, and for every channel-backed show.

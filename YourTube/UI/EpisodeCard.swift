@@ -64,10 +64,11 @@ struct EpisodeCard: View {
             Text(video.channelTitle)
                 .font((size == .large ? Font.caption : .caption2).weight(.semibold))
                 .foregroundStyle(.secondary)
-            Text(video.title)
+            Text(video.displayTitle)
                 .font(size == .large ? .headline : .subheadline.weight(.medium))
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
+                EpisodeBadge(video: video)
                 if progress == nil {
                     Text(video.formattedDuration)
                 } else {

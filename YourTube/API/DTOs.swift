@@ -112,6 +112,10 @@ enum YT {
             let channelTitle: String?
             let publishedAt: Date?
             let thumbnails: Thumbnails?
+            /// YouTube's own category, e.g. `"25"` for News & Politics. Part
+            /// of `snippet`, so it costs nothing extra to ask for. Read by
+            /// `ShowDetector`.
+            let categoryId: String?
         }
 
         struct ContentDetails: Decodable {
