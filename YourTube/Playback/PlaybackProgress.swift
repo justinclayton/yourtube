@@ -29,6 +29,32 @@ final class PlaybackProgress {
     /// Watched once playback passes this fraction of the duration.
     static let watchedFraction: Double = 0.9
 
+    /// How far the reported position must move since the last write before
+    /// another one is worth its cost. `record` is a store change, and every
+    /// store change reruns every live query in the app for as long as
+    /// playback lasts (#71), so the 2 s poll in `PlayerView` only calls
+    /// `record` when `shouldWrite` says so, or unconditionally on pause and
+    /// on leaving the player.
+    static let minimumWriteDelta: Double = 15
+
+    /// Whether a newly polled position is worth writing to the store.
+    ///
+    /// Pure and `nonisolated` so the throttle can be proven correct — see
+    /// `PlaybackProgressThrottleTests` — without a player, a view, or a
+    /// `ModelContext`.
+    ///
+    /// - Parameters:
+    ///   - lastWritten: The position most recently written for this video,
+    ///     or nil if nothing has been written yet (always writes).
+    ///   - position: The position just polled.
+    ///   - forced: Pause and view-disappear write regardless of movement,
+    ///     so the resume point reflects the moment playback stopped.
+    nonisolated static func shouldWrite(lastWritten: Double?, position: Double, forced: Bool = false) -> Bool {
+        guard !forced else { return true }
+        guard let lastWritten else { return true }
+        return abs(position - lastWritten) >= minimumWriteDelta
+    }
+
     private let modelContext: ModelContext
     private let upNext: UpNextQueue
 

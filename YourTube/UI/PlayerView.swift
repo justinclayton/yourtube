@@ -26,6 +26,12 @@ struct PlayerView: View {
     /// The last position the player reported, kept so leaving the view can
     /// store one without waiting on the web view we're tearing down.
     @State private var lastReportedPosition: Double?
+    /// The last position actually written to the store for the current
+    /// video, so `reportProgress` can throttle: see `PlaybackProgress.shouldWrite`.
+    @State private var lastWrittenPosition: Double?
+    /// Whether the previous poll saw the player paused, so a pause writes
+    /// once on the play->pause edge rather than on every poll spent paused.
+    @State private var wasPaused = false
     /// The episode after this one in its show, if any. Nil hides the Next
     /// episode button: either this video isn't part of a show, or it's
     /// already the newest episode. Recomputed whenever `video` changes.
@@ -126,6 +132,8 @@ struct PlayerView: View {
             services.playback.record(video, position: position)
         }
         lastReportedPosition = nil
+        lastWrittenPosition = nil
+        wasPaused = false
         let startTime = PlaybackProgress.resumePosition(for: next)
             .map { Measurement(value: $0, unit: UnitDuration.seconds) }
         video = next
@@ -134,12 +142,19 @@ struct PlayerView: View {
         }
     }
 
-    /// Poll the player while it's playing and hand each position to
+    /// Poll the player while it's playing and hand positions worth keeping to
     /// `PlaybackProgress`. Polling rather than the kit's `currentTimePublisher`
     /// because that one rides an undocumented progress event, and because a
     /// position must only be recorded while the video is actually playing: a
     /// buffering or cued player reports zero, which would read as "not
     /// started" and throw away the resume point we just opened at.
+    ///
+    /// The poll itself stays at two seconds, but most polls don't write:
+    /// every write is a store change that reruns every live query in the app
+    /// for as long as playback lasts (#71). `PlaybackProgress.shouldWrite`
+    /// throttles to roughly every 15 s of movement; pausing and leaving the
+    /// player (`onDisappear`, `advanceToNextEpisode`) always write so the
+    /// resume point reflects where playback actually stopped.
     @MainActor
     private func reportProgress() async {
         while !Task.isCancelled {
@@ -148,15 +163,33 @@ struct PlayerView: View {
             if player.isEnded {
                 // Some videos never report a time close to the end; the
                 // ended state is the honest signal that they finished.
-                services.playback.record(video, position: Double(video.durationSeconds))
+                let position = Double(video.durationSeconds)
+                if PlaybackProgress.shouldWrite(lastWritten: lastWrittenPosition, position: position) {
+                    services.playback.record(video, position: position)
+                    lastWrittenPosition = position
+                }
                 continue
             }
+            if player.isPaused {
+                // Write once on the play->pause edge, not on every poll
+                // spent paused.
+                if !wasPaused, let position = lastReportedPosition {
+                    services.playback.record(video, position: position)
+                    lastWrittenPosition = position
+                }
+                wasPaused = true
+                continue
+            }
+            wasPaused = false
             guard player.isPlaying,
                   let time = try? await player.getCurrentTime() else { continue }
             let seconds = time.converted(to: .seconds).value
             guard seconds > 0 else { continue }
             lastReportedPosition = seconds
-            services.playback.record(video, position: seconds)
+            if PlaybackProgress.shouldWrite(lastWritten: lastWrittenPosition, position: seconds) {
+                services.playback.record(video, position: seconds)
+                lastWrittenPosition = seconds
+            }
         }
     }
 

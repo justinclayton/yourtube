@@ -296,6 +296,12 @@ both Continue Watching and Up Next. Opening the player on its own no longer
 marks anything watched, and the manual "Mark watched" button still works.
 All of this is on-device; YouTube's own watch history isn't API-accessible.
 
+The player polls its position every two seconds but only writes to the store
+when it's moved fifteen seconds or more, on pause, and on leaving the
+player — a store write reruns every live query in the app, so writing on
+every poll made the whole UI redo work for as long as a video played. Resume
+still lands within about fifteen seconds of where you stopped.
+
 ## Titles
 
 YouTube titles carry two things at once: what the video is, and which channel
