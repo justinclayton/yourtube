@@ -232,14 +232,46 @@ It errs towards leaving titles alone:
   loses the number, because the alternative is a title that says nothing.
 - A phrasing that varies is beyond this pass. Off Menu names itself in every
   title and words it differently each time, so tier one leaves it; that's what
-  the on-device rewrite (issue #27) is for.
+  the rewrite below is for.
+
+### Tier two: the on-device rewrite
+
+What the stripper leaves can still shout. **Episodes of your shows** go one
+step further: Apple's on-device language model rewrites the stripped title
+into a calm, factual one, so "TOP Election Analyst: 'NIGHTMARE SCENARIO' For
+Republicans" stops yelling. `TitleRewriter` opens a fresh `LanguageModelSession`
+per title with constrained generation — the model fills a `@Generable` answer
+holding one title, so there's no free text to parse — and the instructions
+forbid adding anything the original didn't say, forbid capitals for emphasis,
+and cap the length.
+
+The app doesn't trust the answer. `TitleRewritePrompt.resolve` collapses
+whitespace, drops surrounding quotes, and falls back to the stripped title
+whenever the answer is empty or longer than what it was given. A title the
+model refuses keeps its stripped version and isn't retried until a version
+bump.
+
+Only shows are rewritten: it's one model call per title, and clickbait is
+most in the way where the app is pretending to be television. Everything else
+gets tier one alone, and so does every device without Apple Intelligence —
+the feature degrades rather than disappears, and Settings says why the toggle
+is off.
+
+**Settings → Titles → Rewrite show titles** turns tier two off. Tier one's
+output is kept alongside the rewrite (`strippedTitle`), so turning it off puts
+the stripped titles back without re-running the stripper, and turning it on
+rewrites the show episodes again without a second stripping pass.
+
+### Caching
 
 Cleaning runs in the background after launch and after each refresh, never in
 front of the feed: results are cached on `Video` (`cleanedTitle`,
-`episodeNumber`, `seasonNumber`) and a video with none yet shows its raw
-title. Each video records the `TitleStripper.version` that produced its
-result, exactly as the Shorts heuristic does, so bumping that constant
-re-cleans the whole store on the next launch with no migration.
+`strippedTitle`, `episodeNumber`, `seasonNumber`) and a video with none yet
+shows its raw title. Each video records the `TitleCleaner.version` that
+produced its result, exactly as the Shorts heuristic does. That version is the
+two tiers' versions added together, so bumping either one re-cleans the whole
+store on the next launch with no migration — a rewrite judged against a
+stripping that has since changed isn't worth keeping.
 
 The player shows YouTube's original title under the cleaned one whenever the
 two differ, so nothing the app changed is hidden.
@@ -387,8 +419,14 @@ Run with Cmd-U. Coverage is concentrated where the risk is:
   title lists captured from the signed-in store (the file says which lists are
   captured and which are hand-written): shared prefix and suffix found and
   removed, episode numbers extracted, unpatterned channels untouched.
-- `TitleCleanerTests` — the bookkeeping around it: channels judged against
-  their own titles, and a version bump re-cleaning stored videos.
+- `TitleCleanerTests` — the bookkeeping around both tiers, with the model
+  stubbed the way `CategoryManagerTests` stubs the categorizer: channels judged
+  against their own titles, show episodes rewritten and everything else left
+  with tier one, the Settings toggle restoring and re-running the rewrite, and
+  a version bump re-running both tiers.
+- `TitleRewriterTests` — what the model is told and what the app believes of
+  the answer: the constraints present in the instructions, and the fallback to
+  the stripped title on an empty or over-long answer.
 - `ISO8601DurationTests`, `PKCETests`, `SubscriptionTests`.
 
 **The Shorts corpus is synthetic.** The cases in
@@ -401,10 +439,8 @@ output before trusting the precision and recall figures.
 Built so far: sign-in, subscription feed with Shorts filtering, playback,
 Up Next, watched state, browse by channel, on-device channel categories with a
 category filter on the feed, hand-flagged shows in the Your Shows grid, and
-deterministic title cleaning.
-
-Next for titles: the on-device model rewrite that calms what the pattern
-stripper can't reach (issue #27), reusing the same cache fields and version.
+title cleaning in both tiers — the deterministic stripper everywhere, the
+on-device rewrite on show episodes.
 
 Next: per-video categorisation for channels that mix topics, probably via
 `NLEmbedding` against the `VideoCollection` centroids that are already modelled.
