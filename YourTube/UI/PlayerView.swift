@@ -13,7 +13,12 @@ import YouTubePlayerKit
 /// (YouTube enforces this server-side, nothing on the client can defeat it),
 /// and Picture-in-Picture only engages from native fullscreen.
 struct PlayerView: View {
-    @Bindable var video: Video
+    /// `@State`, not `@Bindable`: "Next episode" replaces this with a
+    /// different `Video` outright rather than editing the one we opened
+    /// with, and only `@State`'s storage survives that reassignment across
+    /// view updates. Nothing here hands out a `Binding` into it, so losing
+    /// `@Bindable` costs nothing.
+    @State private var video: Video
     @Environment(\.modelContext) private var modelContext
     @Environment(AppServices.self) private var services
 
@@ -21,6 +26,10 @@ struct PlayerView: View {
     /// The last position the player reported, kept so leaving the view can
     /// store one without waiting on the web view we're tearing down.
     @State private var lastReportedPosition: Double?
+    /// The episode after this one in its show, if any. Nil hides the Next
+    /// episode button: either this video isn't part of a show, or it's
+    /// already the newest episode. Recomputed whenever `video` changes.
+    @State private var nextEpisode: Video?
 
     /// How often playback reports where it's got to. Two seconds keeps the
     /// resume point close to where you actually stopped without polling the
@@ -28,7 +37,7 @@ struct PlayerView: View {
     private static let reportInterval: Duration = .seconds(2)
 
     init(video: Video) {
-        self.video = video
+        _video = State(initialValue: video)
         _player = State(
             initialValue: YouTubePlayer(
                 source: .video(id: video.videoId),
@@ -80,10 +89,37 @@ struct PlayerView: View {
         // that. Watched is set automatically once playback passes 90% of the
         // duration instead — see `PlaybackProgress`.
         .task { await reportProgress() }
+        .task(id: video.videoId) { refreshNextEpisode() }
         .onDisappear {
             if let position = lastReportedPosition {
                 services.playback.record(video, position: position)
             }
+        }
+    }
+
+    /// Looks up whether the show this video belongs to has a next episode.
+    /// Cheap enough to run on every video change without debouncing: it's an
+    /// in-memory SwiftData fetch, not a network call.
+    private func refreshNextEpisode() {
+        nextEpisode = try? services.shows.nextEpisode(after: video)
+    }
+
+    /// Swaps the player to the next episode in place: same view, same
+    /// actions, new source. Never crosses to another show — `nextEpisode`
+    /// only ever names an episode of `video`'s own show.
+    private func advanceToNextEpisode() {
+        guard let next = nextEpisode else { return }
+        // The episode we're leaving won't hit `onDisappear`, so bank its
+        // progress here the same way leaving the player would.
+        if let position = lastReportedPosition {
+            services.playback.record(video, position: position)
+        }
+        lastReportedPosition = nil
+        let startTime = PlaybackProgress.resumePosition(for: next)
+            .map { Measurement(value: $0, unit: UnitDuration.seconds) }
+        video = next
+        Task {
+            try? await player.load(source: .video(id: next.videoId), startTime: startTime)
         }
     }
 
@@ -134,6 +170,15 @@ struct PlayerView: View {
                 )
             }
             .buttonStyle(.bordered)
+
+            if nextEpisode != nil {
+                Button {
+                    advanceToNextEpisode()
+                } label: {
+                    Label("Next episode", systemImage: "forward.end.fill")
+                }
+                .buttonStyle(.bordered)
+            }
 
             Spacer()
         }
