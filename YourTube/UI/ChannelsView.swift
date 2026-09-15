@@ -398,6 +398,9 @@ private struct CategoryPickerSheet: View {
     @State private var selected: Set<PersistentIdentifier> = []
     @State private var isPriority = false
     @State private var isShow = false
+    /// The detector's reasons, when it was the detector that flagged this
+    /// channel. Empty for a hand-made flag.
+    @State private var showReasons: [String] = []
     @State private var error: String?
 
     private var topicCategories: [VideoCollection] { categories.filter { !$0.isPriority } }
@@ -419,7 +422,14 @@ private struct CategoryPickerSheet: View {
                         Label("Show", systemImage: "tv")
                     }
                 } footer: {
-                    Text("Shows get a poster in Your Shows on the Shows tab, with a count of what you haven't watched. Turning it off records \u{201C}not a show\u{201D}, which automatic sorting can never undo.")
+                    VStack(alignment: .leading, spacing: 6) {
+                        // A guess has to say why, here as much as on the show
+                        // page: this is where it gets corrected.
+                        if !showReasons.isEmpty {
+                            Text("Flagged automatically: " + showReasons.joined(separator: "; ") + ".")
+                        }
+                        Text("Shows get a poster in Your Shows on the Shows tab, with a count of what you haven't watched. Turning it off records \u{201C}not a show\u{201D}, which automatic sorting can never undo.")
+                    }
                 }
                 Section {
                     Button {
@@ -461,6 +471,8 @@ private struct CategoryPickerSheet: View {
                 selected = Set((rule?.topicCollections ?? []).map(\.persistentModelID))
                 isPriority = rule?.isPriority ?? false
                 isShow = (try? services.shows.isShow(channelId: subscription.channelId)) ?? false
+                let record = try? services.shows.record(forChannelId: subscription.channelId)
+                showReasons = record?.flagOrigin == .heuristic ? (record?.detectorReasons ?? []) : []
             }
         }
         .presentationDetents([.medium, .large])
@@ -488,6 +500,8 @@ private struct CategoryPickerSheet: View {
                 do {
                     try services.shows.setIsShow(isOn, channelId: subscription.channelId, channelTitle: subscription.title)
                     isShow = isOn
+                    // The flag is the user's now, so the guess's reasons go.
+                    showReasons = []
                     error = nil
                 } catch {
                     self.error = error.localizedDescription

@@ -152,15 +152,66 @@ name set beneath it and a count of the episodes you haven't watched (no badge
 when you're caught up). Posters carry nothing but art and a name, so a show
 never looks like a single video. The chips above the grid are the feed's
 chips, and a show appears under every category its channel carries; Priority
-shows are pinned first. Tapping a poster opens the show page, which is a
-stub for now.
+shows are pinned first.
+
+### The show page
+
+Tapping a poster opens the show: square channel art, where the episodes come
+from, and a line of habit — "Posts Tue, Fri · about 1 hr 15 min". Both halves
+of that line are computed from the episodes on hand and never stored: the
+weekdays are the ones the show has posted on at least twice, and the length is
+the median episode rounded to five minutes, so a show that changes its habits
+stops claiming the old ones as soon as the new episodes land.
+
+**Play next** opens the right episode in one tap: the newest unwatched for a
+daily news show, the oldest for a backlog watched forwards, and — whatever the
+play order — an episode you're partway through, where the button reads
+*Resume*. **Mark all watched** clears the backlog, badge included; episodes it
+marks leave Continue Watching and Up Next like any other finished video, and
+ones the retention window hides are left alone.
+
+Below that, the episodes in air order, newest first whatever the play order,
+watched ones dimmed and no title truncated. Swipe an episode right to earmark
+it to Up Next, left to mark it watched.
+
+Two per-show settings live behind the button in the top corner. **Play order**
+is the newest-first/oldest-first choice above. **Card art** decides whether the
+show's episodes use the channel's art or the videos' own thumbnails — for a
+channel whose avatar carries no information — and applies to the show's cards
+in Continue Watching and Up Next as well as to the page. Other shows are
+unaffected; a show's poster in the grid is always channel art, because that's
+what makes it a show and not a video.
 
 Flag a channel as a show from the Channels tab: swipe it, long-press it, or
 use its Categories sheet. Both answers are recorded — "Not a show" is stored
-as a standing decision, so the automatic show detector, when it arrives,
-can't overrule either one. Channels marks its shows with a small screen icon.
-A show's episodes are every non-Short video from its channel, resolved live,
-so a new upload is an episode the moment it lands.
+as a standing decision, so the automatic detector below can't overrule either
+one. Channels marks its shows with a small screen icon. A show's episodes are
+every non-Short video from its channel, resolved live, so a new upload is an
+episode the moment it lands.
+
+### Guessing which channels are shows
+
+Most shows file themselves. After a refresh (and at launch) a detector reads
+each channel's stored videos and guesses, so Your Shows fills up without your
+doing anything. It's guesswork of the same kind as the Shorts heuristic: a
+channel has to have a few full-length uploads to be considered at all, and
+then several weak signals are summed against a threshold — a median duration
+over twenty minutes, a regular posting slot, numbered episode titles,
+YouTube's own News & Politics or Entertainment category, and "podcast" or
+"episode" in the descriptions. No single signal is enough, because long
+videos alone are a maker channel and a reliable schedule alone is a vlog.
+
+Every guess says why. The show page and the channel's Categories sheet list
+the reasons the detector found, so a wrong one can be recognised and
+corrected rather than just overturned. Corrections are permanent: a channel
+you have flagged either way is skipped entirely by every later pass, and a
+show you created by hand is never taken back. Channels are examined once and
+then only again when their uploads actually move.
+
+The player offers a Next episode button whenever the video it's playing
+belongs to a show and a later episode exists — it swaps the player to that
+episode in place, never leaving the show. It's absent on a non-show video and
+on a show's newest episode. There's no autoplay of any kind.
 
 Channels itself has two presentations, toggled from the toolbar: the
 grouped list, and an avatar grid of square channel art with the full name
@@ -178,6 +229,46 @@ started (so a glance at a video doesn't clutter Continue Watching), and past
 both Continue Watching and Up Next. Opening the player on its own no longer
 marks anything watched, and the manual "Mark watched" button still works.
 All of this is on-device; YouTube's own watch history isn't API-accessible.
+
+## Titles
+
+YouTube titles carry two things at once: what the video is, and which channel
+it came from. The second is already on screen beside the title, so the app
+strips it. "Mamdani & Staten Island | The Weekly Show with Jon Stewart" reads
+as "Mamdani & Staten Island"; "Joe Rogan Experience #2549 - Jared Diamond"
+reads as "Jared Diamond" with **Ep. 2549** set beside the date.
+
+Only a channel's titles together can say which part is the repeat, so
+`TitleStripper` works on them as a set: it splits each title on the delimiters
+channels use for this (pipe, spaced dash, colon, bullet), lifts out an episode
+number ("#142", "Ep. 31", "S20 Ep.4", "Series 19 Episode 11"), drops segments
+that are nothing but a marker like "FULL EPISODE", and then removes the first
+or last segment when most of the channel's titles carry the same one.
+
+It errs towards leaving titles alone:
+
+- A channel with no repeated affix comes through byte-for-byte. A title
+  nothing is taken out of is never tidied either, so YouTube's own double
+  space or trailing ellipsis survives and the player doesn't set a duplicate
+  original beneath a line that reads the same.
+- A delimiter is not on its own evidence — Knowing Better pipes a different
+  series name onto every upload, and keeps all of them.
+- When every part of a title is boilerplate, nothing is stripped: Trolden's
+  "Funny And Lucky Moments - Hearthstone - Ep. 680" keeps its name and just
+  loses the number, because the alternative is a title that says nothing.
+- A phrasing that varies is beyond this pass. Off Menu names itself in every
+  title and words it differently each time, so tier one leaves it; that's what
+  the on-device rewrite (issue #27) is for.
+
+Cleaning runs in the background after launch and after each refresh, never in
+front of the feed: results are cached on `Video` (`cleanedTitle`,
+`episodeNumber`, `seasonNumber`) and a video with none yet shows its raw
+title. Each video records the `TitleStripper.version` that produced its
+result, exactly as the Shorts heuristic does, so bumping that constant
+re-cleans the whole store on the next launch with no migration.
+
+The player shows YouTube's original title under the cleaned one whenever the
+two differ, so nothing the app changed is hidden.
 
 ## Categories
 
@@ -252,7 +343,7 @@ YourTube/
   API/        YouTube Data API client, DTOs, quota tracking
   Feed/       Refresh algorithm, Shorts heuristic, thumbnail analysis
   UpNext/     The earmark list behind the Shows tab
-  Shows/      The show catalogue behind Your Shows
+  Shows/      The show catalogue behind Your Shows, and the show detector
   Categorize/ On-device channel classification, category management
   Model/      SwiftData models
   UI/         SwiftUI views
@@ -285,9 +376,11 @@ simulator.
 
 Debug builds accept a `-seedFixtures` launch argument. The app then opens an
 in-memory store pre-filled with a few subscriptions, categories, videos, and
-three show-shaped channels — a twice-weekly long-form interview show, a
-numbered weekly podcast, and a weekday news hour with cut-down segments (see
-`DebugFixtures.swift`) and skips `Config.plist`, so it runs signed out
+five show-shaped channels — a twice-weekly long-form interview show, a
+numbered weekly podcast, a weekday news hour with cut-down segments, one left
+unflagged for the detector to find at launch, and one marked "Not a show" that
+it must never pick up (see `DebugFixtures.swift`) — and skips `Config.plist`,
+so it runs signed out
 with the re-auth banner showing. Use it to poke at local-only features such
 as search, category chips, and the daily cap on a fresh simulator, or after
 the weekly token expiry. Nothing touches disk; relaunch without the flag to
@@ -301,7 +394,11 @@ The `yourtube-sim-fixtures` entry in `.claude/launch.json` carries it.
 
 Run with Cmd-U. Coverage is concentrated where the risk is:
 
-- `ShortsHeuristicTests` — the only component that guesses.
+- `ShortsHeuristicTests` and `ShowDetectorTests` — the two components that
+  guess. The show detector is run against a corpus of the six shapes that sit
+  on its boundary: a twice-weekly news show, a numbered podcast, a daily news
+  show buried in its own segments, a maker channel, a vlog, and a clips
+  channel.
 - `FeedRefresherTests` — a refresh against stubbed API and thumbnail
   responses. Pins that a new video never reaches the store before its Shorts
   verdict, since the feed observes the store live.
@@ -311,23 +408,40 @@ Run with Cmd-U. Coverage is concentrated where the risk is:
 - `CategoryManagerTests` — rule migration, multi-answer resolution, and the
   "contains" feed predicate, against a stub classifier.
 - `ShowManagerTests` — the show catalogue: membership (Shorts are never
-  episodes), unwatched counts, the retention window, and the thing most worth
-  pinning — a hand-made show flag, in either direction, surviving an
-  automatic detector pass.
+  episodes), unwatched counts, the retention window, what Play next opens
+  under each play order (an episode in progress always winning), the cadence
+  weekdays and typical duration behind the show page's habit line, and the
+  thing most worth pinning — a hand-made show flag, in either direction,
+  surviving an automatic detector pass.
+- `ShowDetectionRunnerTests` — the pass that joins the detector to the
+  catalogue: what it flags, what it is forbidden to touch, and the fingerprint
+  that stops it re-judging a channel whose uploads haven't moved.
 - `ChannelDailyCapTests` — the per-channel daily cap that folds a prolific
   channel's extra uploads into a "+N more" row.
+- `TitleStripperTests` — the title cleaner, driven against **real** per-channel
+  title lists captured from the signed-in store (the file says which lists are
+  captured and which are hand-written): shared prefix and suffix found and
+  removed, episode numbers extracted, unpatterned channels untouched.
+- `TitleCleanerTests` — the bookkeeping around it: channels judged against
+  their own titles, and a version bump re-cleaning stored videos.
 - `ISO8601DurationTests`, `PKCETests`, `SubscriptionTests`.
 
-**The Shorts corpus is synthetic.** The cases in
-`ShortsHeuristicTests.corpus` are hand-written to cover the decision boundary,
-not captured from live API responses. Replace them with real `videos.list`
-output before trusting the precision and recall figures.
+**The Shorts corpus is synthetic**, and so is the show detector's. The cases
+in `ShortsHeuristicTests.corpus` and `ShowDetectorTests` are hand-written to
+cover the decision boundary, not captured from live API responses. Replace
+them with real `videos.list` output before trusting the precision and recall
+figures.
 
 ## Roadmap
 
 Built so far: sign-in, subscription feed with Shorts filtering, playback,
 Up Next, watched state, browse by channel, on-device channel categories with a
-category filter on the feed, and hand-flagged shows in the Your Shows grid.
+category filter on the feed, shows in the Your Shows grid — flagged by
+hand or guessed, with reasons, by the show detector — and deterministic
+title cleaning.
+
+Next for titles: the on-device model rewrite that calms what the pattern
+stripper can't reach (issue #27), reusing the same cache fields and version.
 
 Next: per-video categorisation for channels that mix topics, probably via
 `NLEmbedding` against the `VideoCollection` centroids that are already modelled.

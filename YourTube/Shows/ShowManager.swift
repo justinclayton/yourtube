@@ -1,9 +1,10 @@
 import Foundation
 import SwiftData
 
-/// One channel's verdict from an automatic show detector: is this a show, and
-/// why. The detector itself is a later slice; the manager already knows how to
-/// apply its answers, and what it must never touch.
+/// One channel's verdict from the automatic show detector: is this a show, and
+/// why. `ShowDetector` produces them; the manager applies them, and knows what
+/// it must never touch. The reasons are kept on the `Show` row so the show page
+/// can say why a channel was flagged.
 struct ShowVerdict: Sendable, Equatable {
     var channelId: String
     var channelTitle: String
@@ -27,7 +28,7 @@ struct ShowVerdict: Sendable, Equatable {
 /// moment it lands, with nothing to reconcile.
 @MainActor
 final class ShowManager {
-    private let modelContext: ModelContext
+    let modelContext: ModelContext
 
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
@@ -112,15 +113,18 @@ final class ShowManager {
         source: ShowSource,
         title: String,
         flagOrigin: ShowFlagOrigin,
-        override: ShowOverride
+        override: ShowOverride,
+        reasons: [String] = []
     ) throws -> Show {
         if let existing = try record(id: source.showId) {
             existing.title = title
             existing.flagOrigin = flagOrigin
             existing.override = override
+            existing.detectorReasons = reasons
             return existing
         }
         let show = Show(source: source, title: title, flagOrigin: flagOrigin, override: override)
+        show.detectorReasons = reasons
         modelContext.insert(show)
         return show
     }
@@ -160,12 +164,12 @@ final class ShowManager {
     }
 
     /// "Keep the last N": the newest N episodes, given a newest-first list.
-    private nonisolated static func retained(_ newestFirst: [Video], count: Int?) -> [Video] {
+    nonisolated static func retained(_ newestFirst: [Video], count: Int?) -> [Video] {
         guard let count, count >= 0 else { return newestFirst }
         return Array(newestFirst.prefix(count))
     }
 
-    private nonisolated static func order(_ newestFirst: [Video], by playOrder: PlayOrder) -> [Video] {
+    nonisolated static func order(_ newestFirst: [Video], by playOrder: PlayOrder) -> [Video] {
         playOrder == .newestFirst ? newestFirst : Array(newestFirst.reversed())
     }
 
@@ -188,13 +192,15 @@ final class ShowManager {
             switch (verdict.isShow, existing) {
             case (true, let existing?):
                 existing.title = verdict.channelTitle
+                existing.detectorReasons = verdict.reasons
                 changed += 1
             case (true, nil):
                 try upsert(
                     source: .channel(id: verdict.channelId),
                     title: verdict.channelTitle,
                     flagOrigin: .heuristic,
-                    override: .none
+                    override: .none,
+                    reasons: verdict.reasons
                 )
                 changed += 1
             case (false, let existing?):
