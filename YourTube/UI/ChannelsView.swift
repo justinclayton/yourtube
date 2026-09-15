@@ -43,6 +43,8 @@ private struct ChannelList: View {
 
     @State private var collapsed: Set<String> = []
     @State private var filing: Subscription?
+    /// The channel whose playlists are being browsed, if any.
+    @State private var pickingPlaylist: Subscription?
     @State private var channelError: String?
 
     private var priorityChannelIds: Set<String> {
@@ -164,6 +166,13 @@ private struct ChannelList: View {
                                     }
                                     priorityButton(for: subscription)
                                     showButton(for: subscription)
+                                    // A playlist within a channel can be a
+                                    // show of its own; the menu is where it's
+                                    // chosen, since it needs a list from
+                                    // YouTube rather than one tap.
+                                    Button("Add playlist as show…", systemImage: "list.bullet.rectangle") {
+                                        pickingPlaylist = subscription
+                                    }
                                 }
                             }
                         }
@@ -188,6 +197,9 @@ private struct ChannelList: View {
             .listStyle(.plain)
             .sheet(item: $filing) { subscription in
                 CategoryPickerSheet(subscription: subscription, categories: categories)
+            }
+            .sheet(item: $pickingPlaylist) { subscription in
+                PlaylistShowPicker(subscription: subscription)
             }
             .alert("Couldn't update channel", isPresented: Binding(
                 get: { channelError != nil },
@@ -494,6 +506,7 @@ struct ChannelView: View {
     @State private var loadMoreError: String?
     /// Set once a "load older" call returns nothing new, so we stop offering it.
     @State private var reachedEnd = false
+    @State private var isPickingPlaylist = false
 
     init(subscription: Subscription, showShorts: Bool) {
         self.subscription = subscription
@@ -539,6 +552,19 @@ struct ChannelView: View {
                     Text(subscription.title).font(.headline).lineLimit(1)
                 }
             }
+            // The other half of "Add playlist as show": on the channel page
+            // itself, for when you got here by browsing rather than by
+            // long-pressing a row.
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    isPickingPlaylist = true
+                } label: {
+                    Label("Add playlist as show", systemImage: "list.bullet.rectangle.portrait")
+                }
+            }
+        }
+        .sheet(isPresented: $isPickingPlaylist) {
+            PlaylistShowPicker(subscription: subscription)
         }
     }
 

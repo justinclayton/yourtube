@@ -148,6 +148,7 @@ enum DebugFixtures {
             }
         }
         try seedShows(context, collections: collections, priority: priority)
+        try seedPlaylistShows(context, collections: collections)
         try context.save()
     }
 }
@@ -439,6 +440,206 @@ extension DebugFixtures {
             day = previous
         }
         return dates
+    }
+}
+
+// MARK: - Playlist-backed shows
+
+/// Two shows that are playlists rather than channels, because a channel is not
+/// always the unit a viewer thinks in.
+///
+/// - **Conan O'Brien Needs a Friend** — a podcast hosted on Team Coco, a
+///   network channel that also puts out clips, tour footage and everything
+///   else. The show is the playlist. It has no rule of its own: it appears in
+///   Your Shows under Team Coco's Comedy and Podcasts & Interviews chips
+///   because it inherits them, which is the whole point.
+/// - **Quizmaster** — a series-based show with a playlist per series, so its
+///   page offers a season picker. Its channel is deliberately not a show:
+///   Quizmaster Extra's uploads are outtakes and trailers, and only the three
+///   series playlists are the programme.
+///
+/// Membership is seeded the way a refresh would leave it — the playlist's
+/// video IDs recorded on the `Show` — so a fixture run exercises the stored
+/// path without a network call.
+extension DebugFixtures {
+    private struct PlaylistSeason {
+        var playlistId: String
+        var name: String
+        /// Episodes newest first, with their durations.
+        var episodes: [(title: String, seconds: Int)]
+        /// Weekdays the series aired on, `Calendar` numbering (1 = Sunday).
+        var weekdays: Set<Int>
+        /// Weeks back the series finished, so season 1 is older than season 3.
+        var weeksAgo: Int
+        /// How many of the newest episodes are left unwatched.
+        var unwatched: Int
+    }
+
+    private struct PlaylistShow {
+        var channelId: String
+        var channelTitle: String
+        /// Set when the channel isn't already a fixture subscription.
+        var channelCategories: [String]?
+        /// Records "not a show" against the channel itself, for a channel
+        /// whose uploads are outtakes and trailers and whose programme is
+        /// only in the playlists. Without it the detector would flag the
+        /// channel too and the grid would carry the same thing twice.
+        var channelIsNotAShow = false
+        var title: String
+        var seasons: [PlaylistSeason]
+    }
+
+    private static let playlistShows: [PlaylistShow] = [
+        PlaylistShow(
+            channelId: "UC-teamcoco",
+            channelTitle: "Team Coco",
+            title: "Conan O'Brien Needs a Friend",
+            seasons: [
+                PlaylistSeason(
+                    playlistId: "PL-conanfriend",
+                    name: "Conan O'Brien Needs a Friend",
+                    episodes: [
+                        ("Michelle Obama", 4_320),
+                        ("Bob Odenkirk", 3_960),
+                        ("Nicole Byer Returns", 4_140),
+                        ("Paul Rudd", 3_720),
+                        ("Sona's Wedding, One Year On", 4_500),
+                        ("Timothy Olyphant", 3_840),
+                    ],
+                    weekdays: [2],
+                    weeksAgo: 0,
+                    unwatched: 3
+                ),
+            ]
+        ),
+        PlaylistShow(
+            channelId: "UC-quizmaster",
+            channelTitle: "Quizmaster Extra",
+            channelCategories: ["Comedy"],
+            channelIsNotAShow: true,
+            title: "Quizmaster",
+            seasons: [
+                PlaylistSeason(
+                    playlistId: "PL-quizmaster-s14",
+                    name: "Series 14",
+                    episodes: [
+                        ("Series 14, Episode 5: A Very Small Hat", 3_000),
+                        ("Series 14, Episode 4: Blow the Whistle", 2_880),
+                        ("Series 14, Episode 3: An Egg of Sorts", 3_060),
+                        ("Series 14, Episode 2: The Long Way Round", 2_940),
+                        ("Series 14, Episode 1: Welcome Back", 3_120),
+                    ],
+                    weekdays: [5],
+                    weeksAgo: 0,
+                    unwatched: 4
+                ),
+                PlaylistSeason(
+                    playlistId: "PL-quizmaster-s13",
+                    name: "Series 13",
+                    episodes: [
+                        ("Series 13, Episode 5: The Final Reckoning", 2_820),
+                        ("Series 13, Episode 4: Potato Diplomacy", 3_180),
+                        ("Series 13, Episode 3: Sing It Backwards", 2_760),
+                        ("Series 13, Episode 2: A Bucket of Water", 3_240),
+                        ("Series 13, Episode 1: First Impressions", 2_880),
+                    ],
+                    weekdays: [5],
+                    weeksAgo: 8,
+                    unwatched: 0
+                ),
+                PlaylistSeason(
+                    playlistId: "PL-quizmaster-s12",
+                    name: "Series 12",
+                    episodes: [
+                        ("Series 12, Episode 5: Champion of Champions", 3_060),
+                        ("Series 12, Episode 4: The Balloon Incident", 2_940),
+                        ("Series 12, Episode 3: Tallest Tower", 3_000),
+                        ("Series 12, Episode 2: Hidden Talents", 2_820),
+                        ("Series 12, Episode 1: Meet the Five", 3_180),
+                    ],
+                    weekdays: [5],
+                    weeksAgo: 16,
+                    unwatched: 0
+                ),
+            ]
+        ),
+    ]
+
+    /// Seeds the playlist-backed shows, their episodes, and the membership a
+    /// refresh would have recorded. No `ChannelRule` is created for a show
+    /// whose channel already has one: inheriting it is the behaviour on show.
+    static func seedPlaylistShows(
+        _ context: ModelContext,
+        collections: [String: VideoCollection]
+    ) throws {
+        let calendar = Calendar.current
+        for entry in playlistShows {
+            if let categories = entry.channelCategories {
+                context.insert(Subscription(
+                    channelId: entry.channelId,
+                    title: entry.channelTitle,
+                    channelDescription: "Fixture channel for \(entry.channelTitle)."
+                ))
+                let filed = categories.compactMap { collections[$0] }
+                if !filed.isEmpty {
+                    context.insert(ChannelRule(
+                        channelId: entry.channelId,
+                        channelTitle: entry.channelTitle,
+                        collections: filed,
+                        isUserSet: true
+                    ))
+                }
+            }
+            if entry.channelIsNotAShow {
+                context.insert(Show(
+                    source: .channel(id: entry.channelId),
+                    title: entry.channelTitle,
+                    flagOrigin: .user,
+                    override: .forceNotShow
+                ))
+            }
+
+            let show = Show(
+                source: .playlist(id: entry.seasons[0].playlistId, channelId: entry.channelId),
+                title: entry.title,
+                flagOrigin: .user,
+                override: .forceShow
+            )
+            show.seasonPlaylistIds = entry.seasons.map(\.playlistId)
+            show.seasonNames = entry.seasons.count > 1 ? entry.seasons.map(\.name) : []
+            show.membershipRefreshedAt = .now
+
+            for season in entry.seasons {
+                let dates = recentDates(
+                    onWeekdays: season.weekdays,
+                    count: season.episodes.count,
+                    hour: 20,
+                    calendar: calendar,
+                    from: Date(timeIntervalSinceNow: -Double(season.weeksAgo) * 7 * 86_400)
+                )
+                var videoIds: [String] = []
+                for (index, episode) in season.episodes.enumerated() {
+                    let videoId = "\(season.playlistId)-\(index)"
+                    videoIds.append(videoId)
+                    context.insert(Video(
+                        videoId: videoId,
+                        channelId: entry.channelId,
+                        channelTitle: entry.channelTitle,
+                        title: episode.title,
+                        videoDescription: "Fixture episode of \(entry.title).",
+                        publishedAt: dates[index],
+                        durationSeconds: episode.seconds,
+                        isLikelyShort: false,
+                        isWatched: index >= season.unwatched,
+                        classifierVersion: ShortsHeuristic.version
+                    ))
+                }
+                // Playlist order, which for a series is the order it aired:
+                // oldest episode first, however the page lists them.
+                show.playlistItemIds[season.playlistId] = videoIds.reversed()
+            }
+            context.insert(show)
+        }
     }
 }
 #endif
