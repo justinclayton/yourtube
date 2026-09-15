@@ -23,6 +23,33 @@ Name the working branch `claude/issue-<n>` after the issue number. Open the PR w
 
 Infer the repo from `git remote -v`; `gh` does this automatically when run inside a clone.
 
+## Screenshots and video on pull requests
+
+A PR for anything a person can see (a new screen, control, layout, or a visible bug fix) carries pictures of it, so the review can happen from the PR page rather than by building the branch. Screenshots for a static change; a short GIF for an interaction (a tap, a swipe, a transition). Skip it for pure model, refactor, or tooling changes.
+
+Media lives on the orphan branch `pr-media`, one directory per issue, and is referenced from the PR body by raw URL. It never merges into `main`.
+
+```
+# from any checkout, without disturbing the working tree
+git fetch origin pr-media
+git worktree add /tmp/pr-media pr-media
+mkdir -p /tmp/pr-media/issue-<n> && cp <screenshots> /tmp/pr-media/issue-<n>/
+git -C /tmp/pr-media add -A && git -C /tmp/pr-media commit -m "Add media for issue #<n>" && git -C /tmp/pr-media push origin pr-media
+git worktree remove /tmp/pr-media
+```
+
+Reference each file as `![caption](https://raw.githubusercontent.com/justinclayton/yourtube/pr-media/issue-<n>/<file>)`, with a one-line caption saying what to look at. Keep files small: downscale screenshots to about 600px wide (`sips --resampleWidth 600 in.png --out out.png`), and keep GIFs under a few megabytes.
+
+Recording a GIF from the simulator:
+
+```
+xcrun simctl io <udid> recordVideo --codec h264 -f drive.mp4 &   # then drive the app
+kill -INT %1                                                        # stops the recording
+ffmpeg -y -i drive.mp4 -vf "fps=10,scale=390:-1:flags=lanczos" -loop 0 drive.gif
+```
+
+Before-and-after pairs are the most useful shape for a fix; a single frame of the new thing is enough for a feature.
+
 ## Pull requests as a triage surface
 
 **PRs as a request surface: no.** _(Set to `yes` if this repo treats external PRs as feature requests; `/triage` reads this flag.)_
