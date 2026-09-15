@@ -127,19 +127,28 @@ final class ShowManager {
 
     // MARK: - Membership
 
-    /// The show's episodes, in its play order, with the retention window
-    /// applied. A channel-backed show's episodes are every non-Short video
-    /// from its channel: Shorts are never episodes of anything.
+    /// The show's episodes, in its play order, with segments and the
+    /// retention window applied. A channel-backed show's episodes are every
+    /// non-Short video from its channel that isn't a cut-down of one: Shorts
+    /// are never episodes of anything, and neither are segments (see
+    /// `ShowManager+Segments`).
     func episodes(of show: Show) throws -> [Video] {
+        Self.order(try listing(of: show).episodes, by: show.playOrder)
+    }
+
+    /// Every video from the show's source, newest first, before anything is
+    /// classified or hidden. The raw material for `listing(of:)`.
+    func sourceVideos(of show: Show) throws -> [Video] {
         let channelId = show.channelId
-        let newestFirst = try modelContext.fetch(FetchDescriptor<Video>(
+        return try modelContext.fetch(FetchDescriptor<Video>(
             predicate: #Predicate { $0.channelId == channelId && !$0.isLikelyShort },
             sortBy: [SortDescriptor(\.publishedAt, order: .reverse)]
         ))
-        return Self.order(Self.retained(newestFirst, count: show.retentionCount), by: show.playOrder)
     }
 
-    /// How many of a show's episodes are still unwatched. Zero means the grid
+    /// How many of a show's episodes are still unwatched. Segments and the
+    /// episodes the retention window hides are not counted: a badge should
+    /// only ever ask for what the show page is offering. Zero means the grid
     /// draws no badge at all.
     func unwatchedCount(for show: Show) throws -> Int {
         try episodes(of: show).filter { !$0.isWatched }.count
@@ -154,8 +163,8 @@ final class ShowManager {
     nonisolated static func unwatchedCounts(from videos: [Video], shows: [Show]) -> [String: Int] {
         let byChannel = Dictionary(grouping: videos.filter { !$0.isLikelyShort }, by: \.channelId)
         return shows.reduce(into: [String: Int]()) { counts, show in
-            let episodes = (byChannel[show.channelId] ?? []).sorted { $0.publishedAt > $1.publishedAt }
-            counts[show.id] = retained(episodes, count: show.retentionCount).filter { !$0.isWatched }.count
+            counts[show.id] = listing(from: byChannel[show.channelId] ?? [], of: show)
+                .episodes.filter { !$0.isWatched }.count
         }
     }
 

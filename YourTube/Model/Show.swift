@@ -88,6 +88,10 @@ final class Show {
     /// and the unwatched count. Nil keeps everything. Nothing is deleted,
     /// the same policy as Shorts hiding.
     var retentionCount: Int?
+    /// How short a video has to be, as a fraction of this show's typical
+    /// episode, before it counts as a segment cut from one. A half by
+    /// default; see `ShowManager+Segments`.
+    var segmentThreshold: Double = 0.5
     var artPreferenceRaw: String
     /// Season names in running order, for playlist-backed shows. Empty until
     /// playlist sources land.
@@ -101,6 +105,7 @@ final class Show {
         override: ShowOverride = .none,
         playOrder: PlayOrder = .newestFirst,
         retentionCount: Int? = nil,
+        segmentThreshold: Double = 0.5,
         artPreference: ShowArtPreference = .channelArt
     ) {
         self.id = source.showId
@@ -118,6 +123,7 @@ final class Show {
         self.overrideRaw = override.rawValue
         self.playOrderRaw = playOrder.rawValue
         self.retentionCount = retentionCount
+        self.segmentThreshold = segmentThreshold
         self.artPreferenceRaw = artPreference.rawValue
         self.createdAt = .now
     }

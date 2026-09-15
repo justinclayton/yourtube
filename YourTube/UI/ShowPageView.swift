@@ -24,6 +24,11 @@ struct ShowPageView: View {
     /// lists exactly what the catalogue counts.
     @Query private var channelVideos: [Video]
     @State private var isShowingSettings = false
+    /// Segments start hidden every time the page opens: the full episodes are
+    /// what a show is, and the cut-downs are there when they're asked for.
+    /// Not stored on the show — it's a way of looking at the page, not a
+    /// property of the show.
+    @State private var isShowingSegments = false
     /// Play next pushes the player itself rather than through a
     /// `NavigationLink`, which a `List` would dress up as a row complete with
     /// a disclosure chevron. The episode rows below are rows and use links.
@@ -38,10 +43,10 @@ struct ShowPageView: View {
         )
     }
 
-    /// What the page lists: air order, newest at the top, whatever the play
-    /// order. Play next is the thing that respects the play order.
-    private var episodes: [Video] {
-        ShowManager.episodesNewestFirst(from: channelVideos, of: show)
+    /// What the page has to work with: the episodes it lists, the segments
+    /// behind the toggle, and what the retention window is holding back.
+    private var listing: ShowListing {
+        ShowManager.listing(from: channelVideos, of: show)
     }
 
     /// The same episodes in the show's play order, which is what decides
@@ -55,8 +60,14 @@ struct ShowPageView: View {
     }
 
     var body: some View {
-        let episodes = episodes
+        let listing = listing
+        let episodes = listing.episodes
         let unwatched = episodes.filter { !$0.isWatched }.count
+        // Segments sit among the episodes in air order rather than in a list
+        // of their own: a clip means something next to the episode it came
+        // from, and nowhere else.
+        let listed = isShowingSegments ? listing.everything : episodes
+        let segmentIds = Set(listing.segments.map(\.videoId))
         List {
             Section {
                 header(episodes: episodes, unwatched: unwatched)
@@ -64,13 +75,18 @@ struct ShowPageView: View {
                     .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
             }
             Section {
-                ForEach(episodes) { episode in
-                    row(episode)
+                ForEach(listed) { episode in
+                    row(episode, isSegment: segmentIds.contains(episode.videoId))
                 }
             } header: {
-                Text(episodes.isEmpty
-                     ? "No episodes yet"
-                     : "\(unwatched) unwatched of \(episodes.count)")
+                episodesHeader(listing: listing, unwatched: unwatched)
+            } footer: {
+                if let summary = listing.hiddenSummary(revealingSegments: isShowingSegments) {
+                    Text(summary)
+                        .font(.caption)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 4)
+                }
             }
         }
         .listStyle(.plain)
@@ -167,7 +183,31 @@ struct ShowPageView: View {
 
     // MARK: - Episodes
 
-    private func row(_ episode: Video) -> some View {
+    /// The list's header counts episodes, not rows: the count means the same
+    /// thing as the badge on the poster whether or not the segments are
+    /// showing. The toggle sits beside it because that's the count it
+    /// explains.
+    @ViewBuilder
+    private func episodesHeader(listing: ShowListing, unwatched: Int) -> some View {
+        HStack {
+            Text(listing.episodes.isEmpty
+                 ? "No episodes yet"
+                 : "\(unwatched) unwatched of \(listing.episodes.count)")
+            Spacer(minLength: 8)
+            if !listing.segments.isEmpty {
+                Button(isShowingSegments
+                       ? "Hide segments"
+                       : "Show \(listing.segments.count) segments") {
+                    withAnimation { isShowingSegments.toggle() }
+                }
+                .font(.caption.weight(.medium))
+                .textCase(nil)
+                .buttonStyle(.borderless)
+            }
+        }
+    }
+
+    private func row(_ episode: Video, isSegment: Bool) -> some View {
         NavigationLink(value: episode) {
             ShowEpisodeRow(episode: episode, show: show, avatarURL: subscription?.thumbnailURL)
         }

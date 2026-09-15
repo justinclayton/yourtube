@@ -9,8 +9,9 @@ import SwiftData
 /// Cadence and typical duration are computed on every read and never stored,
 /// so a show that changes its habits stops lying about them as soon as the
 /// new episodes land. Both read the same `episodes(of:)` the page lists,
-/// which is what makes the retention window apply to them for free, and what
-/// will make segment hiding apply to them when it arrives.
+/// which is what makes the retention window and segment hiding apply to them
+/// for free — the typical length of a news hour is the length of the hour,
+/// not of the clips cut from it.
 extension ShowManager {
 
     // MARK: - Play next
@@ -49,8 +50,9 @@ extension ShowManager {
 
     /// Marks every listed episode watched, which is what "Mark all watched"
     /// means: the show's badge goes, its episodes leave Continue Watching and
-    /// Up Next, and the ones the retention window hides are left alone —
-    /// clearing a backlog shouldn't reach behind the page you're looking at.
+    /// Up Next, and the ones hidden as segments or aged out by the retention
+    /// window are left alone — clearing a backlog shouldn't reach behind the
+    /// page you're looking at.
     ///
     /// The per-video effect is `UpNextQueue.markWatched`'s: a finished episode
     /// has no business waiting in a list of things to watch. Returns how many
@@ -165,11 +167,6 @@ extension ShowManager {
     /// first: an episode list is read newest first — that's where the new
     /// ones are — and it's "Play next" that walks the backlog forwards.
     nonisolated static func episodesNewestFirst(from videos: [Video], of show: Show) -> [Video] {
-        retained(
-            videos
-                .filter { $0.channelId == show.channelId && !$0.isLikelyShort }
-                .sorted { $0.publishedAt > $1.publishedAt },
-            count: show.retentionCount
-        )
+        listing(from: videos, of: show).episodes
     }
 }
