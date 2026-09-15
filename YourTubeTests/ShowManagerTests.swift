@@ -3,9 +3,10 @@ import SwiftData
 @testable import YourTube
 
 /// The show catalogue, driven through `ShowManager` against an in-memory
-/// container the way `CategoryManagerTests` drives categories. The automatic
-/// detector doesn't exist yet, so its verdicts are handed in directly: what's
-/// under test is that the user's decisions survive one.
+/// container the way `CategoryManagerTests` drives categories. `ShowDetector`'s
+/// verdicts are handed in directly rather than computed (that's
+/// `ShowDetectorTests`): what's under test here is that the user's decisions
+/// survive a pass, and that a guess arrives with its reasons attached.
 @MainActor
 final class ShowManagerTests: XCTestCase {
     private var container: ModelContainer!
@@ -203,7 +204,7 @@ final class ShowManagerTests: XCTestCase {
     // MARK: - Surviving an automatic pass
 
     /// The stub detector: a hand-written set of verdicts standing in for the
-    /// cadence-and-duration heuristic that lands in a later slice.
+    /// cadence-and-duration heuristic, which is tested on its own corpus.
     private func automaticPass(_ verdicts: (channelId: String, isShow: Bool)...) throws -> Int {
         try manager.applyAutomaticVerdicts(verdicts.map {
             ShowVerdict(channelId: $0.channelId, channelTitle: $0.channelId, isShow: $0.isShow,
@@ -255,5 +256,32 @@ final class ShowManagerTests: XCTestCase {
         try automaticPass((channelId: "UC-vlog", isShow: true))
 
         XCTAssertFalse(try manager.isShow(channelId: "UC-vlog"))
+    }
+
+    /// A guess has to carry its reasons, or the show page can't say why the
+    /// channel is there.
+    func testAGuessKeepsItsReasonsAndAHandFlagHasNone() throws {
+        try manager.applyAutomaticVerdicts([ShowVerdict(
+            channelId: "UC-news", channelTitle: "Newsline", isShow: true,
+            reasons: ["Episodes usually run 1 hr 5 min", "Posts on a regular schedule (Tue, Fri)"]
+        )])
+        let guessed = try XCTUnwrap(manager.record(forChannelId: "UC-news"))
+        XCTAssertEqual(guessed.flagOrigin, .heuristic)
+        XCTAssertEqual(guessed.detectorReasons.count, 2)
+
+        // Taking the decision by hand makes the reasons moot.
+        try manager.markAsShow(channelId: "UC-news", channelTitle: "Newsline")
+        XCTAssertEqual(try manager.record(forChannelId: "UC-news")?.detectorReasons, [])
+    }
+
+    /// A later pass replaces the reasons rather than appending to them.
+    func testASecondPassRefreshesTheReasons() throws {
+        try manager.applyAutomaticVerdicts([ShowVerdict(
+            channelId: "UC-news", channelTitle: "Newsline", isShow: true, reasons: ["Old reason"]
+        )])
+        try manager.applyAutomaticVerdicts([ShowVerdict(
+            channelId: "UC-news", channelTitle: "Newsline", isShow: true, reasons: ["New reason"]
+        )])
+        XCTAssertEqual(try manager.record(forChannelId: "UC-news")?.detectorReasons, ["New reason"])
     }
 }

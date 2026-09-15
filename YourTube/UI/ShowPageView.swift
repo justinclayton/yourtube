@@ -46,6 +46,8 @@ struct ShowPageView: View {
                     }
                 }
 
+                DetectorReasons(show: show)
+
                 Divider()
 
                 VStack(alignment: .leading, spacing: 6) {
@@ -65,6 +67,35 @@ struct ShowPageView: View {
             let episodes = (try? services.shows.episodes(of: show)) ?? []
             episodeCount = episodes.count
             unwatchedCount = episodes.filter { !$0.isWatched }.count
+        }
+    }
+}
+
+/// Why the detector thought this channel was a show. Shown only for a guess:
+/// a flag the user made by hand needs no justifying, and a guess that can't be
+/// read can't be trusted or corrected.
+struct DetectorReasons: View {
+    let show: Show
+
+    var body: some View {
+        if show.flagOrigin == .heuristic, !show.detectorReasons.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Flagged as a show automatically", systemImage: "wand.and.stars")
+                    .font(.subheadline.weight(.semibold))
+                ForEach(show.detectorReasons, id: \.self) { reason in
+                    Text("· \(reason)")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Text("Mark it \u{201C}Not a show\u{201D} in Channels if this is wrong; that decision sticks.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
     }
 }

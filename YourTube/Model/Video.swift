@@ -19,6 +19,9 @@ final class Video {
     /// Thumbnail aspect ratio, used by the Shorts heuristic. Nil if unknown.
     var thumbnailWidth: Int?
     var thumbnailHeight: Int?
+    /// YouTube's own `snippet.categoryId` (`"25"` is News & Politics), read by
+    /// `ShowDetector`. Nil for videos stored before it was fetched.
+    var youtubeCategoryId: String?
 
     var isLikelyShort: Bool
     var isWatched: Bool
@@ -51,6 +54,7 @@ final class Video {
         thumbnailURL: String? = nil,
         thumbnailWidth: Int? = nil,
         thumbnailHeight: Int? = nil,
+        youtubeCategoryId: String? = nil,
         isLikelyShort: Bool = false,
         isWatched: Bool = false,
         savedForLaterAt: Date? = nil,
@@ -69,6 +73,7 @@ final class Video {
         self.thumbnailURL = thumbnailURL
         self.thumbnailWidth = thumbnailWidth
         self.thumbnailHeight = thumbnailHeight
+        self.youtubeCategoryId = youtubeCategoryId
         self.isLikelyShort = isLikelyShort
         self.isWatched = isWatched
         self.savedForLaterAt = savedForLaterAt

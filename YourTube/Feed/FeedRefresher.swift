@@ -228,7 +228,8 @@ final class FeedRefresher {
                 durationSeconds: duration,
                 thumbnailURL: thumbnail?.url,
                 thumbnailWidth: thumbnail?.width,
-                thumbnailHeight: thumbnail?.height
+                thumbnailHeight: thumbnail?.height,
+                youtubeCategoryId: snippet.categoryId
             )
             pending.append((video, signals))
         }
