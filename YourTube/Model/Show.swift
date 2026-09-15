@@ -67,10 +67,12 @@ enum ShowArtPreference: String, Codable, Sendable {
 /// playlist case can be added without a store migration; read it through
 /// `source`.
 ///
-/// Membership isn't stored: a channel-backed show's episodes are every
+/// A channel-backed show's membership isn't stored: its episodes are every
 /// non-Short video from its channel, resolved live by `ShowManager`, which
 /// keeps the catalogue idempotent under refresh the way `ChannelRule` does
-/// for categories.
+/// for categories. A playlist-backed show has no such rule to resolve — only
+/// YouTube knows what's in a playlist — so its membership is stored, in
+/// `playlistItemIds`, and refreshed when the show is opened.
 @Model
 final class Show {
     @Attribute(.unique) var id: String
@@ -89,9 +91,21 @@ final class Show {
     /// the same policy as Shorts hiding.
     var retentionCount: Int?
     var artPreferenceRaw: String
-    /// Season names in running order, for playlist-backed shows. Empty until
-    /// playlist sources land.
+    /// Season names in running order, for a show built from several
+    /// playlists. Empty for a show backed by one playlist, which has nothing
+    /// to pick between, and for every channel-backed show.
     var seasonNames: [String] = []
+    /// The playlists behind a playlist-backed show, in running order, and in
+    /// the same order as `seasonNames` when the show has seasons. Read it
+    /// through `backingPlaylistIds`, which falls back to the source playlist.
+    var seasonPlaylistIds: [String] = []
+    /// Each backing playlist's item video IDs, in playlist order, keyed by
+    /// playlist ID. This is a playlist-backed show's membership: what the
+    /// last refresh saw in the playlist.
+    var playlistItemIds: [String: [String]] = [:]
+    /// When the membership above was last pulled from the API. Nil for a
+    /// show that hasn't been opened since it was created.
+    var membershipRefreshedAt: Date?
     var createdAt: Date
 
     init(
@@ -151,6 +165,38 @@ final class Show {
     /// Whether this row is a show in the catalogue, as opposed to the
     /// tombstone left by "Not a show".
     var isActive: Bool { override != .forceNotShow }
+
+    // MARK: - Playlist backing
+
+    var isPlaylistBacked: Bool { sourceKind == "playlist" }
+
+    /// Every playlist behind the show, in running order. Empty for a
+    /// channel-backed show; for a playlist-backed one it is `seasonPlaylistIds`
+    /// when the show has seasons and the source playlist alone otherwise, so
+    /// a show created before seasons existed still answers correctly.
+    var backingPlaylistIds: [String] {
+        guard isPlaylistBacked else { return [] }
+        return seasonPlaylistIds.isEmpty ? [sourceId] : seasonPlaylistIds
+    }
+
+    /// The show's membership: the video IDs of every backing playlist, in
+    /// running order. Order here is the playlist's, not the air date's —
+    /// the page still lists episodes newest first.
+    var memberVideoIds: [String] {
+        backingPlaylistIds.flatMap { playlistItemIds[$0] ?? [] }
+    }
+
+    /// Whether the page offers a season picker: more than one named season to
+    /// pick between.
+    var hasSeasons: Bool { seasonNames.count > 1 }
+
+    /// The video IDs of one season, addressed by its index in `seasonNames`.
+    /// Empty for an index the show doesn't have.
+    func videoIds(inSeason index: Int) -> [String] {
+        let playlists = backingPlaylistIds
+        guard playlists.indices.contains(index) else { return [] }
+        return playlistItemIds[playlists[index]] ?? []
+    }
 
     /// One line of provenance for the show page: where the episodes come
     /// from, given the name of the channel behind them.

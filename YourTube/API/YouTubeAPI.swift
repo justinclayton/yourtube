@@ -85,6 +85,45 @@ struct YouTubeAPI: Sendable {
         return page.items
     }
 
+    /// Every playlist a channel publishes. 1 quota unit per page of 50.
+    ///
+    /// Only called when the user is choosing a playlist to make a show of, so
+    /// it costs a routine refresh nothing. `allPages` carries the same
+    /// pagination guard as the uploads fetch, which is what keeps a bad
+    /// `nextPageToken` from spending the day's quota in a loop.
+    func playlists(channelId: String) async throws -> [YT.Playlist] {
+        try await allPages(
+            path: "playlists",
+            query: [
+                "part": "snippet,contentDetails",
+                "channelId": channelId,
+                "maxResults": "50",
+            ],
+            cost: 1
+        )
+    }
+
+    /// Every item in a playlist, in playlist order. 1 quota unit per page of 50.
+    ///
+    /// The page limit is lower than `allPages`' default because this runs on a
+    /// playlist-backed show's refresh: 10 pages is 500 episodes, more than any
+    /// show the app is for, and it caps the cost of one refresh at 10 units.
+    func playlistItems(
+        playlistId: String,
+        pageLimit: Int = 10
+    ) async throws -> [YT.PlaylistItem] {
+        try await allPages(
+            path: "playlistItems",
+            query: [
+                "part": "snippet,contentDetails",
+                "playlistId": playlistId,
+                "maxResults": "50",
+            ],
+            cost: 1,
+            pageLimit: pageLimit
+        )
+    }
+
     /// Hydrates video IDs with duration and full snippet. 1 unit per 50 IDs.
     func videos(ids: [String]) async throws -> [YT.VideoItem] {
         var results: [YT.VideoItem] = []

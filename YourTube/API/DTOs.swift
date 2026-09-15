@@ -43,6 +43,33 @@ enum YT {
         }
     }
 
+    // MARK: playlists.list
+
+    /// One playlist owned by a channel, as offered when picking a
+    /// playlist-backed show. `itemCount` is what the picker shows beside the
+    /// title so an empty or one-video playlist is visibly not worth adding.
+    struct Playlist: Decodable {
+        let id: String
+        let snippet: Snippet?
+        let contentDetails: ContentDetails?
+
+        struct Snippet: Decodable {
+            let title: String?
+            let description: String?
+            let channelId: String?
+            let channelTitle: String?
+            let publishedAt: Date?
+            let thumbnails: Thumbnails?
+        }
+
+        struct ContentDetails: Decodable {
+            let itemCount: Int?
+        }
+
+        var title: String { snippet?.title ?? id }
+        var itemCount: Int { contentDetails?.itemCount ?? 0 }
+    }
+
     // MARK: playlistItems.list
 
     struct PlaylistItem: Decodable {
