@@ -484,6 +484,38 @@ reliably resolve the name; update the `id=` there after creating the device
 Agents: pass `device: "YourTube Dev"` when building or launching in the
 simulator.
 
+### What keeps the data, and what wipes it
+
+The signed-in store (`Library/Application Support/default.store` inside the
+app's data container) survives everything that *replaces* the app and dies
+with anything that *removes* it. iOS keeps a data container for as long as
+the bundle id stays installed, whichever build is in it:
+
+| Keeps the store | Wipes the store |
+| --- | --- |
+| Xcode Run (Cmd-R) | `xcrun simctl uninstall "YourTube Dev" net.claytons.yourtube` |
+| `xcrun simctl install "YourTube Dev" <path>.app` over an existing install | `xcrun simctl erase` |
+| `xcodebuild test` (installs the test host the same way) | Deleting the app from the home screen |
+| `xcrun simctl launch ... -seedFixtures` (in-memory store, own defaults) | Deleting the simulator |
+
+Never uninstall to "get a clean state". `-seedFixtures` is the clean state,
+and it costs nothing; an uninstall costs the 6,000-video store and a
+re-login. Installing a different branch's build is fine: SwiftData migrates
+the store forward for additive schema changes, and a build that can't open
+the store fails loudly with its setup screen rather than touching it.
+
+Before anything you're unsure of, copy the store out:
+
+```sh
+C=$(xcrun simctl get_app_container "YourTube Dev" net.claytons.yourtube data)
+cp "$C/Library/Application Support/"default.store* ~/Desktop/yourtube-store-backup/
+```
+
+To put it back, terminate the app, copy `default.store` over the one in the
+container, delete the `-wal` and `-shm` files beside it, and launch. The
+container path changes after every reinstall, so always re-run
+`get_app_container` rather than reusing a saved path.
+
 ### Fixture data without a login
 
 Debug builds accept a `-seedFixtures` launch argument. The app then opens an
@@ -497,8 +529,12 @@ picker (see `DebugFixtures.swift`). It skips `Config.plist`,
 so it runs signed out
 with the re-auth banner showing. Use it to poke at local-only features such
 as search, category chips, and the daily cap on a fresh simulator, or after
-the weekly token expiry. Nothing touches disk; relaunch without the flag to
-get the real store back.
+the weekly token expiry. The store is in memory and `UserDefaults` (quota,
+classifier and detector bookkeeping, settings) go to a separate suite that is
+reset on each fixture launch, so the real store and the real defaults are
+never opened; relaunch without the flag to get them back. It is a launch
+argument, not a reinstall: don't pair it with `simctl uninstall`, which
+deletes the real store (see above).
 
 Xcode: *Product > Scheme > Edit Scheme > Run > Arguments Passed On Launch*.
 Command line: `xcrun simctl launch "YourTube Dev" net.claytons.yourtube -seedFixtures`.
