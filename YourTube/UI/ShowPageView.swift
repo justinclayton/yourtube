@@ -388,6 +388,7 @@ private struct ShowEpisodeRow: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .foregroundStyle(episode.isWatched ? .secondary : .primary)
                 HStack(spacing: 6) {
+                    EpisodeBadge(video: episode)
                     if isSegment {
                         Text("Segment")
                             .font(.caption2.weight(.semibold))
