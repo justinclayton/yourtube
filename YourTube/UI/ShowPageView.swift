@@ -330,7 +330,7 @@ struct ShowPageView: View {
                 try? services.upNext.toggle(episode)
             } label: {
                 Label(
-                    episode.isInUpNext ? "Remove" : "Up Next",
+                    episode.isInUpNext ? "Un-earmark" : "Earmark",
                     systemImage: episode.isInUpNext ? "bookmark.slash" : "bookmark"
                 )
             }
