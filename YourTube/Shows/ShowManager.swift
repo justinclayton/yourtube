@@ -22,10 +22,13 @@ struct ShowVerdict: Sendable, Equatable {
 /// decided about in either direction — including "not a show", which leaves a
 /// `Show` row behind purely as a tombstone. `shows()` never returns those.
 ///
-/// Membership is resolved live rather than stored: a channel-backed show's
-/// episodes are every non-Short video from its channel. That keeps the
+/// A channel-backed show's membership is resolved live rather than stored:
+/// its episodes are every non-Short video from its channel. That keeps the
 /// catalogue idempotent under feed refresh — a new upload is an episode the
-/// moment it lands, with nothing to reconcile.
+/// moment it lands, with nothing to reconcile. A playlist-backed show has no
+/// such rule to resolve, so its membership is stored on the record and
+/// refreshed from the API when the show is opened; see `ShowManager+Playlists`
+/// and `FeedRefresher+PlaylistShows`.
 @MainActor
 final class ShowManager {
     let modelContext: ModelContext
@@ -132,15 +135,35 @@ final class ShowManager {
     // MARK: - Membership
 
     /// The show's episodes, in its play order, with the retention window
-    /// applied. A channel-backed show's episodes are every non-Short video
-    /// from its channel: Shorts are never episodes of anything.
+    /// applied.
+    ///
+    /// A channel-backed show's episodes are every non-Short video from its
+    /// channel; a playlist-backed show's are the ones the playlist holds, as
+    /// of its last membership refresh. Shorts are never episodes of anything
+    /// either way — a playlist can contain one, and it still isn't an episode.
     func episodes(of show: Show) throws -> [Video] {
-        let channelId = show.channelId
-        let newestFirst = try modelContext.fetch(FetchDescriptor<Video>(
-            predicate: #Predicate { $0.channelId == channelId && !$0.isLikelyShort },
-            sortBy: [SortDescriptor(\.publishedAt, order: .reverse)]
-        ))
+        let newestFirst = try episodesNewestFirst(of: show)
         return Self.order(Self.retained(newestFirst, count: show.retentionCount), by: show.playOrder)
+    }
+
+    /// The show's episodes in air order, newest first, before the retention
+    /// window. The one place membership is resolved against the store.
+    private func episodesNewestFirst(of show: Show) throws -> [Video] {
+        let byDate = [SortDescriptor(\Video.publishedAt, order: .reverse)]
+        switch show.source {
+        case .channel(let channelId):
+            return try modelContext.fetch(FetchDescriptor<Video>(
+                predicate: #Predicate { $0.channelId == channelId && !$0.isLikelyShort },
+                sortBy: byDate
+            ))
+        case .playlist:
+            let ids = show.memberVideoIds
+            guard !ids.isEmpty else { return [] }
+            return try modelContext.fetch(FetchDescriptor<Video>(
+                predicate: #Predicate { ids.contains($0.videoId) && !$0.isLikelyShort },
+                sortBy: byDate
+            ))
+        }
     }
 
     /// How many of a show's episodes are still unwatched. Zero means the grid
@@ -156,10 +179,32 @@ final class ShowManager {
     /// `videos` may hold anything; Shorts and other channels' videos are
     /// filtered out here, so the caller's query doesn't have to be exact.
     nonisolated static func unwatchedCounts(from videos: [Video], shows: [Show]) -> [String: Int] {
-        let byChannel = Dictionary(grouping: videos.filter { !$0.isLikelyShort }, by: \.channelId)
+        let candidates = videos.filter { !$0.isLikelyShort }
+        let byChannel = Dictionary(grouping: candidates, by: \.channelId)
         return shows.reduce(into: [String: Int]()) { counts, show in
-            let episodes = (byChannel[show.channelId] ?? []).sorted { $0.publishedAt > $1.publishedAt }
+            let pool: [Video]
+            switch show.source {
+            case .channel(let channelId):
+                pool = byChannel[channelId] ?? []
+            case .playlist:
+                let ids = Set(show.memberVideoIds)
+                pool = candidates.filter { ids.contains($0.videoId) }
+            }
+            let episodes = pool.sorted { $0.publishedAt > $1.publishedAt }
             counts[show.id] = retained(episodes, count: show.retentionCount).filter { !$0.isWatched }.count
+        }
+    }
+
+    /// Which of `videos` belong to the show, unordered. The membership rule in
+    /// one place, so the live-query paths (the grid's counts, the show page)
+    /// answer exactly what `episodes(of:)` fetches.
+    nonisolated static func members(from videos: [Video], of show: Show) -> [Video] {
+        switch show.source {
+        case .channel(let channelId):
+            return videos.filter { $0.channelId == channelId && !$0.isLikelyShort }
+        case .playlist:
+            let ids = Set(show.memberVideoIds)
+            return videos.filter { ids.contains($0.videoId) && !$0.isLikelyShort }
         }
     }
 

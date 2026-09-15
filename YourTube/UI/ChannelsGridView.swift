@@ -18,6 +18,7 @@ struct ChannelsGridView: View {
     let showShorts: Bool
     @Binding var collapsed: Set<String>
     let onFile: (Subscription) -> Void
+    let onAddPlaylist: (Subscription) -> Void
     let onError: (String) -> Void
 
     @Environment(AppServices.self) private var services
@@ -71,6 +72,7 @@ struct ChannelsGridView: View {
                                             isShow: showChannelIds.contains(subscription.channelId),
                                             services: services,
                                             onFile: { onFile(subscription) },
+                                            onAddPlaylist: { onAddPlaylist(subscription) },
                                             onError: onError
                                         ).contextMenuContent
                                     }

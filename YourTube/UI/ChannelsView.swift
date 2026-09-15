@@ -64,14 +64,20 @@ private struct ChannelList: View {
 
     @State private var collapsed: Set<String> = []
     @State private var filing: Subscription?
+    /// The channel whose playlists are being browsed, if any.
+    @State private var pickingPlaylist: Subscription?
     @State private var channelError: String?
 
     private var priorityChannelIds: Set<String> {
         Set(rules.filter(\.isPriority).map(\.channelId))
     }
 
+    /// Channels that are themselves shows. A channel that merely hosts a
+    /// playlist-backed show isn't one — Team Coco puts out clips and tour
+    /// footage as well as the podcast — so the flag and the screen icon read
+    /// channel-backed rows only.
     private var showChannelIds: Set<String> {
-        Set(showRecords.filter(\.isActive).map(\.channelId))
+        Set(showRecords.filter { $0.isActive && !$0.isPlaylistBacked }.map(\.channelId))
     }
 
     init(showShorts: Bool, searchQuery: String, presentation: ChannelsPresentation) {
@@ -159,12 +165,16 @@ private struct ChannelList: View {
                         showShorts: showShorts,
                         collapsed: $collapsed,
                         onFile: { filing = $0 },
+                        onAddPlaylist: { pickingPlaylist = $0 },
                         onError: { channelError = $0 }
                     )
                 }
             }
             .sheet(item: $filing) { subscription in
                 CategoryPickerSheet(subscription: subscription, categories: categories)
+            }
+            .sheet(item: $pickingPlaylist) { subscription in
+                PlaylistShowPicker(subscription: subscription)
             }
             .alert("Couldn't update channel", isPresented: Binding(
                 get: { channelError != nil },
@@ -191,6 +201,7 @@ private struct ChannelList: View {
                                 isShow: showChannelIds.contains(subscription.channelId),
                                 services: services,
                                 onFile: { filing = subscription },
+                                onAddPlaylist: { pickingPlaylist = subscription },
                                 onError: { channelError = $0 }
                             )
                             NavigationLink {
@@ -257,6 +268,9 @@ struct ChannelRowMenu {
     let isShow: Bool
     let services: AppServices
     let onFile: () -> Void
+    /// Opens the playlist picker for this channel. Menu-only: it needs a list
+    /// from YouTube rather than one tap, so it has no swipe action.
+    let onAddPlaylist: () -> Void
     let onError: (String) -> Void
 
     var categoriesButton: some View {
@@ -312,10 +326,22 @@ struct ChannelRowMenu {
         }
     }
 
+    /// A playlist within a channel can be a show of its own: a podcast hosted
+    /// on a network channel, or a series-based show with a playlist per
+    /// series.
+    var addPlaylistButton: some View {
+        Button {
+            onAddPlaylist()
+        } label: {
+            Label("Add playlist as show…", systemImage: "list.bullet.rectangle")
+        }
+    }
+
     @ViewBuilder var contextMenuContent: some View {
         categoriesButton
         priorityButton
         showButton
+        addPlaylistButton
     }
 }
 
@@ -565,6 +591,7 @@ struct ChannelView: View {
     @State private var loadMoreError: String?
     /// Set once a "load older" call returns nothing new, so we stop offering it.
     @State private var reachedEnd = false
+    @State private var isPickingPlaylist = false
 
     init(subscription: Subscription, showShorts: Bool) {
         self.subscription = subscription
@@ -610,6 +637,19 @@ struct ChannelView: View {
                     Text(subscription.title).font(.headline).lineLimit(1)
                 }
             }
+            // The other half of "Add playlist as show": on the channel page
+            // itself, for when you got here by browsing rather than by
+            // long-pressing a row.
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    isPickingPlaylist = true
+                } label: {
+                    Label("Add playlist as show", systemImage: "list.bullet.rectangle.portrait")
+                }
+            }
+        }
+        .sheet(isPresented: $isPickingPlaylist) {
+            PlaylistShowPicker(subscription: subscription)
         }
     }
 

@@ -552,4 +552,225 @@ final class ShowManagerTests: XCTestCase {
         )])
         XCTAssertEqual(try manager.record(forChannelId: "UC-news")?.detectorReasons, ["New reason"])
     }
+
+    // MARK: - Playlist-backed shows
+
+    /// The picker hands `addPlaylistShow` choices; the refresher hands
+    /// `setPlaylistItems` what the playlist held. Both together are how a
+    /// playlist-backed show gets its membership, so the tests go through them
+    /// rather than writing the record by hand.
+    @discardableResult
+    private func playlistShow(
+        _ title: String,
+        channelId: String,
+        seasons: [(playlist: String, name: String, videoIds: [String])]
+    ) throws -> Show {
+        let show = try manager.addPlaylistShow(
+            seasons.map { PlaylistChoice(playlistId: $0.playlist, title: $0.name) },
+            channelId: channelId,
+            title: title
+        )
+        for season in seasons {
+            try manager.setPlaylistItems(season.videoIds, playlistId: season.playlist, of: show)
+        }
+        return show
+    }
+
+    func testAPlaylistBackedShowsEpisodesAreThePlaylistsItems() throws {
+        subscribe("Team Coco", id: "UC-coco")
+        video("friend-1", channelId: "UC-coco", daysAgo: 1)
+        video("friend-2", channelId: "UC-coco", daysAgo: 8)
+        video("a-clip", channelId: "UC-coco", daysAgo: 2)
+        video("a-short", channelId: "UC-coco", daysAgo: 3, seconds: 40, short: true)
+        video("guest-channel-cut", channelId: "UC-elsewhere", daysAgo: 4)
+        try context.save()
+
+        let show = try playlistShow(
+            "Conan O'Brien Needs a Friend",
+            channelId: "UC-coco",
+            seasons: [(playlist: "PL-friend", name: "Conan O'Brien Needs a Friend",
+                       videoIds: ["friend-2", "a-short", "friend-1", "guest-channel-cut"])]
+        )
+
+        XCTAssertEqual(show.id, "playlist:PL-friend")
+        XCTAssertEqual(show.source, .playlist(id: "PL-friend", channelId: "UC-coco"))
+        XCTAssertEqual(try manager.episodes(of: show).map(\.videoId),
+                       ["friend-1", "guest-channel-cut", "friend-2"],
+                       "the playlist's items, newest first; the channel's other videos are not episodes")
+    }
+
+    /// A playlist can hold a video from another channel, and a Short is never
+    /// an episode however it got into the playlist.
+    func testAPlaylistItemThatIsAShortIsStillNotAnEpisode() throws {
+        video("ep", channelId: "UC-coco", daysAgo: 1)
+        video("promo-short", channelId: "UC-coco", daysAgo: 2, seconds: 30, short: true)
+        try context.save()
+
+        let show = try playlistShow("Friend", channelId: "UC-coco",
+                                    seasons: [(playlist: "PL-f", name: "Friend",
+                                               videoIds: ["ep", "promo-short"])])
+        XCTAssertEqual(try manager.episodes(of: show).map(\.videoId), ["ep"])
+    }
+
+    /// A network channel can be a show and host one too; they are two rows,
+    /// and the channel's show still sees everything the channel puts out.
+    func testAChannelShowAndAPlaylistShowOnTheSameChannelAreDifferentShows() throws {
+        video("upload", channelId: "UC-coco", daysAgo: 1)
+        video("podcast", channelId: "UC-coco", daysAgo: 2)
+        try context.save()
+
+        let channelShow = try manager.markAsShow(channelId: "UC-coco", channelTitle: "Team Coco")
+        let show = try playlistShow("Needs a Friend", channelId: "UC-coco",
+                                    seasons: [(playlist: "PL-f", name: "Needs a Friend",
+                                               videoIds: ["podcast"])])
+
+        XCTAssertNotEqual(channelShow.id, show.id)
+        XCTAssertEqual(try manager.shows().count, 2)
+        XCTAssertEqual(try manager.episodes(of: channelShow).map(\.videoId), ["upload", "podcast"])
+        XCTAssertEqual(try manager.episodes(of: show).map(\.videoId), ["podcast"])
+    }
+
+    /// Categories and Priority are the channel's, read through its rule. The
+    /// manager writes no rule of its own, so there is nothing to file twice.
+    func testAPlaylistShowCarriesItsChannelAndCreatesNoRuleOfItsOwn() throws {
+        let show = try playlistShow("Needs a Friend", channelId: "UC-coco",
+                                    seasons: [(playlist: "PL-f", name: "Needs a Friend", videoIds: [])])
+        XCTAssertEqual(show.channelId, "UC-coco")
+        XCTAssertTrue(try context.fetch(FetchDescriptor<ChannelRule>()).isEmpty)
+    }
+
+    func testOnePlaylistIsAShowWithNothingToPickBetween() throws {
+        let show = try playlistShow("Needs a Friend", channelId: "UC-coco",
+                                    seasons: [(playlist: "PL-f", name: "Needs a Friend", videoIds: [])])
+        XCTAssertFalse(show.hasSeasons)
+        XCTAssertTrue(show.seasonNames.isEmpty)
+        XCTAssertEqual(show.backingPlaylistIds, ["PL-f"])
+    }
+
+    func testSeveralPlaylistsBecomeOneShowWithASeasonEach() throws {
+        video("s2e1", channelId: "UC-quiz", daysAgo: 7)
+        video("s2e2", channelId: "UC-quiz", daysAgo: 1)
+        video("s1e1", channelId: "UC-quiz", daysAgo: 60)
+        video("s1e2", channelId: "UC-quiz", daysAgo: 53)
+        try context.save()
+
+        let show = try playlistShow("Quizmaster", channelId: "UC-quiz", seasons: [
+            (playlist: "PL-s2", name: "Series 2", videoIds: ["s2e1", "s2e2"]),
+            (playlist: "PL-s1", name: "Series 1", videoIds: ["s1e1", "s1e2"]),
+        ])
+
+        XCTAssertTrue(show.hasSeasons)
+        XCTAssertEqual(show.seasonNames, ["Series 2", "Series 1"])
+        XCTAssertEqual(try manager.episodes(of: show).map(\.videoId),
+                       ["s2e2", "s2e1", "s1e2", "s1e1"],
+                       "every season's episodes, newest first, until a season is picked")
+
+        let all = try manager.episodes(of: show)
+        XCTAssertEqual(ShowManager.episodes(all, inSeason: 0, of: show).map(\.videoId), ["s2e2", "s2e1"])
+        XCTAssertEqual(ShowManager.episodes(all, inSeason: 1, of: show).map(\.videoId), ["s1e2", "s1e1"])
+        XCTAssertEqual(ShowManager.episodes(all, inSeason: nil, of: show).count, 4, "nil is all seasons")
+        XCTAssertEqual(ShowManager.episodes(all, inSeason: 9, of: show), [], "a season the show hasn't got")
+        XCTAssertEqual(ShowManager.seasonIndex(of: all[0], in: show), 0)
+        XCTAssertEqual(ShowManager.seasonIndex(of: all[3], in: show), 1)
+    }
+
+    /// Re-adding with fewer playlists drops the ones left out, membership and
+    /// all, so a removed season can't linger in the episode list.
+    func testDroppingASeasonDropsItsEpisodesToo() throws {
+        video("s2e1", channelId: "UC-quiz", daysAgo: 1)
+        video("s1e1", channelId: "UC-quiz", daysAgo: 60)
+        try context.save()
+
+        try playlistShow("Quizmaster", channelId: "UC-quiz", seasons: [
+            (playlist: "PL-s2", name: "Series 2", videoIds: ["s2e1"]),
+            (playlist: "PL-s1", name: "Series 1", videoIds: ["s1e1"]),
+        ])
+        let show = try manager.addPlaylistShow(
+            [PlaylistChoice(playlistId: "PL-s2", title: "Series 2")],
+            channelId: "UC-quiz"
+        )
+
+        XCTAssertFalse(show.hasSeasons)
+        XCTAssertEqual(show.playlistItemIds.keys.sorted(), ["PL-s2"])
+        XCTAssertEqual(try manager.episodes(of: show).map(\.videoId), ["s2e1"])
+    }
+
+    func testPlaylistShowsCountAndRetainLikeChannelShows() throws {
+        video("e1", channelId: "UC-quiz", daysAgo: 1)
+        video("e2", channelId: "UC-quiz", daysAgo: 8)
+        video("e3", channelId: "UC-quiz", daysAgo: 15, watched: true)
+        video("e4", channelId: "UC-quiz", daysAgo: 22)
+        try context.save()
+
+        let show = try playlistShow("Quizmaster", channelId: "UC-quiz",
+                                    seasons: [(playlist: "PL-s", name: "Quizmaster",
+                                               videoIds: ["e1", "e2", "e3", "e4"])])
+
+        XCTAssertEqual(try manager.unwatchedCount(for: show), 3)
+        show.retentionCount = 2
+        XCTAssertEqual(try manager.episodes(of: show).map(\.videoId), ["e1", "e2"])
+        XCTAssertEqual(try manager.unwatchedCount(for: show), 2)
+
+        let all = try context.fetch(FetchDescriptor<Video>())
+        XCTAssertEqual(ShowManager.unwatchedCounts(from: all, shows: [show])[show.id], 2,
+                       "the grid's batched count agrees with the per-show one")
+    }
+
+    func testPlayNextFollowsAPlaylistShowsPlayOrder() throws {
+        video("e1", channelId: "UC-quiz", daysAgo: 1)
+        video("e2", channelId: "UC-quiz", daysAgo: 8)
+        video("e3", channelId: "UC-quiz", daysAgo: 15)
+        try context.save()
+
+        let show = try playlistShow("Quizmaster", channelId: "UC-quiz",
+                                    seasons: [(playlist: "PL-s", name: "Quizmaster",
+                                               videoIds: ["e1", "e2", "e3"])])
+        XCTAssertEqual(try manager.nextUp(of: show)?.videoId, "e1")
+        show.playOrder = .oldestFirst
+        XCTAssertEqual(try manager.nextUp(of: show)?.videoId, "e3")
+    }
+
+    /// The player's Next episode stays inside a playlist-backed show too,
+    /// even though the channel behind it isn't a show.
+    func testNextEpisodeStaysWithinAPlaylistShow() throws {
+        let older = video("e2", channelId: "UC-quiz", daysAgo: 8)
+        video("e1", channelId: "UC-quiz", daysAgo: 1)
+        let stranger = video("loose", channelId: "UC-quiz", daysAgo: 4)
+        try context.save()
+
+        try playlistShow("Quizmaster", channelId: "UC-quiz",
+                         seasons: [(playlist: "PL-s", name: "Quizmaster", videoIds: ["e1", "e2"])])
+
+        XCTAssertEqual(try manager.nextEpisode(after: older)?.videoId, "e1")
+        XCTAssertNil(try manager.nextEpisode(after: stranger),
+                     "a video the playlist doesn't hold belongs to no show")
+    }
+
+    /// Unlike a channel, a playlist has no standing "not a show" decision to
+    /// record: removing it leaves nothing behind.
+    func testRemovingAPlaylistShowLeavesNoTombstone() throws {
+        let show = try playlistShow("Quizmaster", channelId: "UC-quiz",
+                                    seasons: [(playlist: "PL-s", name: "Quizmaster", videoIds: [])])
+        XCTAssertEqual(try manager.playlistShows(forChannelId: "UC-quiz").map(\.id), [show.id])
+
+        try manager.removePlaylistShow(show)
+        XCTAssertTrue(try manager.allRecords().isEmpty)
+        XCTAssertTrue(try manager.playlistShows(forChannelId: "UC-quiz").isEmpty)
+    }
+
+    /// A hand-made playlist show is the user's decision, so an automatic pass
+    /// over its channel can't disturb it.
+    func testAnAutomaticPassLeavesPlaylistShowsAlone() throws {
+        let show = try playlistShow("Quizmaster", channelId: "UC-quiz",
+                                    seasons: [(playlist: "PL-s", name: "Quizmaster", videoIds: [])])
+        try manager.applyAutomaticVerdicts([ShowVerdict(
+            channelId: "UC-quiz", channelTitle: "Quizmaster Extra", isShow: false
+        )])
+        XCTAssertNotNil(try manager.record(id: show.id))
+        XCTAssertEqual(try manager.shows().map(\.title), ["Quizmaster"])
+    }
+
+    func testAddingNoPlaylistIsRefused() {
+        XCTAssertThrowsError(try manager.addPlaylistShow([], channelId: "UC-quiz"))
+    }
 }

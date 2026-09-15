@@ -166,9 +166,7 @@ extension ShowManager {
     /// ones are — and it's "Play next" that walks the backlog forwards.
     nonisolated static func episodesNewestFirst(from videos: [Video], of show: Show) -> [Video] {
         retained(
-            videos
-                .filter { $0.channelId == show.channelId && !$0.isLikelyShort }
-                .sorted { $0.publishedAt > $1.publishedAt },
+            members(from: videos, of: show).sorted { $0.publishedAt > $1.publishedAt },
             count: show.retentionCount
         )
     }

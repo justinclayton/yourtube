@@ -29,7 +29,8 @@ final class FeedRefresher {
     private let uploadsPerChannel = 10
 
     private let modelContext: ModelContext
-    private let api: YouTubeAPI
+    /// Internal so `FeedRefresher+PlaylistShows` can reach the same client.
+    let api: YouTubeAPI
     private let thumbnailSession: URLSession
 
     init(
@@ -193,11 +194,16 @@ final class FeedRefresher {
         return candidates.subtracting(known)
     }
 
-    private func knownVideoIds() throws -> Set<String> {
+    /// Every video ID already stored. Internal so a playlist-backed show's
+    /// refresh can ask the same question before hydrating anything.
+    func knownVideoIds() throws -> Set<String> {
         Set(try modelContext.fetch(FetchDescriptor<Video>()).map(\.videoId))
     }
 
-    private func upsert(videos: [YT.VideoItem]) async throws {
+    /// Stores hydrated videos, Shorts verdict first. Internal because it is
+    /// the one way videos enter the store: `FeedRefresher+PlaylistShows`
+    /// brings a playlist's items in through it rather than inserting its own.
+    func upsert(videos: [YT.VideoItem]) async throws {
         var pending: [(video: Video, signals: VideoSignals)] = []
 
         for item in videos {

@@ -172,4 +172,85 @@ final class YouTubeAPITests: XCTestCase {
             XCTFail("Expected unauthorized, got \(error)")
         }
     }
+
+    // MARK: - Playlists
+
+    func testPlaylistsDecodesTitlesAndItemCounts() async throws {
+        StubURLProtocol.stub(matching: "playlists", json: """
+        {
+          "items": [
+            {
+              "id": "PLfriend",
+              "snippet": { "title": "Conan O'Brien Needs a Friend", "channelId": "UCcoco" },
+              "contentDetails": { "itemCount": 312 }
+            },
+            { "id": "PLclips", "snippet": { "title": "Clips" } }
+          ]
+        }
+        """)
+
+        let playlists = try await makeAPI().playlists(channelId: "UCcoco")
+
+        XCTAssertEqual(playlists.count, 2)
+        XCTAssertEqual(playlists[0].id, "PLfriend")
+        XCTAssertEqual(playlists[0].title, "Conan O'Brien Needs a Friend")
+        XCTAssertEqual(playlists[0].itemCount, 312)
+        XCTAssertEqual(playlists[1].itemCount, 0, "a playlist with no contentDetails counts as empty")
+    }
+
+    /// One unit per call, and the call is only ever made on demand — so the
+    /// request has to carry the channel it's asking about and nothing else.
+    func testPlaylistsAsksForOneChannelInOnePageOfFifty() async throws {
+        StubURLProtocol.stub(matching: "playlists", json: #"{ "items": [] }"#)
+        _ = try await makeAPI().playlists(channelId: "UCcoco")
+
+        let url = try XCTUnwrap(StubURLProtocol.recordedRequests.first?.url?.absoluteString)
+        XCTAssertTrue(url.contains("channelId=UCcoco"), url)
+        XCTAssertTrue(url.contains("maxResults=50"), url)
+        XCTAssertEqual(StubURLProtocol.recordedRequests.count, 1)
+    }
+
+    // MARK: - Playlist items
+
+    func testPlaylistItemsFollowsPaginationAndKeepsPlaylistOrder() async throws {
+        StubURLProtocol.stub(matching: "pageToken=PAGE2", json: """
+        { "items": [ { "contentDetails": { "videoId": "c" } } ] }
+        """)
+        StubURLProtocol.stub(matching: "playlistItems", json: """
+        {
+          "nextPageToken": "PAGE2",
+          "items": [
+            { "contentDetails": { "videoId": "a" } },
+            { "snippet": { "resourceId": { "videoId": "b" } } }
+          ]
+        }
+        """)
+
+        let items = try await makeAPI().playlistItems(playlistId: "PLfriend")
+
+        XCTAssertEqual(items.compactMap(\.videoId), ["a", "b", "c"])
+        XCTAssertEqual(StubURLProtocol.recordedRequests.count, 2)
+    }
+
+    /// The same guard the uploads fetch has: a nextPageToken that never runs
+    /// out stops at the page limit instead of spending the day's quota.
+    func testPlaylistItemsStopsAtThePageLimit() async throws {
+        StubURLProtocol.stub(matching: "playlistItems", json: """
+        { "nextPageToken": "ALWAYS", "items": [ { "contentDetails": { "videoId": "a" } } ] }
+        """)
+
+        let items = try await makeAPI().playlistItems(playlistId: "PLloop", pageLimit: 3)
+
+        XCTAssertEqual(items.count, 3)
+        XCTAssertEqual(StubURLProtocol.recordedRequests.count, 3, "the guard holds")
+    }
+
+    func testPlaylistItemsAsksForOnePlaylist() async throws {
+        StubURLProtocol.stub(matching: "playlistItems", json: #"{ "items": [] }"#)
+        _ = try await makeAPI().playlistItems(playlistId: "PLfriend")
+
+        let url = try XCTUnwrap(StubURLProtocol.recordedRequests.first?.url?.absoluteString)
+        XCTAssertTrue(url.contains("playlistId=PLfriend"), url)
+        XCTAssertEqual(StubURLProtocol.recordedRequests.count, 1)
+    }
 }
