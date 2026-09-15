@@ -91,48 +91,6 @@ struct FeedView: View {
     }
 }
 
-/// Horizontal row of category filters above the feed. "All" (empty selection)
-/// is one chip among the rest; the row scrolls the remembered chip into view
-/// on launch so a restored selection is visible, not off to the right.
-/// Priority comes first by sort order. It gets no badge or count on purpose:
-/// the chip is meant to be a calm place, not a to-do list.
-private struct CategoryChips: View {
-    let names: [String]
-    @Binding var selected: String
-
-    var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    chip("All", isOn: selected.isEmpty) { selected = "" }
-                        .id("")
-                    ForEach(names, id: \.self) { name in
-                        chip(name, isOn: selected == name) {
-                            selected = selected == name ? "" : name
-                        }
-                        .id(name)
-                    }
-                }
-                .padding(.horizontal)
-                .padding(.vertical, 8)
-            }
-            .onAppear { proxy.scrollTo(selected, anchor: .center) }
-        }
-    }
-
-    private func chip(_ title: String, isOn: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.subheadline.weight(isOn ? .semibold : .regular))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(isOn ? AnyShapeStyle(.tint) : AnyShapeStyle(.fill.tertiary), in: Capsule())
-                .foregroundStyle(isOn ? .white : .primary)
-        }
-        .buttonStyle(.plain)
-    }
-}
-
 /// Split out so `@Query` can take a predicate that depends on the Shorts
 /// toggle and category filter — the macro needs them fixed at init time.
 private struct SubscriptionFeedList: View {

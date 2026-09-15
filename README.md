@@ -144,8 +144,23 @@ old Watch Later tab were moved into Up Next in the order they were saved.
 Above Up Next sits **Continue Watching**: videos you started and haven't
 finished, most recently played first, with a progress bar over the art and
 the time left. It fills itself from playback and empties itself, and it's
-hidden when there's nothing in progress. The show grid lands on the same tab
-in follow-up work; see the PRD in issue #17.
+hidden when there's nothing in progress.
+
+**Your Shows** sits beneath Up Next: a three-column grid of the channels
+you've flagged as shows, each a square of channel art with the show's full
+name set beneath it and a count of the episodes you haven't watched (no badge
+when you're caught up). Posters carry nothing but art and a name, so a show
+never looks like a single video. The chips above the grid are the feed's
+chips, and a show appears under every category its channel carries; Priority
+shows are pinned first. Tapping a poster opens the show page, which is a
+stub for now.
+
+Flag a channel as a show from the Channels tab: swipe it, long-press it, or
+use its Categories sheet. Both answers are recorded — "Not a show" is stored
+as a standing decision, so the automatic show detector, when it arrives,
+can't overrule either one. Channels marks its shows with a small screen icon.
+A show's episodes are every non-Short video from its channel, resolved live,
+so a new upload is an episode the moment it lands.
 
 ### Resume and the 90% rule
 
@@ -230,6 +245,7 @@ YourTube/
   API/        YouTube Data API client, DTOs, quota tracking
   Feed/       Refresh algorithm, Shorts heuristic, thumbnail analysis
   UpNext/     The earmark list behind the Shows tab
+  Shows/      The show catalogue behind Your Shows
   Categorize/ On-device channel classification, category management
   Model/      SwiftData models
   UI/         SwiftUI views
@@ -261,8 +277,10 @@ simulator.
 ### Fixture data without a login
 
 Debug builds accept a `-seedFixtures` launch argument. The app then opens an
-in-memory store pre-filled with a few subscriptions, categories, and videos
-(see `DebugFixtures.swift`) and skips `Config.plist`, so it runs signed out
+in-memory store pre-filled with a few subscriptions, categories, videos, and
+three show-shaped channels — a twice-weekly long-form interview show, a
+numbered weekly podcast, and a weekday news hour with cut-down segments (see
+`DebugFixtures.swift`) and skips `Config.plist`, so it runs signed out
 with the re-auth banner showing. Use it to poke at local-only features such
 as search, category chips, and the daily cap on a fresh simulator, or after
 the weekly token expiry. Nothing touches disk; relaunch without the flag to
@@ -285,6 +303,10 @@ Run with Cmd-U. Coverage is concentrated where the risk is:
   the daily quota.
 - `CategoryManagerTests` — rule migration, multi-answer resolution, and the
   "contains" feed predicate, against a stub classifier.
+- `ShowManagerTests` — the show catalogue: membership (Shorts are never
+  episodes), unwatched counts, the retention window, and the thing most worth
+  pinning — a hand-made show flag, in either direction, surviving an
+  automatic detector pass.
 - `ChannelDailyCapTests` — the per-channel daily cap that folds a prolific
   channel's extra uploads into a "+N more" row.
 - `ISO8601DurationTests`, `PKCETests`, `SubscriptionTests`.
@@ -297,8 +319,8 @@ output before trusting the precision and recall figures.
 ## Roadmap
 
 Built so far: sign-in, subscription feed with Shorts filtering, playback,
-watch-later, watched state, browse by channel, on-device channel categories
-with a category filter on the feed.
+Up Next, watched state, browse by channel, on-device channel categories with a
+category filter on the feed, and hand-flagged shows in the Your Shows grid.
 
 Next: per-video categorisation for channels that mix topics, probably via
 `NLEmbedding` against the `VideoCollection` centroids that are already modelled.
