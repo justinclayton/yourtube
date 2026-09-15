@@ -174,13 +174,41 @@ Below that, the episodes in air order, newest first whatever the play order,
 watched ones dimmed and no title truncated. Swipe an episode right to earmark
 it to Up Next, left to mark it watched.
 
-Two per-show settings live behind the button in the top corner. **Play order**
-is the newest-first/oldest-first choice above. **Card art** decides whether the
-show's episodes use the channel's art or the videos' own thumbnails — for a
-channel whose avatar carries no information — and applies to the show's cards
-in Continue Watching and Up Next as well as to the page. Other shows are
-unaffected; a show's poster in the grid is always channel art, because that's
-what makes it a show and not a video.
+**Segments are hidden.** A news hour posts its full episode and then cuts a
+handful of clips out of it, and on a channel like that three uploads in four
+are cut-downs. A video shorter than half a typical episode is taken to be one
+of those clips: left off the page, left out of the unwatched count, and
+offered behind a *Show N segments* button beside the count that explains it.
+Play next and the player's Next episode land on full episodes only — following
+a clip with another clip is the app repeating itself.
+
+The rule is by length rather than by title, because titles are the one thing a
+channel changes without warning. "Typical" can't be the plain median (on a
+mostly-clips channel the median *is* a clip) nor the longest episode (one
+three-hour election special would demote every ordinary episode), so it's read
+from the top down: set aside the longest tenth of the channel — never fewer
+than the two longest — and take the median of everything at least half as long
+as what's left. On a show that cuts nothing up, nothing is set aside and the
+answer is the ordinary median, so nothing is classified.
+
+**Retention** is the other way the page keeps quiet: *keep the last N
+episodes*, and the older ones drop off the page and out of the counts with a
+footer saying how many went and why. Neither kind of hiding deletes anything
+or touches the store — hidden episodes and segments are still in the feed,
+still searchable, still there when the setting is cleared. It's the same
+policy as Shorts hiding.
+
+Four per-show settings live behind the button in the top corner. **Play order**
+is the newest-first/oldest-first choice above. **Segments** is a slider from a
+tenth to nine tenths of a typical episode, captioned with the length it draws
+the line at and how many of the show's videos fall below it, so the effect is
+visible while it's being set rather than after. **Retention** is the keep-the-
+last-N choice. **Card art** decides whether the show's episodes use the
+channel's art or the videos' own thumbnails — for a channel whose avatar
+carries no information — and applies to the show's cards in Continue Watching
+and Up Next as well as to the page. Other shows are unaffected; a show's
+poster in the grid is always channel art, because that's what makes it a show
+and not a video.
 
 Flag a channel as a show from the Channels tab: swipe it, long-press it, or
 use its Categories sheet. Both answers are recorded — "Not a show" is stored
@@ -401,11 +429,12 @@ Run with Cmd-U. Coverage is concentrated where the risk is:
 - `CategoryManagerTests` — rule migration, multi-answer resolution, and the
   "contains" feed predicate, against a stub classifier.
 - `ShowManagerTests` — the show catalogue: membership (Shorts are never
-  episodes), unwatched counts, the retention window, what Play next opens
-  under each play order (an episode in progress always winning), the cadence
-  weekdays and typical duration behind the show page's habit line, and the
-  thing most worth pinning — a hand-made show flag, in either direction,
-  surviving an automatic detector pass.
+  episodes), episode-versus-segment classification at the threshold and when
+  the threshold moves, unwatched counts under a retention window, what Play
+  next opens under each play order (an episode in progress always winning),
+  the cadence weekdays and typical duration behind the show page's habit line,
+  and the thing most worth pinning — a hand-made show flag, in either
+  direction, surviving an automatic detector pass.
 - `ShowDetectionRunnerTests` — the pass that joins the detector to the
   catalogue: what it flags, what it is forbidden to touch, and the fingerprint
   that stops it re-judging a channel whose uploads haven't moved.

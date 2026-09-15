@@ -20,6 +20,13 @@ struct ShowListing {
     /// The length classification measured this show by — the typical full
     /// episode, with the cut-downs kept out of the reckoning.
     var typicalEpisodeDuration: TimeInterval?
+    /// How many videos the show's source holds in all, before anything is
+    /// classified or hidden.
+    var sourceCount: Int = 0
+    /// How many of those are segments, the ones outside the retention window
+    /// included — which `segments` is not, so the show's settings can say
+    /// what the threshold is doing to the whole catalogue.
+    var segmentCount: Int = 0
 
     /// Episodes and segments together in air order: what the page lists once
     /// the toggle is on.
@@ -57,26 +64,28 @@ struct ShowListing {
 /// typical episode.** The fraction is per show, adjustable from the show's
 /// settings, and defaults to a half.
 ///
-/// The hard part is "typical" — the plain median is useless here, because on
-/// a channel that is mostly cut-downs the median *is* a cut-down. So the
-/// baseline is seeded from the top quartile, which survives a majority of
-/// segments, and then relaxed: classify with it, take the median of the
-/// episodes that survive, classify again, until it settles. The relaxation is
-/// monotone (a lower baseline only ever keeps more videos), so it always
-/// settles, and on a show with no segments at all it walks straight back down
-/// to the plain median and classifies nothing. Seeding from the top quartile
-/// rather than the maximum is what keeps one three-hour special from
-/// demoting every ordinary episode to a segment.
+/// The hard part is "typical", and the plain median is no use for it: on a
+/// channel that is three-quarters cut-downs the median *is* a cut-down, and
+/// the rule would find no segments at all. The longest video is no use
+/// either, because one three-hour election special would demote every
+/// ordinary episode to a segment.
+///
+/// So "typical" is read in two steps, from the top down:
+///
+/// 1. **Set the long tail aside.** Sort by length and skip the longest tenth,
+///    and never fewer than the two longest — long enough to swallow the odd
+///    special, short enough that it can't eat a real episode. The next video
+///    down is the yardstick.
+/// 2. **Take the median of everything that measures up to it.** Keep the
+///    videos at least `threshold` as long as the yardstick — on a
+///    mostly-cut-down channel that is exactly the full episodes — and the
+///    median of those is the typical episode.
+///
+/// Both steps are needed. Step one alone would let one unusually long or
+/// short episode set the number; step two alone is the plain median again.
+/// On a show with no cut-downs at all nothing is dropped in step two, so the
+/// answer is the ordinary median and nothing is classified as a segment.
 extension ShowManager {
-    /// A video shorter than half a typical episode is a cut-down of one. Half
-    /// is low enough that a short episode is still an episode and high enough
-    /// to catch a twenty-minute extract from an hour.
-    static let defaultSegmentThreshold = 0.5
-
-    /// What the settings slider offers: a tenth of an episode is as
-    /// permissive as the rule can get before every clip is an episode, nine
-    /// tenths as strict as it can get before every episode is a clip.
-    static let segmentThresholdRange = 0.1...0.9
 
     // MARK: - Listing a show
 
@@ -107,7 +116,9 @@ extension ShowManager {
             episodes: retained,
             segments: segments,
             hiddenByRetention: split.episodes.count - retained.count,
-            typicalEpisodeDuration: typical
+            typicalEpisodeDuration: typical,
+            sourceCount: source.count,
+            segmentCount: split.segments.count
         )
     }
 
@@ -155,34 +166,28 @@ extension ShowManager {
     /// How long a full episode of this show runs, with the cut-downs kept out
     /// of the reckoning. Nil when nothing has a duration yet.
     ///
-    /// Seeded from the top quartile, then relaxed to the median of whatever
-    /// still counts as an episode until it settles (see the type comment).
+    /// Skip the long tail, measure against what's left, take the median of
+    /// whatever still measures up (see the type comment).
     nonisolated static func typicalEpisodeDuration(of videos: [Video], threshold: Double) -> TimeInterval? {
-        let durations = videos.map(\.durationSeconds).filter { $0 > 0 }.sorted()
-        guard !durations.isEmpty else { return nil }
-        let fraction = clamped(threshold)
-        var baseline = median(of: Array(durations[(durations.count * 3) / 4...]))
-        // The sequence only ever descends, so it settles; the bound is a
-        // guard against a rounding cycle, not a real iteration count.
-        for _ in 0..<8 {
-            let shortest = baseline * fraction
-            // Never empty: the baseline is at most the longest video, and the
-            // fraction is under one, so the longest video always survives.
-            let kept = durations.filter { Double($0) >= shortest }
-            let next = median(of: kept)
-            if next == baseline { break }
-            baseline = next
-        }
-        return baseline
+        let longestFirst = videos.map(\.durationSeconds).filter { $0 > 0 }.sorted(by: >)
+        guard !longestFirst.isEmpty else { return nil }
+        // The yardstick: the longest video that isn't in the long tail.
+        let yardstick = longestFirst[min(max(2, longestFirst.count / 10), longestFirst.count - 1)]
+        let shortest = TimeInterval(yardstick) * clamped(threshold)
+        // Never empty: the yardstick itself always measures up to a fraction
+        // of itself, whatever the threshold.
+        return median(of: longestFirst.filter { TimeInterval($0) >= shortest })
     }
 
-    private nonisolated static func median(of sortedDurations: [Int]) -> TimeInterval {
-        guard !sortedDurations.isEmpty else { return 0 }
-        return TimeInterval(sortedDurations[sortedDurations.count / 2])
+    /// The middle of a list ordered longest first. Even counts take the
+    /// shorter of the two middles, so a typical length never overstates.
+    private nonisolated static func median(of longestFirst: [Int]) -> TimeInterval {
+        guard !longestFirst.isEmpty else { return 0 }
+        return TimeInterval(longestFirst[longestFirst.count / 2])
     }
 
     private nonisolated static func clamped(_ threshold: Double) -> Double {
-        min(max(threshold, segmentThresholdRange.lowerBound), segmentThresholdRange.upperBound)
+        min(max(threshold, Show.segmentThresholdRange.lowerBound), Show.segmentThresholdRange.upperBound)
     }
 
     // MARK: - Fetching

@@ -105,7 +105,7 @@ struct ShowPageView: View {
             PlayerView(video: episode)
         }
         .sheet(isPresented: $isShowingSettings) {
-            ShowSettingsSheet(show: show)
+            ShowSettingsSheet(show: show, videos: channelVideos)
         }
     }
 
@@ -210,7 +210,12 @@ struct ShowPageView: View {
 
     private func row(_ episode: Video, isSegment: Bool) -> some View {
         NavigationLink(value: episode) {
-            ShowEpisodeRow(episode: episode, show: show, avatarURL: subscription?.thumbnailURL)
+            ShowEpisodeRow(
+                episode: episode,
+                show: show,
+                avatarURL: subscription?.thumbnailURL,
+                isSegment: isSegment
+            )
         }
         .swipeActions(edge: .leading) {
             Button {
@@ -248,6 +253,9 @@ private struct ShowEpisodeRow: View {
     let episode: Video
     let show: Show
     let avatarURL: String?
+    /// A revealed cut-down, which is labelled so that a list showing both
+    /// never leaves you wondering which is the real episode.
+    var isSegment = false
 
     /// The show's art preference decides the row's art too, so the page and
     /// the cards it feeds agree.
@@ -272,6 +280,14 @@ private struct ShowEpisodeRow: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .foregroundStyle(episode.isWatched ? .secondary : .primary)
                 HStack(spacing: 6) {
+                    if isSegment {
+                        Text("Segment")
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 4))
+                            .foregroundStyle(.secondary)
+                    }
                     Text(episode.formattedDuration)
                         .monospacedDigit()
                     Text(episode.publishedAt, format: .relative(presentation: .named))
@@ -299,12 +315,31 @@ private struct ShowEpisodeRow: View {
     }
 }
 
-/// The per-show settings: the two choices that change how the show behaves
-/// elsewhere in the app, reachable from the page they affect.
+/// The per-show settings: the choices that change how this show behaves
+/// elsewhere in the app, reachable from the page they affect. Two of them —
+/// the segment threshold and the retention window — decide what the page
+/// lists at all, so they report what they're doing to the show's videos while
+/// they're being set.
 private struct ShowSettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Bindable var show: Show
+    /// The show's videos, so the sheet can say what a setting is doing to
+    /// them while it's being moved rather than only after it's dismissed.
+    let videos: [Video]
+
+    private var listing: ShowListing {
+        ShowManager.listing(from: videos, of: show)
+    }
+
+    /// "Keep everything" is a retention count of nil, which a `Picker` can't
+    /// tag; zero stands in for it here and nowhere else.
+    private var retention: Binding<Int> {
+        Binding(
+            get: { show.retentionCount ?? 0 },
+            set: { show.retentionCount = $0 == 0 ? nil : $0 }
+        )
+    }
 
     var body: some View {
         NavigationStack {
@@ -319,6 +354,8 @@ private struct ShowSettingsSheet: View {
                 } footer: {
                     Text("Newest first suits a daily news show. Oldest first walks a backlog forwards, which is how a podcast is meant to be heard. Either way, an episode you're partway through is offered first.")
                 }
+                segmentsSection
+                retentionSection
                 Section {
                     Picker("Card art", selection: $show.artPreference) {
                         Text("Channel art").tag(ShowArtPreference.channelArt)
@@ -340,6 +377,63 @@ private struct ShowSettingsSheet: View {
                     }
                 }
             }
+        }
+    }
+
+    /// The segment rule, with its consequence shown as it's moved: the number
+    /// under the slider is the length the show is about to draw the line at
+    /// and how many of its videos fall below it. A setting whose effect you
+    /// can only see after dismissing the sheet is a setting you have to guess
+    /// at.
+    @ViewBuilder
+    private var segmentsSection: some View {
+        Section {
+            Slider(
+                value: $show.segmentThreshold,
+                in: Show.segmentThresholdRange,
+                step: 0.05
+            ) {
+                Text("Segment threshold")
+            } minimumValueLabel: {
+                Text("10%")
+                    .font(.caption2)
+            } maximumValueLabel: {
+                Text("90%")
+                    .font(.caption2)
+            }
+            LabeledContent("Segments are shorter than", value: thresholdDescription)
+                .font(.subheadline)
+        } header: {
+            Text("Segments")
+        } footer: {
+            Text("A news hour posts its full episode and then cuts clips out of it. A video shorter than this much of a typical episode is taken to be one of those clips: hidden on this page unless you ask for it, and left out of the show's unwatched count. It stays in the feed either way.")
+        }
+    }
+
+    /// The length the slider currently draws the line at, and what that does
+    /// to the videos the show already has.
+    private var thresholdDescription: String {
+        let percent = Int((show.segmentThreshold * 100).rounded())
+        guard let typical = listing.typicalEpisodeDuration,
+              let length = ShowManager.approximateLength(typical * show.segmentThreshold) else {
+            return "\(percent)% of an episode"
+        }
+        return "\(length) · \(listing.segmentCount) of \(listing.sourceCount)"
+    }
+
+    @ViewBuilder
+    private var retentionSection: some View {
+        Section {
+            Picker("Keep", selection: retention) {
+                Text("All episodes").tag(0)
+                ForEach(Show.retentionOptions, id: \.self) { count in
+                    Text("Last \(count) episodes").tag(count)
+                }
+            }
+        } header: {
+            Text("Retention")
+        } footer: {
+            Text("Keeping the last few episodes stops a daily show piling up a backlog you feel obliged to clear. The older ones are hidden from this page and its counts, never deleted, and they stay in the feed.")
         }
     }
 }
