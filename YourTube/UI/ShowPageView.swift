@@ -112,7 +112,15 @@ struct ShowPageView: View {
                     row(episode, isSegment: segmentIds.contains(episode.videoId))
                 }
             } header: {
+                // The plain style pins this header while the rows scroll but
+                // paints nothing behind it, so rows would show through. The
+                // bar material matches the navigation bar it sits under.
                 episodesHeader(listing: listing, unwatched: unwatched)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.bar)
+                    .listRowInsets(EdgeInsets())
             } footer: {
                 if let summary = listing.hiddenSummary(revealingSegments: isShowingSegments) {
                     Text(summary)
