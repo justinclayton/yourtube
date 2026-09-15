@@ -36,7 +36,7 @@ enum TitleRewritePrompt {
     /// stripper's version to make `TitleCleaner.version`, so a bump here
     /// re-runs both tiers — tier one's output is tier two's input, and a
     /// rewrite judged against a stale stripping is not worth keeping.
-    static let version = 1
+    static let version = 2
 
     /// The longest rewrite worth showing. A title that comes back longer than
     /// this hasn't been calmed, it's been elaborated, which is the one thing
@@ -52,11 +52,10 @@ enum TitleRewritePrompt {
     numbers, claims, outcomes or conclusions, and no guessing at what the \
     episode is about. Reuse the title's own words: take a word out rather \
     than swap it for a different one.
-    - Never use capital letters for emphasis: a word written in CAPITALS \
-    becomes ordinary lower case. Leave acronyms and initialisms alone. \
-    Otherwise leave capitalisation exactly as you were given it: never \
-    lower-case a person's name, a place or a programme, and never Capitalise \
-    Every Word Of A Title that wasn't capitalised already.
+    - Write in normal sentence case, the way a newspaper writes a headline: \
+    a capital letter at the start, names of people, places, programmes and \
+    organisations capitalised, acronyms in capitals, and every other word in \
+    lower case. Never use capital letters for emphasis.
     - Keep it under \(maxLength) characters, and never longer than the title \
     you were given.
     - Drop hype, teases and shouting; keep the subject and the people named.
@@ -80,8 +79,12 @@ enum TitleRewritePrompt {
     ///
     /// Two things disqualify an answer, and both are things a small model
     /// does often enough to plan for: nothing at all, and a paragraph where a
-    /// title was asked for. Everything else is taken as given — second-
-    /// guessing the wording is what the instructions are for.
+    /// title was asked for. The *wording* of everything else is taken as
+    /// given — second-guessing it is what the instructions are for — but the
+    /// *casing* is not: asked the same title three times the model shouted it
+    /// back, half-calmed it and flattened it to lower case, so `TitleCasing`
+    /// decides that from the title the model was given rather than from the
+    /// answer (#27).
     static func resolve(_ answer: String, strippedTitle: String) -> String {
         let fallback = strippedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         let text = unquoted(collapsed(answer))
@@ -90,7 +93,7 @@ enum TitleRewritePrompt {
         // longer still, and even then only if it shortened it: some show
         // titles are genuinely long sentences.
         guard text.count <= max(maxLength, fallback.count) else { return fallback }
-        return text
+        return TitleCasing.restore(text, from: fallback)
     }
 
     /// Whitespace and line breaks squeezed to single spaces, so an answer that
@@ -145,7 +148,7 @@ struct FoundationModelTitleRewriter: TitleRewriter {
     @Generable
     struct Answer {
         @Guide(
-            description: "The rewritten title alone, under 80 characters, in the capitalisation it was given minus any shouting, saying nothing the original didn't."
+            description: "The rewritten title alone, under 80 characters, in normal sentence case with names capitalised, saying nothing the original didn't."
         )
         var title: String
     }

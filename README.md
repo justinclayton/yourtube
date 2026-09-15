@@ -270,6 +270,20 @@ whenever the answer is empty or longer than what it was given. A title the
 model refuses keeps its stripped version and isn't retried until a version
 bump.
 
+It trusts the answer's *capitals* least of all. Asked the same title three
+times the model shouted it back verbatim, half-calmed it, and flattened it to
+nothing but lower case — and the phone favours that last one, which made
+"Lebron James, Syndney Sweeney DISGUSTING Gambling SHILLING" come back as
+"lebron james, sydney sweeney gambling shilling". So the model is asked for
+the words and `TitleCasing` decides the case, from the title the model was
+given: a word written with an inner capital is copied exactly, a word the
+source shouted loses the shouting unless it's an initialism, and everything
+else is lower case unless it opens a sentence or is a name. Names are found
+by `NLTagger`'s person recognition plus "no dictionary has this word", which
+is what keeps `Syndney` and `Sweeney` capitalised while `Gambling` and
+`Favourite` go down. The result is ordinary sentence case, which is the one
+house style that can be derived rather than guessed.
+
 Only shows are rewritten: it's one model call per title, and clickbait is
 most in the way where the app is pretending to be television. Everything else
 gets tier one alone, and so does every device without Apple Intelligence —

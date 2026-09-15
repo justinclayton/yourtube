@@ -232,7 +232,7 @@ final class TitleCleanerTests: XCTestCase {
         await makeCleaner(rewriter).cleanStale()
 
         let video = try stored()[0]
-        XCTAssertEqual(video.displayTitle, "How to ruin University Challenge")
+        XCTAssertEqual(video.displayTitle, "How to ruin university challenge")
         XCTAssertEqual(video.strippedTitle, "How To Ruin University Challenge")
         XCTAssertTrue(video.isTitleRewritten)
         XCTAssertTrue(video.hasCleanedTitle)
@@ -297,7 +297,7 @@ final class TitleCleanerTests: XCTestCase {
 
         let videos = try stored()
         XCTAssertEqual(videos[0].displayTitle, "How To Ruin University Challenge")
-        XCTAssertEqual(videos[1].displayTitle, "sandi's favourite malicious compliance")
+        XCTAssertEqual(videos[1].displayTitle, "Sandi's favourite malicious compliance")
         XCTAssertEqual(cleaner.lastRewriteFailures, 1)
         XCTAssertEqual(cleaner.rewriteStatus, .idle)
     }
@@ -338,7 +338,7 @@ final class TitleCleanerTests: XCTestCase {
         let defaults = UserDefaults(suiteName: "TitleCleanerTests-\(UUID().uuidString)")!
         let cleaner = TitleCleaner(modelContext: context, rewriter: StubRewriter(), defaults: defaults)
         await cleaner.cleanStale()
-        XCTAssertEqual(try stored()[0].displayTitle, "how to ruin university challenge")
+        XCTAssertEqual(try stored()[0].displayTitle, "How to ruin university challenge")
 
         cleaner.isRewriteEnabled = false
         await cleaner.reconcileRewrites()
@@ -365,7 +365,7 @@ final class TitleCleanerTests: XCTestCase {
         cleaner.isRewriteEnabled = true
         await cleaner.reconcileRewrites()
 
-        XCTAssertEqual(try stored()[0].displayTitle, "how to ruin university challenge")
+        XCTAssertEqual(try stored()[0].displayTitle, "How to ruin university challenge")
         XCTAssertTrue(try stored().allSatisfy { $0.isTitleRewritten })
     }
 
@@ -380,7 +380,7 @@ final class TitleCleanerTests: XCTestCase {
         makeShow(channelId: "UC-qi", title: "QI")
         await cleaner.cleanStale()
 
-        XCTAssertEqual(try stored()[0].displayTitle, "how to ruin university challenge")
+        XCTAssertEqual(try stored()[0].displayTitle, "How to ruin university challenge")
     }
 
     /// The version bump with tier two in play: both tiers run again, so a
@@ -401,7 +401,7 @@ final class TitleCleanerTests: XCTestCase {
 
         let videos = try stored()
         XCTAssertEqual(videos[0].strippedTitle, "How To Ruin University Challenge")
-        XCTAssertEqual(videos[0].displayTitle, "how to ruin university challenge")
+        XCTAssertEqual(videos[0].displayTitle, "How to ruin university challenge")
         XCTAssertEqual(videos[1].strippedTitle, "Sandi's Favourite Malicious Compliance")
         XCTAssertTrue(videos.allSatisfy { $0.isTitleRewritten })
         XCTAssertTrue(videos.allSatisfy { $0.titleCleanerVersion == TitleCleaner.version })

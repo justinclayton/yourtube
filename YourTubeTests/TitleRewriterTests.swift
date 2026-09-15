@@ -23,7 +23,12 @@ final class TitleRewriterTests: XCTestCase {
         let instructions = TitleRewritePrompt.instructions.lowercased()
         XCTAssertTrue(instructions.contains("never add information"))
         XCTAssertTrue(instructions.contains("never use capital letters for emphasis"))
+        XCTAssertTrue(instructions.contains("normal sentence case"))
         XCTAssertTrue(instructions.contains("\(TitleRewritePrompt.maxLength) characters"))
+        // The wording that told the model a word in capitals "becomes
+        // ordinary lower case", which it read as licence to lower-case the
+        // whole title, names included (#27).
+        XCTAssertFalse(instructions.contains("becomes ordinary lower case"))
     }
 
     /// The model is given tier one's output, not YouTube's title: the channel
@@ -76,9 +81,14 @@ final class TitleRewriterTests: XCTestCase {
     /// A title that was already long may be rewritten to something still over
     /// the cap, as long as the rewrite is the shorter of the two.
     func testALongTitleMayBeRewrittenToSomethingStillOverTheCap() {
-        let stripped = String(repeating: "x", count: 140)
-        let answer = String(repeating: "y", count: 120)
-        XCTAssertEqual(TitleRewritePrompt.resolve(answer, strippedTitle: stripped), answer)
+        let stripped = String(repeating: "the long and winding sentence that ", count: 4)
+        let answer = String(repeating: "the long and winding sentence that ", count: 3)
+            .trimmingCharacters(in: .whitespaces)
+        XCTAssertGreaterThan(answer.count, TitleRewritePrompt.maxLength)
+        XCTAssertEqual(
+            TitleRewritePrompt.resolve(answer, strippedTitle: stripped),
+            answer.prefix(1).uppercased() + answer.dropFirst()
+        )
     }
 
     /// Models quote titles about as often as they don't, and a quoted title
@@ -99,10 +109,156 @@ final class TitleRewriterTests: XCTestCase {
         )
     }
 
+    // MARK: - Casing
+
+    /// The three titles #27 reported, with the answers the on-device model
+    /// actually gave for them on the phone: every word flattened to lower
+    /// case. The words are the model's; the capitals are the app's.
+
+    func testAFlattenedAnswerComesBackInSentenceCase() {
+        XCTAssertEqual(
+            TitleRewritePrompt.resolve(
+                "glass, metal, salmonella food investigations",
+                strippedTitle: "GLASS, METAL, SALMONELLA Food Investigations Hit RECORD After DOGE Cuts"
+            ),
+            "Glass, metal, salmonella food investigations"
+        )
+    }
+
+    func testANameSurvivesAFlattenedAnswer() {
+        XCTAssertEqual(
+            TitleRewritePrompt.resolve(
+                "trump on flock cameras: i like them",
+                strippedTitle: "Trump On Flock Cameras: 'I LIKE THEM!'"
+            ),
+            "Trump on flock cameras: I like them"
+        )
+    }
+
+    /// Two names, one of them spelled a way no dictionary knows, and one the
+    /// model silently corrected so it isn't in the source at all. Both come
+    /// back capitalised; the shouting between them doesn't.
+    func testNamesSurviveEvenWhenTheModelRespellsThem() {
+        XCTAssertEqual(
+            TitleRewritePrompt.resolve(
+                "lebron james, sydney sweeney gambling shilling",
+                strippedTitle: "Lebron James, Syndney Sweeney DISGUSTING Gambling SHILLING"
+            ),
+            "Lebron James, Sydney Sweeney gambling shilling"
+        )
+    }
+
+    /// The failure the first attempt at this made: copying the source's case
+    /// onto every word it recognised capitalised `The` in the middle of a
+    /// sentence. A function word is never a name, so it is always lower case
+    /// unless it opens the title.
+    func testMidSentenceFunctionWordsStayLowerCase() {
+        XCTAssertEqual(
+            TitleRewritePrompt.resolve(
+                "an election analyst on what the polls miss",
+                strippedTitle: "TOP ANALYST: The polls are MISSING something"
+            ),
+            "An election analyst on what the polls miss"
+        )
+        XCTAssertEqual(
+            TitleRewritePrompt.resolve(
+                "the case against the primary system",
+                strippedTitle: "The Case Against The Primary System"
+            ),
+            "The case against the primary system"
+        )
+    }
+
+    /// An initialism is the one kind of capitals the rewrite must not take
+    /// off, and a spell checker can't tell one from a shouted word — `doge`
+    /// and `nasa` are both in its dictionary. Absence from the vocabulary of
+    /// ordinary English is what separates them.
+    func testInitialismsKeepTheirCapitals() {
+        XCTAssertEqual(
+            TitleRewritePrompt.resolve(
+                "food investigations hit record after doge cuts",
+                strippedTitle: "GLASS, METAL, SALMONELLA Food Investigations Hit RECORD After DOGE Cuts"
+            ),
+            "Food investigations hit record after DOGE cuts"
+        )
+        XCTAssertEqual(
+            TitleRewritePrompt.resolve(
+                "nasa's telescope finds something weird",
+                strippedTitle: "SHOCKING: NASA's new telescope finds something WEIRD"
+            ),
+            "NASA's telescope finds something weird"
+        )
+    }
+
+    /// A name that was itself being shouted comes back as a name, not as an
+    /// initialism and not in lower case.
+    func testAShoutedNameIsCalmedRatherThanFlattened() {
+        XCTAssertEqual(
+            TitleRewritePrompt.resolve(
+                "priya raman on rebuilding the grid",
+                strippedTitle: "PRIYA RAMAN On Rebuilding The GRID"
+            ),
+            "Priya Raman on rebuilding the grid"
+        )
+    }
+
+    /// A capital the source put somewhere other than the front is always
+    /// deliberate, so it is copied exactly however the model wrote it.
+    func testInnerCapitalsAreCopiedExactly() {
+        XCTAssertEqual(
+            TitleRewritePrompt.resolve(
+                "lebron james on the iphone deal",
+                strippedTitle: "LeBron James On The iPhone Deal"
+            ),
+            "LeBron James on the iPhone deal"
+        )
+    }
+
+    /// A full stop, question mark or colon starts a new sentence, and a new
+    /// sentence starts with a capital.
+    func testSentencePunctuationStartsACapital() {
+        XCTAssertEqual(
+            TitleRewritePrompt.resolve(
+                "who really pays? the answer is complicated",
+                strippedTitle: "WHO Really Pays? THE ANSWER Is COMPLICATED"
+            ),
+            "Who really pays? The answer is complicated"
+        )
+    }
+
+    /// A word `NLEmbedding` has never seen is taken for a name, which is what
+    /// rescues `Syndney` — but British spellings are outside that vocabulary
+    /// too, and `Favourite` is not a name. The spell checker is the second
+    /// opinion that keeps them lower case.
+    func testBritishSpellingsAreNotMistakenForNames() {
+        XCTAssertEqual(
+            TitleRewritePrompt.resolve(
+                "sandi's favourite malicious compliance",
+                strippedTitle: "Sandi's Favourite Malicious Compliance"
+            ),
+            "Sandi's favourite malicious compliance"
+        )
+    }
+
+    /// A title that was already calm is unchanged by the casing pass, which
+    /// is what makes "give it back word for word" a safe instruction.
+    func testAnAlreadyCalmTitleIsUntouched() {
+        let calm = "Dana Ruiz on why the housing market broke"
+        XCTAssertEqual(TitleRewritePrompt.resolve(calm, strippedTitle: calm), calm)
+    }
+
     // MARK: - Versioning
 
     /// Tier two's version is added to tier one's, so bumping either re-runs
     /// both. A rewrite judged against a stale stripping isn't worth keeping.
+    /// #27's fix changes what a rewrite looks like, so every title already
+    /// rewritten under the old prompt has to be done again. The bump is what
+    /// makes that happen at the next launch;
+    /// `TitleCleanerTests.testAVersionBumpReRunsBothTiers` covers the re-run.
+    func testTheCasingFixBumpedThePromptVersion() {
+        XCTAssertGreaterThanOrEqual(TitleRewritePrompt.version, 2)
+    }
+
     @MainActor
     func testCleanerVersionIsBothTiersAdded() {
         XCTAssertEqual(TitleCleaner.version, TitleStripper.version + TitleRewritePrompt.version)
