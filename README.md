@@ -218,6 +218,12 @@ one. Channels marks its shows with a small screen icon. A show's episodes are
 every non-Short video from its channel, resolved live, so a new upload is an
 episode the moment it lands.
 
+A channel-backed show can also be un-flagged from its own page: the toolbar
+menu next to Show settings offers "Not a show" too, for when a detector guess
+turns out wrong and Channels isn't where you're looking. It records the same
+standing decision and leaves the page, since the show is no longer in the
+catalogue.
+
 ### Shows that are playlists, not channels
 
 A channel isn't always the unit you think in. A podcast hosted on a network

@@ -16,6 +16,7 @@ import SwiftData
 /// the play order redraws the header, the counts and the list together.
 struct ShowPageView: View {
     @Environment(AppServices.self) private var services
+    @Environment(\.dismiss) private var dismiss
     let show: Show
 
     @Query private var subscriptions: [Subscription]
@@ -126,10 +127,23 @@ struct ShowPageView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    isShowingSettings = true
-                } label: {
-                    Label("Show settings", systemImage: "slider.horizontal.3")
+                // A playlist-backed show has no channel-level "not a show"
+                // decision to record — that flag lives on the channel, and
+                // this page is one playlist within it — so it keeps the
+                // plain settings button. A channel-backed show gets the menu.
+                if show.isPlaylistBacked {
+                    settingsButton
+                } else {
+                    Menu {
+                        settingsButton
+                        Button {
+                            markAsNotAShow()
+                        } label: {
+                            Label("Not a show", systemImage: "tv.slash")
+                        }
+                    } label: {
+                        Label("Show settings", systemImage: "slider.horizontal.3")
+                    }
                 }
             }
         }
@@ -154,6 +168,26 @@ struct ShowPageView: View {
         }
         didRefreshMembership = true
         _ = try? await services.feed.refreshMembership(of: show, using: services.shows)
+    }
+
+    private var settingsButton: some View {
+        Button {
+            isShowingSettings = true
+        } label: {
+            Label("Show settings", systemImage: "slider.horizontal.3")
+        }
+    }
+
+    /// Records "not a show" the same way Channels does — the standing
+    /// decision the detector can never overrule — then leaves the page,
+    /// since the show it was showing is no longer in the catalogue.
+    private func markAsNotAShow() {
+        try? services.shows.setIsShow(
+            false,
+            channelId: show.channelId,
+            channelTitle: subscription?.title ?? show.title
+        )
+        dismiss()
     }
 
     // MARK: - Header
@@ -528,7 +562,7 @@ struct DetectorReasons: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Text("Mark it \u{201C}Not a show\u{201D} in Channels if this is wrong; that decision sticks.")
+                Text("Mark it \u{201C}Not a show\u{201D} above, or in Channels, if this is wrong; that decision sticks.")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
