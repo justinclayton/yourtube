@@ -2,8 +2,7 @@ import SwiftUI
 import SwiftData
 
 /// The library view of show-like content: Continue Watching, Up Next, and
-/// Your Shows, top to bottom. Continue Watching arrives with playback
-/// progress.
+/// Your Shows, top to bottom.
 ///
 /// Up Next is the user's earmark list (see `UpNextQueue`). It's never filled
 /// in by the app and the order is the user's own, so the section offers no
@@ -25,6 +24,7 @@ struct ShowsView: View {
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 28) {
+                    ContinueWatchingSection()
                     UpNextSection(videos: upNext)
                     YourShowsSection()
                 }

@@ -59,6 +59,7 @@ final class AppServices {
     let feed: FeedRefresher
     let categories: CategoryManager
     let upNext: UpNextQueue
+    let playback: PlaybackProgress
     let shows: ShowManager
 
     init(config: AppConfig.Values, modelContext: ModelContext) {
@@ -75,7 +76,9 @@ final class AppServices {
             modelContext: modelContext,
             categorizer: ChannelCategorizerFactory.makeSystemCategorizer()
         )
-        self.upNext = UpNextQueue(modelContext: modelContext)
+        let upNext = UpNextQueue(modelContext: modelContext)
+        self.upNext = upNext
+        self.playback = PlaybackProgress(modelContext: modelContext, upNext: upNext)
         self.shows = ShowManager(modelContext: modelContext)
     }
 }

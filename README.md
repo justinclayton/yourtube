@@ -22,6 +22,7 @@ before you build this.
 | Up Next (earmarks), watched state | Works, stored **on-device**. YouTube's own Watch Later isn't API-accessible, and this app doesn't try to mirror it. |
 | Search | Works, **local only**: filters cached titles and channel names on device. The API's search endpoint costs 100 quota units per call, so it isn't used. |
 | Playback | Works, via YouTube's IFrame player. |
+| Resume position | Works, stored **on-device**. The player reports where it got to; past 90% counts as watched. |
 | Background audio | **Not possible.** YouTube kills embedded playback server-side after screen lock. |
 | Picture-in-Picture | Only from native fullscreen. |
 | Watch history | **Not possible.** Removed from the API years ago. |
@@ -123,14 +124,27 @@ calendar reminder.
 
 ## Shows and Up Next
 
-The tab bar is Shows, Feed, Channels, Settings. Feed is the chronological
-river of everything new from subscribed channels. Shows is the calmer library
-view of that same content, and holds **Up Next**: the list of videos you've
-earmarked by hand from the player. The app never adds to it and never treats
-its order as a play order; Edit lets you group things however you like, and
-finishing a video (marking it watched) takes it off the list. Videos saved
-under the old Watch Later tab were moved into Up Next in the order they were
-saved.
+The tab bar is Shows, Feed, Channels, Settings. Feed is an **inbox**: videos
+appear newest first until you triage them, and once a video is watched or
+earmarked it leaves the feed, so the feed trends toward empty instead of
+scrolling forever. A fully triaged feed (for the current category/Shorts
+filter) shows an "All caught up" state rather than a blank list. Every row
+has swipe actions — leading to earmark to Up Next, trailing to mark
+watched — so triage is a gesture, not a trip into the player. Category
+chips, the Priority chip, the Shorts toggle, the per-channel daily cap, and
+local search all keep working over whatever's left in the inbox.
+
+Shows is the calmer library view of that same content, and holds **Up
+Next**: the list of videos you've earmarked by hand, from the feed, the
+player, or a show page. The app never adds to it and never treats its order
+as a play order; Edit lets you group things however you like, and finishing
+a video (marking it watched) takes it off the list. Videos saved under the
+old Watch Later tab were moved into Up Next in the order they were saved.
+
+Above Up Next sits **Continue Watching**: videos you started and haven't
+finished, most recently played first, with a progress bar over the art and
+the time left. It fills itself from playback and empties itself, and it's
+hidden when there's nothing in progress.
 
 **Your Shows** sits beneath Up Next: a three-column grid of the channels
 you've flagged as shows, each a square of channel art with the show's full
@@ -148,8 +162,15 @@ can't overrule either one. Channels marks its shows with a small screen icon.
 A show's episodes are every non-Short video from its channel, resolved live,
 so a new upload is an episode the moment it lands.
 
-Continue Watching lands on the same tab in follow-up work; see the PRD in
-issue #17.
+### Resume and the 90% rule
+
+The player remembers where you stopped and opens there next time. Two
+thresholds decide what that means: under thirty seconds in counts as never
+started (so a glance at a video doesn't clutter Continue Watching), and past
+90% of the duration counts as watched — no tap needed, and the video leaves
+both Continue Watching and Up Next. Opening the player on its own no longer
+marks anything watched, and the manual "Mark watched" button still works.
+All of this is on-device; YouTube's own watch history isn't API-accessible.
 
 ## Categories
 
