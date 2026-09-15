@@ -19,7 +19,10 @@ struct ShowPageView: View {
     let show: Show
 
     @Query private var subscriptions: [Subscription]
-    /// Every non-Short video from the show's channel, newest first. The
+    /// The videos the show's episodes are drawn from, newest first: its
+    /// channel's for a channel-backed show, and every stored video for a
+    /// playlist-backed one, since a playlist may hold a guest channel's video
+    /// and `ShowManager` is the thing that knows which are members. The
     /// retention window is applied by `ShowManager` on top of it, so the page
     /// lists exactly what the catalogue counts.
     @Query private var channelVideos: [Video]
@@ -29,6 +32,13 @@ struct ShowPageView: View {
     /// Not stored on the show — it's a way of looking at the page, not a
     /// property of the show.
     @State private var isShowingSegments = false
+    /// Which season the list is narrowed to, by index into `seasonNames`, or
+    /// nil for all of them. Only a show with seasons offers the picker.
+    @State private var season: Int?
+    /// Set once the playlist behind the show has been walked this visit, so
+    /// opening the page costs one unit and reopening it in the same session
+    /// costs nothing.
+    @State private var didRefreshMembership = false
     /// Play next pushes the player itself rather than through a
     /// `NavigationLink`, which a `List` would dress up as a row complete with
     /// a disclosure chevron. The episode rows below are rows and use links.
@@ -38,21 +48,43 @@ struct ShowPageView: View {
         self.show = show
         let channelId = show.channelId
         _channelVideos = Query(
-            filter: #Predicate<Video> { $0.channelId == channelId && !$0.isLikelyShort },
+            filter: show.isPlaylistBacked
+                ? #Predicate<Video> { !$0.isLikelyShort }
+                : #Predicate<Video> { $0.channelId == channelId && !$0.isLikelyShort },
             sort: [SortDescriptor(\Video.publishedAt, order: .reverse)]
         )
     }
 
+    /// The raw material the page classifies: the show's members — its
+    /// channel's uploads or its playlist's items — narrowed to the chosen
+    /// season.
+    ///
+    /// The season is applied *before* classification rather than after, so
+    /// the whole listing is about one thing: the segments behind the toggle,
+    /// the retention window and the footer all describe the season in front
+    /// of you. Filtering afterwards would leave an older series empty on a
+    /// show told to keep only its last few episodes, which is not what
+    /// picking that series means.
+    private var seasonVideos: [Video] {
+        ShowManager.episodes(
+            ShowManager.members(from: channelVideos, of: show),
+            inSeason: season,
+            of: show
+        )
+    }
+
     /// What the page has to work with: the episodes it lists, the segments
-    /// behind the toggle, and what the retention window is holding back.
+    /// behind the toggle, and what the retention window is holding back. In
+    /// air order, newest at the top, whatever the play order.
     private var listing: ShowListing {
-        ShowManager.listing(from: channelVideos, of: show)
+        ShowManager.listing(from: seasonVideos, of: show)
     }
 
     /// The same episodes in the show's play order, which is what decides
-    /// which one Play next opens.
+    /// which one Play next opens. It follows the season picker too: the
+    /// button should open what the list in front of you says is next.
     private var episodesInPlayOrder: [Video] {
-        ShowManager.episodes(from: channelVideos, of: show)
+        ShowManager.order(listing.episodes, by: show.playOrder)
     }
 
     private var subscription: Subscription? {
@@ -107,6 +139,21 @@ struct ShowPageView: View {
         .sheet(isPresented: $isShowingSettings) {
             ShowSettingsSheet(show: show, videos: channelVideos)
         }
+        .task { await refreshMembershipIfNeeded() }
+    }
+
+    /// A playlist-backed show's membership is only as fresh as the last time
+    /// someone asked YouTube what's in the playlist, and opening the page is
+    /// when it's worth asking: one unit, on demand, for the show you're
+    /// looking at. A channel-backed show needs none of this — its episodes
+    /// arrive with the routine refresh — and signed out nothing is asked at
+    /// all, so a fixture run shows what the store already holds.
+    private func refreshMembershipIfNeeded() async {
+        guard show.isPlaylistBacked, !didRefreshMembership, !services.auth.needsReauth else {
+            return
+        }
+        didRefreshMembership = true
+        _ = try? await services.feed.refreshMembership(of: show, using: services.shows)
     }
 
     // MARK: - Header
@@ -144,7 +191,26 @@ struct ShowPageView: View {
                 }
             }
             DetectorReasons(show: show)
+            seasonPicker
             buttons(unwatched: unwatched)
+        }
+    }
+
+    /// The season picker, for a show built from several playlists: one
+    /// playlist per series, browsed one series at a time. A show with one
+    /// playlist has nothing to pick between and gets no picker.
+    @ViewBuilder
+    private var seasonPicker: some View {
+        if show.hasSeasons {
+            Picker("Season", selection: $season) {
+                Text("All seasons").tag(Int?.none)
+                ForEach(Array(show.seasonNames.enumerated()), id: \.offset) { index, name in
+                    Text(name).tag(Int?.some(index))
+                }
+            }
+            .pickerStyle(.menu)
+            .font(.subheadline)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 

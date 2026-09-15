@@ -18,6 +18,7 @@ before you build this.
 | | Status |
 |---|---|
 | Subscription feed | Works. Fans out across subscribed channels' uploads playlists. |
+| Playlists as shows | Works. Listing a channel's playlists and paging one costs 1 unit per call, spent only on demand. |
 | Hiding Shorts | Heuristic, ~95% accurate. There is no `isShort` flag in the API. |
 | Up Next (earmarks), watched state | Works, stored **on-device**. YouTube's own Watch Later isn't API-accessible, and this app doesn't try to mirror it. |
 | Search | Works, **local only**: filters cached titles and channel names on device. The API's search endpoint costs 100 quota units per call, so it isn't used. |
@@ -186,7 +187,7 @@ The rule is by length rather than by title, because titles are the one thing a
 channel changes without warning. "Typical" can't be the plain median (on a
 mostly-clips channel the median *is* a clip) nor the longest episode (one
 three-hour election special would demote every ordinary episode), so it's read
-from the top down: set aside the longest tenth of the channel — never fewer
+from the top down: set aside the longest tenth of the show — never fewer
 than the two longest — and take the median of everything at least half as long
 as what's left. On a show that cuts nothing up, nothing is set aside and the
 answer is the ordinary median, so nothing is classified.
@@ -217,6 +218,37 @@ one. Channels marks its shows with a small screen icon. A show's episodes are
 every non-Short video from its channel, resolved live, so a new upload is an
 episode the moment it lands.
 
+### Shows that are playlists, not channels
+
+A channel isn't always the unit you think in. A podcast hosted on a network
+channel is its own show, and a series-based show has a playlist per series.
+So a playlist can be a show: long-press a channel in the Channels tab and pick
+**Add playlist as show**, or use the button on the channel's own page.
+
+The sheet lists the channel's playlists with their video counts. Pick one and
+that playlist is the show. Pick several and they become one show with a season
+each, in the order you tap them — the show page then offers a season picker
+that narrows the episode list, and Play next follows whatever season you're
+looking at. The source line reads "Playlist on Team Coco" rather than
+"Channel".
+
+A playlist-backed show inherits its channel's categories and Priority tag, so
+there is nothing to file twice and no second rule to keep in step. It sits in
+Your Shows under the same chips as its channel, and the grid, the page,
+Play next, Next episode, Mark all watched, segment hiding and the retention
+window all behave as they do for a channel-backed show. Picking a season
+narrows all of it: the segments and the retention window are measured over
+the season you're looking at, so an older series still lists its episodes on
+a show told to keep only its last few.
+
+The one difference is where its episodes come from. A channel's episodes
+arrive with the routine refresh; a playlist's membership is a list only
+YouTube knows, so it is asked for when the show is created and again when its
+page is opened — one quota unit per 50 items, never during the routine
+refresh. New videos a playlist turns up are stored through the same door the
+feed uses, Shorts verdict first, so they show up in the feed too. Signed out,
+nothing is asked and the page lists what the store already holds.
+
 ### Guessing which channels are shows
 
 Most shows file themselves. After a refresh (and at launch) a detector reads
@@ -240,6 +272,13 @@ The player offers a Next episode button whenever the video it's playing
 belongs to a show and a later episode exists — it swaps the player to that
 episode in place, never leaving the show. It's absent on a non-show video and
 on a show's newest episode. There's no autoplay of any kind.
+
+Channels itself has two presentations, toggled from the toolbar: the
+grouped list, and an avatar grid of square channel art with the full name
+wrapped beneath (never truncated). Both read the same category grouping and
+draw the same show/not-show split; the toggle is remembered across launches.
+Tapping a tile opens the channel page, and long-press offers the same menu
+as the list row — categories, Priority, and the show flag.
 
 ### Resume and the 90% rule
 
@@ -400,7 +439,9 @@ in-memory store pre-filled with a few subscriptions, categories, videos, and
 five show-shaped channels — a twice-weekly long-form interview show, a
 numbered weekly podcast, a weekday news hour with cut-down segments, one left
 unflagged for the detector to find at launch, and one marked "Not a show" that
-it must never pick up (see `DebugFixtures.swift`) — and skips `Config.plist`,
+it must never pick up — plus two playlist-backed shows: a podcast hosted on a
+network channel, and a three-series programme whose page offers a season
+picker (see `DebugFixtures.swift`). It skips `Config.plist`,
 so it runs signed out
 with the re-auth banner showing. Use it to poke at local-only features such
 as search, category chips, and the daily cap on a fresh simulator, or after
@@ -428,11 +469,13 @@ Run with Cmd-U. Coverage is concentrated where the risk is:
   the daily quota.
 - `CategoryManagerTests` — rule migration, multi-answer resolution, and the
   "contains" feed predicate, against a stub classifier.
-- `ShowManagerTests` — the show catalogue: membership (Shorts are never
-  episodes), episode-versus-segment classification at the threshold and when
-  the threshold moves, unwatched counts under a retention window, what Play
-  next opens under each play order (an episode in progress always winning),
-  the cadence weekdays and typical duration behind the show page's habit line,
+- `ShowManagerTests` — the show catalogue: membership for both kinds of show
+  (a channel's non-Short videos, a playlist's items — Shorts are never
+  episodes either way), seasons and the picker's filter,
+  episode-versus-segment classification at the threshold and when the
+  threshold moves, unwatched counts under a retention window, what Play next
+  opens under each play order (an episode in progress always winning), the
+  cadence weekdays and typical duration behind the show page's habit line,
   and the thing most worth pinning — a hand-made show flag, in either
   direction, surviving an automatic detector pass.
 - `ShowDetectionRunnerTests` — the pass that joins the detector to the

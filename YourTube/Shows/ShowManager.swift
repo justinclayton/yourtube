@@ -22,10 +22,13 @@ struct ShowVerdict: Sendable, Equatable {
 /// decided about in either direction — including "not a show", which leaves a
 /// `Show` row behind purely as a tombstone. `shows()` never returns those.
 ///
-/// Membership is resolved live rather than stored: a channel-backed show's
-/// episodes are every non-Short video from its channel. That keeps the
+/// A channel-backed show's membership is resolved live rather than stored:
+/// its episodes are every non-Short video from its channel. That keeps the
 /// catalogue idempotent under feed refresh — a new upload is an episode the
-/// moment it lands, with nothing to reconcile.
+/// moment it lands, with nothing to reconcile. A playlist-backed show has no
+/// such rule to resolve, so its membership is stored on the record and
+/// refreshed from the API when the show is opened; see `ShowManager+Playlists`
+/// and `FeedRefresher+PlaylistShows`.
 @MainActor
 final class ShowManager {
     let modelContext: ModelContext
@@ -132,22 +135,37 @@ final class ShowManager {
     // MARK: - Membership
 
     /// The show's episodes, in its play order, with segments and the
-    /// retention window applied. A channel-backed show's episodes are every
-    /// non-Short video from its channel that isn't a cut-down of one: Shorts
-    /// are never episodes of anything, and neither are segments (see
-    /// `ShowManager+Segments`).
+    /// retention window applied.
+    ///
+    /// A channel-backed show's episodes are every non-Short video from its
+    /// channel; a playlist-backed show's are the ones the playlist holds, as
+    /// of its last membership refresh. Shorts are never episodes of anything
+    /// either way — a playlist can contain one, and it still isn't an episode
+    /// — and neither are the cut-downs of an episode, whatever the source
+    /// (see `ShowManager+Segments`).
     func episodes(of show: Show) throws -> [Video] {
         Self.order(try listing(of: show).episodes, by: show.playOrder)
     }
 
     /// Every video from the show's source, newest first, before anything is
-    /// classified or hidden. The raw material for `listing(of:)`.
+    /// classified or hidden. The raw material for `listing(of:)`, and the one
+    /// place membership is resolved against the store.
     func sourceVideos(of show: Show) throws -> [Video] {
-        let channelId = show.channelId
-        return try modelContext.fetch(FetchDescriptor<Video>(
-            predicate: #Predicate { $0.channelId == channelId && !$0.isLikelyShort },
-            sortBy: [SortDescriptor(\.publishedAt, order: .reverse)]
-        ))
+        let byDate = [SortDescriptor(\Video.publishedAt, order: .reverse)]
+        switch show.source {
+        case .channel(let channelId):
+            return try modelContext.fetch(FetchDescriptor<Video>(
+                predicate: #Predicate { $0.channelId == channelId && !$0.isLikelyShort },
+                sortBy: byDate
+            ))
+        case .playlist:
+            let ids = show.memberVideoIds
+            guard !ids.isEmpty else { return [] }
+            return try modelContext.fetch(FetchDescriptor<Video>(
+                predicate: #Predicate { ids.contains($0.videoId) && !$0.isLikelyShort },
+                sortBy: byDate
+            ))
+        }
     }
 
     /// How many of a show's episodes are still unwatched. Segments and the
@@ -162,13 +180,36 @@ final class ShowManager {
     /// videos the caller already has. The grid feeds it a live `@Query` so the
     /// badges follow the store without a fetch per poster.
     ///
-    /// `videos` may hold anything; Shorts and other channels' videos are
-    /// filtered out here, so the caller's query doesn't have to be exact.
+    /// `videos` may hold anything; Shorts and videos outside the show's
+    /// source are filtered out by `listing`, so the caller's query doesn't
+    /// have to be exact. Grouping by channel first only narrows the work for
+    /// channel-backed shows; a playlist's members can come from anywhere.
     nonisolated static func unwatchedCounts(from videos: [Video], shows: [Show]) -> [String: Int] {
-        let byChannel = Dictionary(grouping: videos.filter { !$0.isLikelyShort }, by: \.channelId)
+        let candidates = videos.filter { !$0.isLikelyShort }
+        let byChannel = Dictionary(grouping: candidates, by: \.channelId)
         return shows.reduce(into: [String: Int]()) { counts, show in
-            counts[show.id] = listing(from: byChannel[show.channelId] ?? [], of: show)
+            let pool: [Video]
+            switch show.source {
+            case .channel(let channelId):
+                pool = byChannel[channelId] ?? []
+            case .playlist:
+                pool = candidates
+            }
+            counts[show.id] = listing(from: members(from: pool, of: show), of: show)
                 .episodes.filter { !$0.isWatched }.count
+        }
+    }
+
+    /// Which of `videos` belong to the show, unordered. The membership rule in
+    /// one place, so the live-query paths (the grid's counts, the show page)
+    /// answer exactly what `episodes(of:)` fetches.
+    nonisolated static func members(from videos: [Video], of show: Show) -> [Video] {
+        switch show.source {
+        case .channel(let channelId):
+            return videos.filter { $0.channelId == channelId && !$0.isLikelyShort }
+        case .playlist:
+            let ids = Set(show.memberVideoIds)
+            return videos.filter { ids.contains($0.videoId) && !$0.isLikelyShort }
         }
     }
 

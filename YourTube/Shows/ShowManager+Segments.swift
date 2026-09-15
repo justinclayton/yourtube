@@ -123,12 +123,13 @@ extension ShowManager {
     }
 
     /// Every video from the show's source, newest first: the raw material
-    /// classification works on. Shorts are left out here and never come back
-    /// — a Short is not an episode and not a segment of one.
+    /// classification works on. Membership is `members(from:of:)`, so a
+    /// playlist-backed show is classified over its playlist's items and a
+    /// channel-backed one over its channel's uploads. Shorts are left out
+    /// there and never come back — a Short is not an episode and not a
+    /// segment of one.
     nonisolated static func sourceVideos(from videos: [Video], of show: Show) -> [Video] {
-        videos
-            .filter { $0.channelId == show.channelId && !$0.isLikelyShort }
-            .sorted { $0.publishedAt > $1.publishedAt }
+        members(from: videos, of: show).sorted { $0.publishedAt > $1.publishedAt }
     }
 
     // MARK: - Classification

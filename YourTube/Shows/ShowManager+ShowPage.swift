@@ -167,6 +167,6 @@ extension ShowManager {
     /// first: an episode list is read newest first — that's where the new
     /// ones are — and it's "Play next" that walks the backlog forwards.
     nonisolated static func episodesNewestFirst(from videos: [Video], of show: Show) -> [Video] {
-        listing(from: videos, of: show).episodes
+        listing(from: members(from: videos, of: show), of: show).episodes
     }
 }
