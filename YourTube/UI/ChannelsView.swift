@@ -348,7 +348,7 @@ private struct CategoryPickerSheet: View {
                         Label("Show", systemImage: "tv")
                     }
                 } footer: {
-                    Text("Shows get a poster in Your Shows on the Shows tab, with a count of what you haven't watched. Turning this off records \"not a show\" for good.")
+                    Text("Shows get a poster in Your Shows on the Shows tab, with a count of what you haven't watched. Turning it off records \u{201C}not a show\u{201D}, which automatic sorting can never undo.")
                 }
                 Section {
                     Button {

@@ -141,7 +141,8 @@ enum DebugFixtures {
 /// something realistic to chew on.
 ///
 /// - **The Bellwether** — twice-weekly long-form interviews, an hour or more,
-///   every title carrying the channel's ` | The Bellwether` suffix.
+///   every title carrying the channel's ` | The Bellwether` suffix, and the
+///   Priority tag, so the grid has something to pin first.
 /// - **Second Take** — a weekly numbered podcast, `#147 — Guest — Second Take`,
 ///   with an oldest-first play order because a backlog is watched forwards.
 /// - **Newsline Nightly** — a weekday news hour, each full episode trailed by
@@ -169,7 +170,7 @@ extension DebugFixtures {
         ShowChannel(
             id: "UC-bellwether",
             title: "The Bellwether",
-            categories: ["News & Politics", "Podcasts & Interviews"],
+            categories: ["Priority", "News & Politics", "Podcasts & Interviews"],
             weekdays: [3, 6],
             hour: 6,
             episodes: [
@@ -204,7 +205,7 @@ extension DebugFixtures {
         ShowChannel(
             id: "UC-newsline",
             title: "Newsline Nightly",
-            categories: ["Priority", "News & Politics"],
+            categories: ["News & Politics"],
             weekdays: [2, 3, 4, 5, 6],
             hour: 19,
             episodes: Array(repeating: (title: "Newsline Nightly — FULL EPISODE", seconds: 3_180), count: 10),
