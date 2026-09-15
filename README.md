@@ -162,6 +162,11 @@ can't overrule either one. Channels marks its shows with a small screen icon.
 A show's episodes are every non-Short video from its channel, resolved live,
 so a new upload is an episode the moment it lands.
 
+The player offers a Next episode button whenever the video it's playing
+belongs to a show and a later episode exists — it swaps the player to that
+episode in place, never leaving the show. It's absent on a non-show video and
+on a show's newest episode. There's no autoplay of any kind.
+
 ### Resume and the 90% rule
 
 The player remembers where you stopped and opens there next time. Two

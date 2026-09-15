@@ -141,6 +141,39 @@ final class ShowManagerTests: XCTestCase {
         XCTAssertEqual(try manager.unwatchedCount(for: show), 2, "hidden episodes don't nag")
     }
 
+    // MARK: - Next episode
+
+    /// The player's "Next episode" action: chronologically after the current
+    /// video within its own show, regardless of play order.
+    func testNextEpisodeIsTheOneReleasedImmediatelyAfterWithinTheSameShow() throws {
+        let show = try manager.markAsShow(channelId: "UC-news", channelTitle: "Newsline Nightly")
+        let oldest = video("ep-old", channelId: "UC-news", daysAgo: 3)
+        let middle = video("ep-middle", channelId: "UC-news", daysAgo: 2)
+        let newest = video("ep-new", channelId: "UC-news", daysAgo: 1)
+        try context.save()
+
+        XCTAssertEqual(try manager.nextEpisode(after: oldest)?.videoId, middle.videoId,
+                       "the middle episode, not the newest, follows the oldest")
+        XCTAssertEqual(try manager.nextEpisode(after: middle)?.videoId, newest.videoId)
+        XCTAssertNil(try manager.nextEpisode(after: newest), "nothing follows the newest episode")
+        XCTAssertEqual(show.playOrder, .newestFirst, "resolution doesn't depend on play order")
+    }
+
+    func testNextEpisodeIgnoresAnotherChannelsVideoWithTheSameId() throws {
+        try manager.markAsShow(channelId: "UC-news", channelTitle: "Newsline")
+        let stray = video("elsewhere", channelId: "UC-other", daysAgo: 1)
+        try context.save()
+
+        XCTAssertNil(try manager.nextEpisode(after: stray), "not a show, and not this show's episode")
+    }
+
+    func testNextEpisodeIsNilForAVideoFromAChannelThatIsNotAShow() throws {
+        let notAShow = video("standalone", channelId: "UC-plain", daysAgo: 1)
+        try context.save()
+
+        XCTAssertNil(try manager.nextEpisode(after: notAShow))
+    }
+
     // MARK: - Unwatched counts
 
     func testUnwatchedCountIgnoresWatchedAndShorts() throws {
