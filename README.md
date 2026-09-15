@@ -123,14 +123,22 @@ calendar reminder.
 
 ## Shows and Up Next
 
-The tab bar is Shows, Feed, Channels, Settings. Feed is the chronological
-river of everything new from subscribed channels. Shows is the calmer library
-view of that same content, and holds **Up Next**: the list of videos you've
-earmarked by hand from the player. The app never adds to it and never treats
-its order as a play order; Edit lets you group things however you like, and
-finishing a video (marking it watched) takes it off the list. Videos saved
-under the old Watch Later tab were moved into Up Next in the order they were
-saved.
+The tab bar is Shows, Feed, Channels, Settings. Feed is an **inbox**: videos
+appear newest first until you triage them, and once a video is watched or
+earmarked it leaves the feed, so the feed trends toward empty instead of
+scrolling forever. A fully triaged feed (for the current category/Shorts
+filter) shows an "All caught up" state rather than a blank list. Every row
+has swipe actions — leading to earmark to Up Next, trailing to mark
+watched — so triage is a gesture, not a trip into the player. Category
+chips, the Priority chip, the Shorts toggle, the per-channel daily cap, and
+local search all keep working over whatever's left in the inbox.
+
+Shows is the calmer library view of that same content, and holds **Up
+Next**: the list of videos you've earmarked by hand, from the feed, the
+player, or a show page. The app never adds to it and never treats its order
+as a play order; Edit lets you group things however you like, and finishing
+a video (marking it watched) takes it off the list. Videos saved under the
+old Watch Later tab were moved into Up Next in the order they were saved.
 
 Continue Watching and the show grid land on the same tab in follow-up work;
 see the PRD in issue #17.
