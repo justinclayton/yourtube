@@ -101,8 +101,12 @@ final class Video {
     }
 
     /// True when cleaning actually changed something, which is the only time
-    /// the player shows the raw YouTube title underneath.
-    var hasCleanedTitle: Bool { displayTitle != title }
+    /// the player shows the raw YouTube title underneath. Surrounding
+    /// whitespace doesn't count: plenty of YouTube titles carry a trailing
+    /// space, and dropping it isn't a change worth showing the original for.
+    var hasCleanedTitle: Bool {
+        displayTitle != title.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
     /// "Ep. 142", or "S20 Ep. 4". Nil when the title carried no numbering.
     var episodeLabel: String? {

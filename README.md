@@ -152,7 +152,10 @@ or last segment when most of the channel's titles carry the same one.
 
 It errs towards leaving titles alone:
 
-- A channel with no repeated affix comes through byte-for-byte.
+- A channel with no repeated affix comes through byte-for-byte. A title
+  nothing is taken out of is never tidied either, so YouTube's own double
+  space or trailing ellipsis survives and the player doesn't set a duplicate
+  original beneath a line that reads the same.
 - A delimiter is not on its own evidence — Knowing Better pipes a different
   series name onto every upload, and keeps all of them.
 - When every part of a title is boilerplate, nothing is stripped: Trolden's

@@ -100,6 +100,22 @@ final class TitleCleanerTests: XCTestCase {
         )
     }
 
+    /// REAL: four titles from the store that YouTube left a trailing space
+    /// on. Dropping it is not a change the viewer needs the original for, so
+    /// the player must not set a duplicate line underneath.
+    func testTrailingWhitespaceAloneIsNotACleanedTitle() async throws {
+        seed(
+            ["I bought a house ", "How to larp ", "I'm Done ", "Building a community "],
+            channelId: "UC-space"
+        )
+        await TitleCleaner(modelContext: context).cleanStale()
+
+        let videos = try stored(channelId: "UC-space")
+        XCTAssertEqual(Set(videos.map(\.displayTitle)),
+                       ["I bought a house", "How to larp", "I'm Done", "Building a community"])
+        XCTAssertTrue(videos.allSatisfy { !$0.hasCleanedTitle })
+    }
+
     // MARK: - Versioning
 
     /// Videos already at the current version are left alone, which is what

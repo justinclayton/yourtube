@@ -123,6 +123,7 @@ enum TitleStripper {
     /// Cleans one title against a channel's boilerplate. Pass `.none` to get
     /// episode-number extraction and generic-marker removal alone.
     static func clean(_ rawTitle: String, boilerplate: ChannelBoilerplate) -> CleanedTitle {
+        let original = split(rawTitle)
         let (segments, season, episode) = prepared(rawTitle)
         var kept = segments
 
@@ -140,8 +141,16 @@ enum TitleStripper {
             if !trimmed.isEmpty { kept = trimmed }
         }
 
-        let text = tidy(join(kept))
         let fallback = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Nothing came out, so nothing goes back differently. Tidying an
+        // untouched title would turn YouTube's double space or trailing
+        // ellipsis into "the app changed this", and the player would set the
+        // raw title underneath a line that reads the same.
+        guard episode != nil || kept != original else {
+            return CleanedTitle(title: fallback)
+        }
+
+        let text = tidy(join(kept))
         return CleanedTitle(
             title: text.isEmpty ? fallback : text,
             seasonNumber: season,
@@ -299,7 +308,9 @@ enum TitleStripper {
     /// The delimiters channels use to bolt a show name onto a title. A bare
     /// hyphen only counts when it's spaced, so "222-0." and "Seventh-day"
     /// stay in one piece; a colon only when a space follows, so "8:30" does.
-    private static let separatorRegex = regex(#"\s*[|•·]\s*|\s+[-–—]\s+|:\s+"#)
+    /// A run of pipes is one delimiter, so "LOST || Bad Lip Readings" doesn't
+    /// split around an empty segment and leave a stray pipe behind.
+    private static let separatorRegex = regex(#"\s*[|•·]+\s*|\s+[-–—]\s+|:\s+"#)
 
     /// "S29E03", "S20 Ep.4", "Season 29 Episode 3", "Series 19 Episode 11".
     private static let seasonEpisodeRegex =

@@ -331,6 +331,38 @@ final class TitleStripperTests: XCTestCase {
         XCTAssertEqual(cleaned(offMenu), offMenu)
     }
 
+    /// REAL: two titles from the store that nothing is stripped from. A
+    /// title the stripper takes nothing out of has to come back exactly as
+    /// YouTube wrote it — double space, trailing ellipsis and all. Tidying
+    /// one anyway would register as a change, and the player would set the
+    /// raw title under a line that reads the same.
+    func testUntouchedTitleKeepsYouTubesOwnSpacingAndPunctuation() {
+        let none = ChannelBoilerplate.none
+        XCTAssertEqual(
+            TitleStripper.clean("A Physics Professor Bet Me $10,000 I'm Wrong...", boilerplate: none).title,
+            "A Physics Professor Bet Me $10,000 I'm Wrong..."
+        )
+        XCTAssertEqual(
+            TitleStripper.clean("Mashed potatoes  No, pomme purée🤌", boilerplate: none).title,
+            "Mashed potatoes  No, pomme purée🤌"
+        )
+        XCTAssertEqual(
+            TitleStripper.clean("Forge map: Overlook but renaming it.", boilerplate: none).title,
+            "Forge map: Overlook but renaming it."
+        )
+    }
+
+    /// REAL: Bad Lip Reading doubles its pipes. A run of delimiters is one
+    /// delimiter, or the split puts an empty segment between them and the
+    /// leftover pipe ends up welded to the front of what survives.
+    func testRunOfDelimitersCountsAsOne() {
+        let stripped = TitleStripper.clean(
+            "LOST || Bad Lip Readings || Seanie B Final Recap Teaser",
+            boilerplate: ChannelBoilerplate(prefix: "lost", suffix: nil)
+        )
+        XCTAssertEqual(stripped.title, "Bad Lip Readings || Seanie B Final Recap Teaser")
+    }
+
     // MARK: - Evidence thresholds
 
     /// SYNTHETIC: two uploads that happen to end the same way aren't a
