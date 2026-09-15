@@ -5,19 +5,31 @@ import SwiftData
 struct YourTubeApp: App {
     /// Config is loaded once at launch. If it's missing we show setup
     /// instructions rather than crashing, since a fresh clone won't have it.
-    private let setup: Result<(container: ModelContainer, services: AppServices), Error>
+    private let setup: Result<Setup, Error>
+
+    /// Everything a launch resolves once: the store, the services over it,
+    /// and the `UserDefaults` those services and `@AppStorage` write to.
+    private struct Setup {
+        let container: ModelContainer
+        let services: AppServices
+        let defaults: UserDefaults
+    }
 
     init() {
         setup = MainActor.assumeIsolated {
             Result {
                 #if DEBUG
                 if DebugFixtures.isRequested {
+                    // A fixture run gets its own defaults suite as well as its
+                    // own store, so nothing it does reaches the real account.
                     let container = try DebugFixtures.makeContainer()
+                    let defaults = DebugFixtures.defaults
                     let services = AppServices(
                         config: DebugFixtures.config,
-                        modelContext: container.mainContext
+                        modelContext: container.mainContext,
+                        defaults: defaults
                     )
-                    return (container, services)
+                    return Setup(container: container, services: services, defaults: defaults)
                 }
                 #endif
                 let config = try AppConfig.load()
@@ -29,7 +41,7 @@ struct YourTubeApp: App {
                     config: config,
                     modelContext: container.mainContext
                 )
-                return (container, services)
+                return Setup(container: container, services: services, defaults: .standard)
             }
         }
     }
@@ -37,10 +49,11 @@ struct YourTubeApp: App {
     var body: some Scene {
         WindowGroup {
             switch setup {
-            case .success(let (container, services)):
+            case .success(let setup):
                 RootView()
-                    .modelContainer(container)
-                    .environment(services)
+                    .modelContainer(setup.container)
+                    .environment(setup.services)
+                    .defaultAppStorage(setup.defaults)
             case .failure(let error):
                 SetupInstructionsView(error: error)
             }
@@ -64,9 +77,9 @@ final class AppServices {
     let shows: ShowManager
     let showDetector: ShowDetectionRunner
 
-    init(config: AppConfig.Values, modelContext: ModelContext) {
+    init(config: AppConfig.Values, modelContext: ModelContext, defaults: UserDefaults = .standard) {
         let auth = AuthController(config: config)
-        let quota = QuotaTracker()
+        let quota = QuotaTracker(defaults: defaults)
         let api = YouTubeAPI(quota: quota) { [auth] in
             try await auth.validAccessToken()
         }
@@ -76,7 +89,8 @@ final class AppServices {
         self.feed = FeedRefresher(modelContext: modelContext, api: api)
         self.categories = CategoryManager(
             modelContext: modelContext,
-            categorizer: ChannelCategorizerFactory.makeSystemCategorizer()
+            categorizer: ChannelCategorizerFactory.makeSystemCategorizer(),
+            defaults: defaults
         )
         let upNext = UpNextQueue(modelContext: modelContext)
         self.upNext = upNext
@@ -84,6 +98,6 @@ final class AppServices {
         self.playback = PlaybackProgress(modelContext: modelContext, upNext: upNext)
         let shows = ShowManager(modelContext: modelContext)
         self.shows = shows
-        self.showDetector = ShowDetectionRunner(modelContext: modelContext, shows: shows)
+        self.showDetector = ShowDetectionRunner(modelContext: modelContext, shows: shows, defaults: defaults)
     }
 }

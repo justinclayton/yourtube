@@ -8,7 +8,8 @@ import SwiftData
 /// Launch the app with the `-seedFixtures` argument (see `.claude/launch.json`
 /// and README "Development loop") and it opens an in-memory container holding
 /// a handful of subscriptions, categories, and videos instead of the real
-/// store. Nothing is written to disk and no token is involved, so the
+/// store, with `UserDefaults` redirected to its own suite. The real store and
+/// the real defaults are never opened, and no token is involved, so the
 /// sign-in banner shows and refresh is disabled: exactly the "offline, signed
 /// out" state local features like search have to work in.
 ///
@@ -27,12 +28,20 @@ enum DebugFixtures {
     /// Placeholder OAuth values so a fixture run doesn't need `Config.plist`.
     static let config = AppConfig.Values(clientId: "fixtures", redirectScheme: "fixtures")
 
+    /// The `UserDefaults` suite a fixture run reads and writes instead of
+    /// `.standard`: quota, classifier and detector bookkeeping, and every
+    /// `@AppStorage` setting. Keeping it separate means a fixture run can't
+    /// leave fixture channel fingerprints or a toggled setting behind for the
+    /// real account to trip over.
+    static let defaultsSuite = "net.claytons.yourtube.fixtures"
+    static var defaults: UserDefaults { UserDefaults(suiteName: defaultsSuite)! }
+
     @MainActor
     static func makeContainer() throws -> ModelContainer {
-        // The fixture store is new every launch but `UserDefaults` isn't, so
-        // the show detector would otherwise believe it had already examined
+        // The fixture store is new every launch, so its defaults are too:
+        // otherwise the show detector would believe it had already examined
         // these channels and leave the grid short of its heuristic show.
-        UserDefaults.standard.removeObject(forKey: ShowDetectionRunner.fingerprintsKey)
+        defaults.removePersistentDomain(forName: defaultsSuite)
         let container = try ModelContainer(
             for: Video.self, Subscription.self, VideoCollection.self, ChannelRule.self, Show.self,
             configurations: ModelConfiguration(isStoredInMemoryOnly: true)

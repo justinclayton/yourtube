@@ -1,5 +1,6 @@
 {
   "version": "0.0.1",
+  "_comment": "Both entries build and install over the existing app, which keeps the signed-in store. Never 'xcrun simctl uninstall' or 'erase' YourTube Dev to reset state: that deletes the data container. Use yourtube-sim-fixtures for a clean, signed-out store instead. See README 'What keeps the data, and what wipes it'.",
   "configurations": [
     {
       "name": "yourtube-sim",
