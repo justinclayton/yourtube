@@ -35,6 +35,16 @@ struct ShowsView: View {
             .navigationDestination(for: Video.self) { video in
                 PlayerView(video: video)
             }
+            // Value-based, like the Video destination above: a show page
+            // reached through a plain `NavigationLink { ShowPageView(...) }`
+            // instead would mix navigation styles in this stack, and mixing
+            // them is what caused issue #46 — tapping an episode inside a
+            // show page double-pushed (the video, then a duplicate of the
+            // show page on top of it), so the tap looked like it did nothing
+            // and Back landed on the video instead of the show.
+            .navigationDestination(for: Show.self) { show in
+                ShowPageView(show: show)
+            }
         }
     }
 }

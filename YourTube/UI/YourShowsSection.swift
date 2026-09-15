@@ -107,9 +107,14 @@ struct YourShowsSection: View {
             ForEach(visibleShows) { show in
                 // The show page is its own slice; this link is the hook it
                 // replaces. See issue #23.
-                NavigationLink {
-                    ShowPageView(show: show)
-                } label: {
+                //
+                // Value-based (`navigationDestination(for: Show.self)` on
+                // the tab's NavigationStack), not a plain
+                // `NavigationLink { ShowPageView(...) }`: mixing that
+                // view-builder style with the value-based pushes inside
+                // ShowPageView (its episode rows push `Video`) made SwiftUI
+                // double-push whenever an episode was tapped — see #46.
+                NavigationLink(value: show) {
                     ShowPoster(
                         show: show,
                         avatarURL: avatars[show.channelId],
