@@ -113,8 +113,8 @@ struct ShowPageView: View {
 
     /// Art, provenance, habit, and the two buttons. The lines are stacked in
     /// order of how sure the app is of them: the source is a fact, the
-    /// cadence is computed from what's arrived so far, and a later slice adds
-    /// the detector's reasons for calling this a show beneath them.
+    /// cadence is computed from what's arrived so far, and the detector's
+    /// reasons for calling this a show sit beneath them when it was a guess.
     private func header(episodes: [Video], unwatched: Int) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 16) {
@@ -143,6 +143,7 @@ struct ShowPageView: View {
                     }
                 }
             }
+            DetectorReasons(show: show)
             buttons(unwatched: unwatched)
         }
     }
@@ -348,4 +349,33 @@ private extension Video {
     /// the channel's boilerplate onto `Video` in its own slice; when it lands,
     /// this becomes the cleaned title and every row on the page follows.
     var episodeTitle: String { title }
+}
+
+/// Why the detector thought this channel was a show. Shown only for a guess:
+/// a flag the user made by hand needs no justifying, and a guess that can't be
+/// read can't be trusted or corrected.
+struct DetectorReasons: View {
+    let show: Show
+
+    var body: some View {
+        if show.flagOrigin == .heuristic, !show.detectorReasons.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Flagged as a show automatically", systemImage: "wand.and.stars")
+                    .font(.subheadline.weight(.semibold))
+                ForEach(show.detectorReasons, id: \.self) { reason in
+                    Text("· \(reason)")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Text("Mark it \u{201C}Not a show\u{201D} in Channels if this is wrong; that decision sticks.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+    }
 }

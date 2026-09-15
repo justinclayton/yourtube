@@ -93,6 +93,9 @@ final class Show {
     /// default; see `ShowManager+Segments`.
     var segmentThreshold: Double = 0.5
     var artPreferenceRaw: String
+    /// Why the detector flagged this channel, in its own words, so a guess can
+    /// be read and trusted or corrected. Empty for a hand-made flag.
+    var detectorReasons: [String] = []
     /// Season names in running order, for playlist-backed shows. Empty until
     /// playlist sources land.
     var seasonNames: [String] = []
