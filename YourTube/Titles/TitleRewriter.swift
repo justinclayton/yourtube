@@ -50,9 +50,13 @@ enum TitleRewritePrompt {
     Rules, in order of importance:
     - Never add information the title doesn't already contain. No new names, \
     numbers, claims, outcomes or conclusions, and no guessing at what the \
-    episode is about.
-    - Never use capital letters for emphasis. Write in sentence case, keeping \
-    proper nouns capitalised and leaving acronyms as they are.
+    episode is about. Reuse the title's own words: take a word out rather \
+    than swap it for a different one.
+    - Never use capital letters for emphasis: a word written in CAPITALS \
+    becomes ordinary lower case. Leave acronyms and initialisms alone. \
+    Otherwise leave capitalisation exactly as you were given it: never \
+    lower-case a person's name, a place or a programme, and never Capitalise \
+    Every Word Of A Title that wasn't capitalised already.
     - Keep it under \(maxLength) characters, and never longer than the title \
     you were given.
     - Drop hype, teases and shouting; keep the subject and the people named.
@@ -141,7 +145,7 @@ struct FoundationModelTitleRewriter: TitleRewriter {
     @Generable
     struct Answer {
         @Guide(
-            description: "The rewritten title alone, in sentence case, under 80 characters, saying nothing the original didn't."
+            description: "The rewritten title alone, under 80 characters, in the capitalisation it was given minus any shouting, saying nothing the original didn't."
         )
         var title: String
     }

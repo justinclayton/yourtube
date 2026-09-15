@@ -118,8 +118,9 @@ final class TitleCleaner {
 
     func cleanStale() async {
         guard !isRunning else { return }
+        var didWork = false
         do {
-            try await strip()
+            didWork = try await strip()
         } catch is CancellationError {
             try? modelContext.save()
             status = .idle
@@ -129,17 +130,20 @@ final class TitleCleaner {
             status = .failed(error.localizedDescription)
             return
         }
-        await reconcileRewrites()
-        lastRunAt = .now
+        // `||` in this order so the rewrite pass always runs.
+        didWork = await reconcileRewrites() || didWork
+        if didWork { lastRunAt = .now }
     }
 
     // MARK: - Tier one
 
-    private func strip() async throws {
+    /// Returns whether there was anything stale to re-strip.
+    @discardableResult
+    private func strip() async throws -> Bool {
         let channelIds = try staleChannelIds()
         guard !channelIds.isEmpty else {
             status = .idle
-            return
+            return false
         }
 
         status = .running(completed: 0, total: channelIds.count)
@@ -157,6 +161,7 @@ final class TitleCleaner {
 
         try modelContext.save()
         status = .idle
+        return true
     }
 
     /// Channels holding at least one video cleaned by an older version (or
@@ -193,44 +198,49 @@ final class TitleCleaner {
     // MARK: - Tier two
 
     /// Brings the store in line with what the rewrite setting asks for.
-    func reconcileRewrites() async {
+    /// Returns whether it had anything to do.
+    @discardableResult
+    func reconcileRewrites() async -> Bool {
         guard canRewrite, isRewriteEnabled else {
-            revertRewrites()
+            let reverted = revertRewrites()
             rewriteStatus = .idle
-            return
+            return reverted
         }
-        await rewritePending()
+        return await rewritePending()
     }
 
     /// Puts every rewritten title back to tier one's output. Cheap because the
     /// stripped title was kept alongside the rewrite rather than recomputed.
-    private func revertRewrites() {
+    @discardableResult
+    private func revertRewrites() -> Bool {
         let rewritten = (try? modelContext.fetch(FetchDescriptor<Video>(
             predicate: #Predicate { $0.isTitleRewritten }
         ))) ?? []
-        guard !rewritten.isEmpty else { return }
+        guard !rewritten.isEmpty else { return false }
         for video in rewritten {
             if let stripped = video.strippedTitle { video.cleanedTitle = stripped }
             video.isTitleRewritten = false
         }
         try? modelContext.save()
+        return true
     }
 
     /// One model call per show episode that tier two hasn't seen, newest
     /// first so the titles the viewer is about to scroll past settle first.
-    private func rewritePending() async {
-        guard let rewriter else { return }
+    @discardableResult
+    private func rewritePending() async -> Bool {
+        guard let rewriter else { return false }
         let pending: [Video]
         let titles: [String: String]
         do {
             (pending, titles) = try pendingRewrites()
         } catch {
             rewriteStatus = .failed(error.localizedDescription)
-            return
+            return false
         }
         guard !pending.isEmpty else {
             rewriteStatus = .idle
-            return
+            return false
         }
 
         rewriteStatus = .running(completed: 0, total: pending.count)
@@ -268,6 +278,7 @@ final class TitleCleaner {
 
         try? modelContext.save()
         rewriteStatus = .idle
+        return true
     }
 
     /// Show episodes that tier one has cleaned and tier two hasn't seen, plus
