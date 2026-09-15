@@ -11,4 +11,6 @@ Issues are tracked in GitHub Issues on `justinclayton/yourtube`. See `docs/agent
 
 ### Domain docs
 
-Single-context: one `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+The domain vocabulary (Show, Episode, Segment, Up Next, Continue Watching, cleaned vs raw title) and the
+decisions behind it are recorded in `README.md` and PRD #17. `docs/agents/domain.md`
+describes how to use those files once they are created.
