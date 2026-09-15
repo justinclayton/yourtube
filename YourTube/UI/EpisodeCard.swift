@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 
 /// The one card shape for episodes: art on top, the channel (or show) name
 /// as a caption, the full title free to wrap, then duration and date.
@@ -23,10 +24,34 @@ struct EpisodeCard: View {
     /// over the art, and duration rather than time left. See `PlaybackProgress`.
     var progress: Double?
 
+    /// The art preference is per show, and the card is used in Continue
+    /// Watching and Up Next, where a list mixes several shows with videos
+    /// that belong to no show at all. Resolving it here rather than at every
+    /// call site keeps the preference true wherever the card is used; the
+    /// catalogue is a handful of rows, so the query is cheap.
+    @Query private var shows: [Show]
+
+    /// A show whose art preference is thumbnails shows the video's own
+    /// thumbnail, for the channels whose avatar carries no information.
+    /// Everything else — every video that belongs to no show — keeps the
+    /// channel art.
+    private var prefersThumbnails: Bool {
+        shows.first { $0.channelId == video.channelId && $0.isActive }?.artPreference == .thumbnails
+    }
+
+    /// The art, and what the monogram falls back to when there's no image:
+    /// the video rather than the channel when thumbnails are asked for, so
+    /// the preference is visible even before an image loads.
+    private var art: (url: String?, title: String, seed: String) {
+        prefersThumbnails
+            ? (video.thumbnailURL, video.title, video.videoId)
+            : (avatarURL, video.channelTitle, video.channelId)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: size == .large ? 8 : 6) {
             ZStack(alignment: .bottom) {
-                ChannelArt(url: avatarURL, title: video.channelTitle, seed: video.channelId)
+                ChannelArt(url: art.url, title: art.title, seed: art.seed)
                     .aspectRatio(size == .large ? 4 / 3 : 1, contentMode: .fit)
                 if let progress {
                     ProgressView(value: progress)
