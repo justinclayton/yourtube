@@ -357,11 +357,14 @@ is what keeps `Syndney` and `Sweeney` capitalised while `Gambling` and
 `Favourite` go down. The result is ordinary sentence case, which is the one
 house style that can be derived rather than guessed.
 
-Only shows are rewritten: it's one model call per title, and clickbait is
-most in the way where the app is pretending to be television. Everything else
-gets tier one alone, and so does every device without Apple Intelligence —
-the feature degrades rather than disappears, and Settings says why the toggle
-is off.
+Only show episodes are rewritten: it's one model call per title, and
+clickbait is most in the way where the app is pretending to be television.
+Episodes are resolved by the same membership rule `ShowManager` uses — every
+non-Short upload of a channel-backed show, only the playlist's members for a
+playlist-backed one — so the host channel of a podcast playlist keeps tier one
+on everything that isn't the podcast. Everything else gets tier one alone, and
+so does every device without Apple Intelligence — the feature degrades rather
+than disappears, and Settings says why the toggle is off.
 
 **Settings → Titles → Rewrite show titles** turns tier two off. Tier one's
 output is kept alongside the rewrite (`strippedTitle`), so turning it off puts
@@ -578,8 +581,9 @@ Run with Cmd-U. Coverage is concentrated where the risk is:
 - `TitleCleanerTests` — the bookkeeping around both tiers, with the model
   stubbed the way `CategoryManagerTests` stubs the categorizer: channels judged
   against their own titles, show episodes rewritten and everything else left
-  with tier one, the Settings toggle restoring and re-running the rewrite, and
-  a version bump re-running both tiers.
+  with tier one (a playlist-backed show's host channel included), the Settings
+  toggle restoring and re-running the rewrite, and a version bump re-running
+  both tiers.
 - `TitleRewriterTests` — what the model is told and what the app believes of
   the answer: the constraints present in the instructions, and the fallback to
   the stripped title on an empty or over-long answer.
