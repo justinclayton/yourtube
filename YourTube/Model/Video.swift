@@ -43,11 +43,21 @@ final class Video {
     /// Bumped when the classifier logic changes, to trigger re-classification.
     var classifierVersion: Int
 
-    /// The title with the channel's boilerplate stripped, cached so the feed
-    /// never waits on cleaning. Nil until `TitleCleaner` has been over this
-    /// video, which is what `displayTitle` falls back to `title` for.
-    /// The model rewrite (#27) writes the same field.
+    /// The title as shown: the channel's boilerplate stripped, and then, for
+    /// an episode of a show, the on-device model's rewrite of what was left.
+    /// Cached so the feed never waits on cleaning; nil until `TitleCleaner`
+    /// has been over this video, which is what `displayTitle` falls back to
+    /// `title` for.
     var cleanedTitle: String?
+    /// Tier one's output on its own, kept so turning the rewrite off in
+    /// Settings can put the stripped title back without re-running the
+    /// stripper over the whole store. Nil until the video has been cleaned.
+    var strippedTitle: String?
+    /// Whether `cleanedTitle` has been past the model. False for a video the
+    /// rewrite skipped (not an episode of a show, model unavailable, setting
+    /// off) and for one the stripper has just re-done, which is what makes a
+    /// version bump re-run both tiers. See `TitleCleaner`.
+    var isTitleRewritten: Bool = false
     /// Episode numbering lifted out of the title, shown as a label rather
     /// than left as clutter. Nil when the title carried none.
     var seasonNumber: Int?
@@ -76,6 +86,8 @@ final class Video {
         lastPlayedAt: Date? = nil,
         classifierVersion: Int = 0,
         cleanedTitle: String? = nil,
+        strippedTitle: String? = nil,
+        isTitleRewritten: Bool = false,
         seasonNumber: Int? = nil,
         episodeNumber: Int? = nil,
         titleCleanerVersion: Int = 0
@@ -99,6 +111,8 @@ final class Video {
         self.lastPlayedAt = lastPlayedAt
         self.classifierVersion = classifierVersion
         self.cleanedTitle = cleanedTitle
+        self.strippedTitle = strippedTitle
+        self.isTitleRewritten = isTitleRewritten
         self.seasonNumber = seasonNumber
         self.episodeNumber = episodeNumber
         self.titleCleanerVersion = titleCleanerVersion

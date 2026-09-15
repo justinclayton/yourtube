@@ -22,6 +22,7 @@ struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @AppStorage(SettingsKeys.showShorts) private var showShorts = false
     @AppStorage(SettingsKeys.channelDailyCap) private var channelDailyCap = SettingsKeys.defaultChannelDailyCap
+    @AppStorage(TitleCleaner.rewriteEnabledKey) private var rewriteTitles = true
 
     @Query private var subscriptions: [Subscription]
     @Query private var videos: [Video]
@@ -80,6 +81,8 @@ struct SettingsView: View {
                     """)
                 }
 
+                titlesSection
+
                 Section("Library") {
                     LabeledContent("Subscriptions", value: "\(subscriptions.count)")
                     LabeledContent("Videos", value: "\(videos.count)")
@@ -110,6 +113,57 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
+        }
+    }
+
+    /// Tier two of title cleaning. Stripping has no switch — it's
+    /// deterministic and works everywhere — so this section is about the
+    /// model rewrite alone, and says so when the device can't run it.
+    private var titlesSection: some View {
+        Section {
+            Toggle("Rewrite show titles", isOn: $rewriteTitles)
+                .disabled(!services.titles.canRewrite)
+                .onChange(of: rewriteTitles) {
+                    services.titles.applyRewriteSettingInBackground()
+                }
+
+            if !services.titles.canRewrite {
+                Label(
+                    TitleRewriterFactory.systemModelUnavailableReason()
+                        ?? "The on-device model isn't available.",
+                    systemImage: "exclamationmark.triangle"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            if case .running(let done, let total) = services.titles.rewriteStatus {
+                ProgressView(value: Double(done), total: Double(max(1, total))) {
+                    Text("Rewriting titles \(done)/\(total)").monospacedDigit()
+                }
+            }
+            if services.titles.lastRewriteFailures > 0 {
+                LabeledContent(
+                    "Skipped by the model last run",
+                    value: "\(services.titles.lastRewriteFailures)"
+                )
+                .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("Titles")
+        } footer: {
+            Text("""
+            Every title has the channel's repeated boilerplate stripped — the \
+            show name after a pipe, "FULL EPISODE", episode numbers — and that \
+            happens on every device with no model involved.
+
+            On top of that, episodes of your shows are rewritten on-device by \
+            Apple's language model into calm, factual titles, with nothing \
+            added that the original didn't say. Nothing leaves the phone. Turn \
+            this off to keep the stripping and lose the rewrite; turning it \
+            back on rewrites them again. The original title is always under \
+            the cleaned one in the player.
+            """)
         }
     }
 
