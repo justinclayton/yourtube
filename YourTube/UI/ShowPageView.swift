@@ -304,8 +304,8 @@ private struct ShowSettingsSheet: View {
 }
 
 private extension Video {
-    /// The title the show page lists an episode under. Title cleaning strips
-    /// the channel's boilerplate onto `Video` in its own slice; when it lands,
-    /// this becomes the cleaned title and every row on the page follows.
-    var episodeTitle: String { title }
+    /// The title the show page lists an episode under: the cleaned one, which
+    /// for a show's episodes has been through both the boilerplate stripper
+    /// and the model rewrite. See `TitleCleaner`.
+    var episodeTitle: String { displayTitle }
 }
