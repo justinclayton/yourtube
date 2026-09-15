@@ -79,8 +79,13 @@ final class AppServices {
         )
         let upNext = UpNextQueue(modelContext: modelContext)
         self.upNext = upNext
-        self.titles = TitleCleaner(modelContext: modelContext)
+        let shows = ShowManager(modelContext: modelContext)
+        self.shows = shows
+        self.titles = TitleCleaner(
+            modelContext: modelContext,
+            rewriter: TitleRewriterFactory.makeSystemRewriter(),
+            shows: shows
+        )
         self.playback = PlaybackProgress(modelContext: modelContext, upNext: upNext)
-        self.shows = ShowManager(modelContext: modelContext)
     }
 }
