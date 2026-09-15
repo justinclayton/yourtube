@@ -25,10 +25,14 @@ struct RootView: View {
             // goes straight to the feed without a sign-in prompt.
             _ = try? await services.auth.validAccessToken()
             services.categories.classifyUnassignedInBackground()
+            // Catches videos stored before the cleaner existed, and re-cleans
+            // everything after a version bump. See `TitleCleaner`.
+            services.titles.cleanStaleInBackground()
         }
         .onChange(of: services.feed.lastRefreshedAt) {
             // New subscriptions arrive via refresh; file them as they appear.
             services.categories.classifyUnassignedInBackground()
+            services.titles.cleanStaleInBackground()
         }
     }
 }

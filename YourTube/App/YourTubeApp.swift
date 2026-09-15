@@ -59,6 +59,7 @@ final class AppServices {
     let feed: FeedRefresher
     let categories: CategoryManager
     let upNext: UpNextQueue
+    let titles: TitleCleaner
 
     init(config: AppConfig.Values, modelContext: ModelContext) {
         let auth = AuthController(config: config)
@@ -75,5 +76,6 @@ final class AppServices {
             categorizer: ChannelCategorizerFactory.makeSystemCategorizer()
         )
         self.upNext = UpNextQueue(modelContext: modelContext)
+        self.titles = TitleCleaner(modelContext: modelContext)
     }
 }

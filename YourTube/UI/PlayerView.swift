@@ -41,11 +41,22 @@ struct PlayerView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8))
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(video.title)
+                    Text(video.displayTitle)
                         .font(.headline)
-                    Text(video.channelTitle)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    // The player is where the app shows its working: whenever
+                    // cleaning changed the title, YouTube's own is right
+                    // underneath, so nothing is hidden.
+                    if video.hasCleanedTitle {
+                        Text(video.title)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack(spacing: 6) {
+                        EpisodeBadge(video: video)
+                        Text(video.channelTitle)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
                     Text(video.publishedAt, format: .dateTime.month().day().year())
                         .font(.caption)
                         .foregroundStyle(.tertiary)
