@@ -106,7 +106,7 @@ private struct ChannelList: View {
             ContentUnavailableView(
                 "No channels yet",
                 systemImage: "person.2",
-                description: Text("Refresh the Subscriptions tab to pull in your channels.")
+                description: Text("Refresh the Feed tab to pull in your channels.")
             )
         } else if subscriptions.isEmpty {
             ContentUnavailableView.search(text: searchQuery)

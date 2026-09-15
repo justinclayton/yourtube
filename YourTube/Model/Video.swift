@@ -22,7 +22,13 @@ final class Video {
 
     var isLikelyShort: Bool
     var isWatched: Bool
+    /// When the user earmarked this video to Up Next; nil when it isn't there.
+    /// Named for the Watch Later feature it predates so existing stores open
+    /// without a migration. See `UpNextQueue`.
     var savedForLaterAt: Date?
+    /// Position in Up Next. Nil for an entry saved before Up Next existed
+    /// until `UpNextQueue.migrateLegacySaves()` places it.
+    var upNextOrder: Int?
 
     var collection: VideoCollection?
     /// Bumped when the classifier logic changes, to trigger re-classification.
@@ -42,6 +48,7 @@ final class Video {
         isLikelyShort: Bool = false,
         isWatched: Bool = false,
         savedForLaterAt: Date? = nil,
+        upNextOrder: Int? = nil,
         classifierVersion: Int = 0
     ) {
         self.videoId = videoId
@@ -57,10 +64,11 @@ final class Video {
         self.isLikelyShort = isLikelyShort
         self.isWatched = isWatched
         self.savedForLaterAt = savedForLaterAt
+        self.upNextOrder = upNextOrder
         self.classifierVersion = classifierVersion
     }
 
-    var isSavedForLater: Bool { savedForLaterAt != nil }
+    var isInUpNext: Bool { savedForLaterAt != nil }
 
     var formattedDuration: String {
         let h = durationSeconds / 3600

@@ -58,6 +58,7 @@ final class AppServices {
     let api: YouTubeAPI
     let feed: FeedRefresher
     let categories: CategoryManager
+    let upNext: UpNextQueue
 
     init(config: AppConfig.Values, modelContext: ModelContext) {
         let auth = AuthController(config: config)
@@ -73,5 +74,6 @@ final class AppServices {
             modelContext: modelContext,
             categorizer: ChannelCategorizerFactory.makeSystemCategorizer()
         )
+        self.upNext = UpNextQueue(modelContext: modelContext)
     }
 }

@@ -14,7 +14,8 @@ import SwiftData
 ///
 /// The data is chosen to be awkward on purpose: diacritics, mixed case, a
 /// channel name that also appears in another channel's titles, a prolific
-/// channel to trip the daily cap, and a few Shorts.
+/// channel to trip the daily cap, a few Shorts, and two earmarked videos so
+/// Up Next shows its two-column grid.
 enum DebugFixtures {
     static let launchArgument = "-seedFixtures"
 
@@ -72,6 +73,10 @@ enum DebugFixtures {
         ]),
     ]
 
+    /// Earmarked to Up Next, in this order. Neither is a channel's last
+    /// video, which the seed marks watched.
+    private static let upNext = ["UC-teamcoco-1", "UC-nasa-3"]
+
     private static func seed(_ context: ModelContext) throws {
         let collections = Dictionary(
             uniqueKeysWithValues: CategoryManager.defaultCategoryNames.enumerated().map { index, name in
@@ -105,8 +110,10 @@ enum DebugFixtures {
                 ))
             }
             for (index, video) in channel.videos.enumerated() {
+                let videoId = "\(channel.id)-\(index)"
+                let position = upNext.firstIndex(of: videoId)
                 context.insert(Video(
-                    videoId: "\(channel.id)-\(index)",
+                    videoId: videoId,
                     channelId: channel.id,
                     channelTitle: channel.title,
                     title: video.title,
@@ -115,6 +122,8 @@ enum DebugFixtures {
                     durationSeconds: video.seconds,
                     isLikelyShort: video.short,
                     isWatched: index == channel.videos.count - 1,
+                    savedForLaterAt: position.map { Date(timeIntervalSinceNow: -Double($0 + 1) * 86_400) },
+                    upNextOrder: position.map { $0 + 1 },
                     classifierVersion: ShortsHeuristic.version
                 ))
             }

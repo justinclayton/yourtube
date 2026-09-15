@@ -19,7 +19,7 @@ before you build this.
 |---|---|
 | Subscription feed | Works. Fans out across subscribed channels' uploads playlists. |
 | Hiding Shorts | Heuristic, ~95% accurate. There is no `isShort` flag in the API. |
-| Watch Later, watched state | Works, stored **on-device**. YouTube's own Watch Later isn't API-accessible. |
+| Up Next (earmarks), watched state | Works, stored **on-device**. YouTube's own Watch Later isn't API-accessible, and this app doesn't try to mirror it. |
 | Search | Works, **local only**: filters cached titles and channel names on device. The API's search endpoint costs 100 quota units per call, so it isn't used. |
 | Playback | Works, via YouTube's IFrame player. |
 | Background audio | **Not possible.** YouTube kills embedded playback server-side after screen lock. |
@@ -121,6 +121,20 @@ tester**. Internal testing needs no App Review.
 Builds expire **90 days** after upload, so this is a quarterly chore. Set a
 calendar reminder.
 
+## Shows and Up Next
+
+The tab bar is Shows, Feed, Channels, Settings. Feed is the chronological
+river of everything new from subscribed channels. Shows is the calmer library
+view of that same content, and holds **Up Next**: the list of videos you've
+earmarked by hand from the player. The app never adds to it and never treats
+its order as a play order; Edit lets you group things however you like, and
+finishing a video (marking it watched) takes it off the list. Videos saved
+under the old Watch Later tab were moved into Up Next in the order they were
+saved.
+
+Continue Watching and the show grid land on the same tab in follow-up work;
+see the PRD in issue #17.
+
 ## Categories
 
 Subscribed channels are sorted into categories (Comedy, Music & Audio Gear,
@@ -193,6 +207,7 @@ YourTube/
   Auth/       Google OAuth (PKCE), Keychain, token lifecycle
   API/        YouTube Data API client, DTOs, quota tracking
   Feed/       Refresh algorithm, Shorts heuristic, thumbnail analysis
+  UpNext/     The earmark list behind the Shows tab
   Categorize/ On-device channel classification, category management
   Model/      SwiftData models
   UI/         SwiftUI views

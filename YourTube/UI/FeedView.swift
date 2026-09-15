@@ -1,7 +1,9 @@
 import SwiftUI
 import SwiftData
 
-struct SubscriptionsView: View {
+/// The subscriptions feed: everything new from every subscribed channel,
+/// newest first. Peer of the Shows tab; show episodes appear here too.
+struct FeedView: View {
     @Environment(AppServices.self) private var services
     @AppStorage(SettingsKeys.showShorts) private var showShorts = false
     @AppStorage(SettingsKeys.feedCategory) private var feedCategory = ""
@@ -74,7 +76,7 @@ struct SubscriptionsView: View {
                     matchingChannels: matchingChannels
                 )
             }
-            .navigationTitle("Subscriptions")
+            .navigationTitle("Feed")
             .searchable(text: $searchQuery, prompt: "Search titles and channels")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {

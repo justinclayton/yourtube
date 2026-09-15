@@ -3,7 +3,7 @@ import SwiftData
 
 enum SettingsKeys {
     static let showShorts = "settings.showShorts"
-    /// Name of the category the Subscriptions feed is filtered to; empty = all.
+    /// Name of the category the feed is filtered to; empty = all.
     static let feedCategory = "settings.feedCategory"
     /// Max videos per channel per day before the rest fold into "+N more"; 0 = off.
     static let channelDailyCap = "settings.channelDailyCap"
