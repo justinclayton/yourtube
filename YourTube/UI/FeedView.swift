@@ -91,53 +91,17 @@ struct FeedView: View {
     }
 }
 
-/// Horizontal row of category filters above the feed. "All" (empty selection)
-/// is one chip among the rest; the row scrolls the remembered chip into view
-/// on launch so a restored selection is visible, not off to the right.
-/// Priority comes first by sort order. It gets no badge or count on purpose:
-/// the chip is meant to be a calm place, not a to-do list.
-private struct CategoryChips: View {
-    let names: [String]
-    @Binding var selected: String
-
-    var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    chip("All", isOn: selected.isEmpty) { selected = "" }
-                        .id("")
-                    ForEach(names, id: \.self) { name in
-                        chip(name, isOn: selected == name) {
-                            selected = selected == name ? "" : name
-                        }
-                        .id(name)
-                    }
-                }
-                .padding(.horizontal)
-                .padding(.vertical, 8)
-            }
-            .onAppear { proxy.scrollTo(selected, anchor: .center) }
-        }
-    }
-
-    private func chip(_ title: String, isOn: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.subheadline.weight(isOn ? .semibold : .regular))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(isOn ? AnyShapeStyle(.tint) : AnyShapeStyle(.fill.tertiary), in: Capsule())
-                .foregroundStyle(isOn ? .white : .primary)
-        }
-        .buttonStyle(.plain)
-    }
-}
-
 /// Split out so `@Query` can take a predicate that depends on the Shorts
 /// toggle and category filter — the macro needs them fixed at init time.
 private struct SubscriptionFeedList: View {
     @Environment(AppServices.self) private var services
+    /// The inbox: matches the Shorts/category filter and excludes watched
+    /// and earmarked videos, so triaging a row removes it automatically.
     @Query private var videos: [Video]
+    /// Same Shorts/category filter, without the triage exclusion — used only
+    /// to tell "nothing new" apart from "everything's been triaged" for the
+    /// empty state.
+    @Query private var allMatchingVideos: [Video]
     let channelDailyCap: Int
     let searchQuery: String
     let matchingChannels: [Subscription]
@@ -156,19 +120,35 @@ private struct SubscriptionFeedList: View {
         self.searchQuery = searchQuery
         self.matchingChannels = matchingChannels
         self.showShorts = showShorts
-        let predicate: Predicate<Video>?
+        let basePredicate: Predicate<Video>?
+        let inboxPredicate: Predicate<Video>
         switch (showShorts, channelIds) {
         case (true, nil):
-            predicate = nil
+            basePredicate = nil
+            inboxPredicate = #Predicate<Video> { $0.savedForLaterAt == nil && !$0.isWatched }
         case (false, nil):
-            predicate = #Predicate<Video> { !$0.isLikelyShort }
+            basePredicate = #Predicate<Video> { !$0.isLikelyShort }
+            inboxPredicate = #Predicate<Video> {
+                !$0.isLikelyShort && $0.savedForLaterAt == nil && !$0.isWatched
+            }
         case (true, let ids?):
-            predicate = #Predicate<Video> { ids.contains($0.channelId) }
+            basePredicate = #Predicate<Video> { ids.contains($0.channelId) }
+            inboxPredicate = #Predicate<Video> {
+                ids.contains($0.channelId) && $0.savedForLaterAt == nil && !$0.isWatched
+            }
         case (false, let ids?):
-            predicate = #Predicate<Video> { ids.contains($0.channelId) && !$0.isLikelyShort }
+            basePredicate = #Predicate<Video> { ids.contains($0.channelId) && !$0.isLikelyShort }
+            inboxPredicate = #Predicate<Video> {
+                ids.contains($0.channelId) && !$0.isLikelyShort
+                    && $0.savedForLaterAt == nil && !$0.isWatched
+            }
         }
         _videos = Query(
-            filter: predicate,
+            filter: inboxPredicate,
+            sort: [SortDescriptor(\Video.publishedAt, order: .reverse)]
+        )
+        _allMatchingVideos = Query(
+            filter: basePredicate,
             sort: [SortDescriptor(\Video.publishedAt, order: .reverse)]
         )
     }
@@ -185,8 +165,10 @@ private struct SubscriptionFeedList: View {
         Group {
             if isSearching {
                 searchResults
-            } else if videos.isEmpty {
+            } else if videos.isEmpty && allMatchingVideos.isEmpty {
                 EmptyFeedView()
+            } else if videos.isEmpty {
+                CaughtUpView()
             } else {
                 List {
                     ForEach(groupedByDay, id: \.day) { group in
@@ -194,11 +176,7 @@ private struct SubscriptionFeedList: View {
                             ForEach(rows(for: group)) { row in
                                 switch row {
                                 case .video(let video):
-                                    NavigationLink {
-                                        PlayerView(video: video)
-                                    } label: {
-                                        VideoRow(video: video)
-                                    }
+                                    FeedVideoRow(video: video)
                                 case .more(let key, let channelTitle, let hidden):
                                     MoreFromChannelRow(
                                         channelTitle: channelTitle,
@@ -249,11 +227,7 @@ private struct SubscriptionFeedList: View {
                 if !matches.isEmpty {
                     Section("Videos") {
                         ForEach(matches) { video in
-                            NavigationLink {
-                                PlayerView(video: video)
-                            } label: {
-                                VideoRow(video: video)
-                            }
+                            FeedVideoRow(video: video)
                         }
                     }
                 }
@@ -283,6 +257,38 @@ private struct SubscriptionFeedList: View {
         return buckets
             .map { (day: $0.key, videos: $0.value) }
             .sorted { $0.day > $1.day }
+    }
+}
+
+/// A tappable feed row with swipe-to-triage actions. Both actions rely on
+/// the inbox `@Query` predicate excluding watched/earmarked videos, so
+/// acting on a row removes it from the list with no manual mutation.
+private struct FeedVideoRow: View {
+    @Environment(AppServices.self) private var services
+    let video: Video
+
+    var body: some View {
+        NavigationLink {
+            PlayerView(video: video)
+        } label: {
+            VideoRow(video: video)
+        }
+        .swipeActions(edge: .leading) {
+            Button {
+                try? services.upNext.earmark(video)
+            } label: {
+                Label("Earmark", systemImage: "bookmark.fill")
+            }
+            .tint(.indigo)
+        }
+        .swipeActions(edge: .trailing) {
+            Button {
+                try? services.upNext.markWatched(video)
+            } label: {
+                Label("Watched", systemImage: "checkmark.circle.fill")
+            }
+            .tint(.green)
+        }
     }
 }
 
@@ -327,6 +333,26 @@ private struct EmptyFeedView: View {
                 Button("Refresh") {
                     Task { await services.feed.refresh() }
                 }
+            }
+        }
+    }
+}
+
+/// Shown when the current filter matches videos, but every one of them has
+/// already been watched or earmarked — distinct from `EmptyFeedView`'s "we
+/// have nothing at all yet" so the copy doesn't send a caught-up user
+/// looking for a sign-in or a refresh they don't need.
+private struct CaughtUpView: View {
+    @Environment(AppServices.self) private var services
+
+    var body: some View {
+        ContentUnavailableView {
+            Label("All caught up", systemImage: "checkmark.circle")
+        } description: {
+            Text("Everything new has been watched or earmarked to Up Next.")
+        } actions: {
+            Button("Refresh") {
+                Task { await services.feed.refresh() }
             }
         }
     }

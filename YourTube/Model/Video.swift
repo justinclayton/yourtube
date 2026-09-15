@@ -29,6 +29,12 @@ final class Video {
     /// Position in Up Next. Nil for an entry saved before Up Next existed
     /// until `UpNextQueue.migrateLegacySaves()` places it.
     var upNextOrder: Int?
+    /// Where playback stopped, in seconds. Nil when the video hasn't been
+    /// started (a position under thirty seconds doesn't count). See
+    /// `PlaybackProgress`.
+    var resumePositionSeconds: Double?
+    /// When playback last reported a position, which orders Continue Watching.
+    var lastPlayedAt: Date?
 
     var collection: VideoCollection?
     /// Bumped when the classifier logic changes, to trigger re-classification.
@@ -62,6 +68,8 @@ final class Video {
         isWatched: Bool = false,
         savedForLaterAt: Date? = nil,
         upNextOrder: Int? = nil,
+        resumePositionSeconds: Double? = nil,
+        lastPlayedAt: Date? = nil,
         classifierVersion: Int = 0,
         cleanedTitle: String? = nil,
         seasonNumber: Int? = nil,
@@ -82,6 +90,8 @@ final class Video {
         self.isWatched = isWatched
         self.savedForLaterAt = savedForLaterAt
         self.upNextOrder = upNextOrder
+        self.resumePositionSeconds = resumePositionSeconds
+        self.lastPlayedAt = lastPlayedAt
         self.classifierVersion = classifierVersion
         self.cleanedTitle = cleanedTitle
         self.seasonNumber = seasonNumber

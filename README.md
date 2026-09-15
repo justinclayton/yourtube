@@ -22,6 +22,7 @@ before you build this.
 | Up Next (earmarks), watched state | Works, stored **on-device**. YouTube's own Watch Later isn't API-accessible, and this app doesn't try to mirror it. |
 | Search | Works, **local only**: filters cached titles and channel names on device. The API's search endpoint costs 100 quota units per call, so it isn't used. |
 | Playback | Works, via YouTube's IFrame player. |
+| Resume position | Works, stored **on-device**. The player reports where it got to; past 90% counts as watched. |
 | Background audio | **Not possible.** YouTube kills embedded playback server-side after screen lock. |
 | Picture-in-Picture | Only from native fullscreen. |
 | Watch history | **Not possible.** Removed from the API years ago. |
@@ -123,17 +124,53 @@ calendar reminder.
 
 ## Shows and Up Next
 
-The tab bar is Shows, Feed, Channels, Settings. Feed is the chronological
-river of everything new from subscribed channels. Shows is the calmer library
-view of that same content, and holds **Up Next**: the list of videos you've
-earmarked by hand from the player. The app never adds to it and never treats
-its order as a play order; Edit lets you group things however you like, and
-finishing a video (marking it watched) takes it off the list. Videos saved
-under the old Watch Later tab were moved into Up Next in the order they were
-saved.
+The tab bar is Shows, Feed, Channels, Settings. Feed is an **inbox**: videos
+appear newest first until you triage them, and once a video is watched or
+earmarked it leaves the feed, so the feed trends toward empty instead of
+scrolling forever. A fully triaged feed (for the current category/Shorts
+filter) shows an "All caught up" state rather than a blank list. Every row
+has swipe actions — leading to earmark to Up Next, trailing to mark
+watched — so triage is a gesture, not a trip into the player. Category
+chips, the Priority chip, the Shorts toggle, the per-channel daily cap, and
+local search all keep working over whatever's left in the inbox.
 
-Continue Watching and the show grid land on the same tab in follow-up work;
-see the PRD in issue #17.
+Shows is the calmer library view of that same content, and holds **Up
+Next**: the list of videos you've earmarked by hand, from the feed, the
+player, or a show page. The app never adds to it and never treats its order
+as a play order; Edit lets you group things however you like, and finishing
+a video (marking it watched) takes it off the list. Videos saved under the
+old Watch Later tab were moved into Up Next in the order they were saved.
+
+Above Up Next sits **Continue Watching**: videos you started and haven't
+finished, most recently played first, with a progress bar over the art and
+the time left. It fills itself from playback and empties itself, and it's
+hidden when there's nothing in progress.
+
+**Your Shows** sits beneath Up Next: a three-column grid of the channels
+you've flagged as shows, each a square of channel art with the show's full
+name set beneath it and a count of the episodes you haven't watched (no badge
+when you're caught up). Posters carry nothing but art and a name, so a show
+never looks like a single video. The chips above the grid are the feed's
+chips, and a show appears under every category its channel carries; Priority
+shows are pinned first. Tapping a poster opens the show page, which is a
+stub for now.
+
+Flag a channel as a show from the Channels tab: swipe it, long-press it, or
+use its Categories sheet. Both answers are recorded — "Not a show" is stored
+as a standing decision, so the automatic show detector, when it arrives,
+can't overrule either one. Channels marks its shows with a small screen icon.
+A show's episodes are every non-Short video from its channel, resolved live,
+so a new upload is an episode the moment it lands.
+
+### Resume and the 90% rule
+
+The player remembers where you stopped and opens there next time. Two
+thresholds decide what that means: under thirty seconds in counts as never
+started (so a glance at a video doesn't clutter Continue Watching), and past
+90% of the duration counts as watched — no tap needed, and the video leaves
+both Continue Watching and Up Next. Opening the player on its own no longer
+marks anything watched, and the manual "Mark watched" button still works.
+All of this is on-device; YouTube's own watch history isn't API-accessible.
 
 ## Titles
 
@@ -248,6 +285,7 @@ YourTube/
   API/        YouTube Data API client, DTOs, quota tracking
   Feed/       Refresh algorithm, Shorts heuristic, thumbnail analysis
   UpNext/     The earmark list behind the Shows tab
+  Shows/      The show catalogue behind Your Shows
   Categorize/ On-device channel classification, category management
   Model/      SwiftData models
   UI/         SwiftUI views
@@ -279,8 +317,10 @@ simulator.
 ### Fixture data without a login
 
 Debug builds accept a `-seedFixtures` launch argument. The app then opens an
-in-memory store pre-filled with a few subscriptions, categories, and videos
-(see `DebugFixtures.swift`) and skips `Config.plist`, so it runs signed out
+in-memory store pre-filled with a few subscriptions, categories, videos, and
+three show-shaped channels — a twice-weekly long-form interview show, a
+numbered weekly podcast, and a weekday news hour with cut-down segments (see
+`DebugFixtures.swift`) and skips `Config.plist`, so it runs signed out
 with the re-auth banner showing. Use it to poke at local-only features such
 as search, category chips, and the daily cap on a fresh simulator, or after
 the weekly token expiry. Nothing touches disk; relaunch without the flag to
@@ -303,6 +343,10 @@ Run with Cmd-U. Coverage is concentrated where the risk is:
   the daily quota.
 - `CategoryManagerTests` — rule migration, multi-answer resolution, and the
   "contains" feed predicate, against a stub classifier.
+- `ShowManagerTests` — the show catalogue: membership (Shorts are never
+  episodes), unwatched counts, the retention window, and the thing most worth
+  pinning — a hand-made show flag, in either direction, surviving an
+  automatic detector pass.
 - `ChannelDailyCapTests` — the per-channel daily cap that folds a prolific
   channel's extra uploads into a "+N more" row.
 - `TitleStripperTests` — the title cleaner, driven against **real** per-channel
@@ -321,8 +365,9 @@ output before trusting the precision and recall figures.
 ## Roadmap
 
 Built so far: sign-in, subscription feed with Shorts filtering, playback,
-Up Next, watched state, browse by channel, on-device channel categories
-with a category filter on the feed, deterministic title cleaning.
+Up Next, watched state, browse by channel, on-device channel categories with a
+category filter on the feed, hand-flagged shows in the Your Shows grid, and
+deterministic title cleaning.
 
 Next for titles: the on-device model rewrite that calms what the pattern
 stripper can't reach (issue #27), reusing the same cache fields and version.

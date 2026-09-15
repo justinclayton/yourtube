@@ -23,7 +23,7 @@ struct YourTubeApp: App {
                 let config = try AppConfig.load()
                 let container = try ModelContainer(
                     for: Video.self, Subscription.self,
-                    VideoCollection.self, ChannelRule.self
+                    VideoCollection.self, ChannelRule.self, Show.self
                 )
                 let services = AppServices(
                     config: config,
@@ -60,6 +60,8 @@ final class AppServices {
     let categories: CategoryManager
     let upNext: UpNextQueue
     let titles: TitleCleaner
+    let playback: PlaybackProgress
+    let shows: ShowManager
 
     init(config: AppConfig.Values, modelContext: ModelContext) {
         let auth = AuthController(config: config)
@@ -75,7 +77,10 @@ final class AppServices {
             modelContext: modelContext,
             categorizer: ChannelCategorizerFactory.makeSystemCategorizer()
         )
-        self.upNext = UpNextQueue(modelContext: modelContext)
+        let upNext = UpNextQueue(modelContext: modelContext)
+        self.upNext = upNext
         self.titles = TitleCleaner(modelContext: modelContext)
+        self.playback = PlaybackProgress(modelContext: modelContext, upNext: upNext)
+        self.shows = ShowManager(modelContext: modelContext)
     }
 }

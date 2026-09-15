@@ -18,6 +18,14 @@ struct PlayerView: View {
     @Environment(AppServices.self) private var services
 
     @State private var player: YouTubePlayer
+    /// The last position the player reported, kept so leaving the view can
+    /// store one without waiting on the web view we're tearing down.
+    @State private var lastReportedPosition: Double?
+
+    /// How often playback reports where it's got to. Two seconds keeps the
+    /// resume point close to where you actually stopped without polling the
+    /// web view hard.
+    private static let reportInterval: Duration = .seconds(2)
 
     init(video: Video) {
         self.video = video
@@ -26,6 +34,11 @@ struct PlayerView: View {
                 source: .video(id: video.videoId),
                 parameters: .init(
                     autoPlay: true,
+                    // Resume: the IFrame player's own start parameter, so
+                    // playback opens at the stored position rather than
+                    // seeking there after the fact.
+                    startTime: PlaybackProgress.resumePosition(for: video)
+                        .map { Measurement(value: $0, unit: UnitDuration.seconds) },
                     showControls: true,
                     restrictRelatedVideosToSameChannel: true
                 )
@@ -73,10 +86,42 @@ struct PlayerView: View {
             .padding()
         }
         .navigationBarTitleDisplayMode(.inline)
-        // Opening the player no longer marks a video watched: watched
-        // removes a video from Up Next, and peeking at an earmarked video
-        // must not do that. Automatic marking returns as the 90% rule
-        // with playback progress (#21).
+        // Opening the player doesn't mark a video watched: watched removes a
+        // video from Up Next, and peeking at an earmarked video must not do
+        // that. Watched is set automatically once playback passes 90% of the
+        // duration instead — see `PlaybackProgress`.
+        .task { await reportProgress() }
+        .onDisappear {
+            if let position = lastReportedPosition {
+                services.playback.record(video, position: position)
+            }
+        }
+    }
+
+    /// Poll the player while it's playing and hand each position to
+    /// `PlaybackProgress`. Polling rather than the kit's `currentTimePublisher`
+    /// because that one rides an undocumented progress event, and because a
+    /// position must only be recorded while the video is actually playing: a
+    /// buffering or cued player reports zero, which would read as "not
+    /// started" and throw away the resume point we just opened at.
+    @MainActor
+    private func reportProgress() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: Self.reportInterval)
+            guard !Task.isCancelled else { return }
+            if player.isEnded {
+                // Some videos never report a time close to the end; the
+                // ended state is the honest signal that they finished.
+                services.playback.record(video, position: Double(video.durationSeconds))
+                continue
+            }
+            guard player.isPlaying,
+                  let time = try? await player.getCurrentTime() else { continue }
+            let seconds = time.converted(to: .seconds).value
+            guard seconds > 0 else { continue }
+            lastReportedPosition = seconds
+            services.playback.record(video, position: seconds)
+        }
     }
 
     private var actions: some View {

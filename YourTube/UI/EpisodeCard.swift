@@ -18,12 +18,24 @@ struct EpisodeCard: View {
     /// what makes a show recognisable at a glance.
     let avatarURL: String?
     let size: Size
+    /// How far through the video is, 0...1, when it's one you're partway
+    /// into. Nil (the usual case) leaves the card exactly as it was: no bar
+    /// over the art, and duration rather than time left. See `PlaybackProgress`.
+    var progress: Double?
 
     var body: some View {
         VStack(alignment: .leading, spacing: size == .large ? 8 : 6) {
-            ChannelArt(url: avatarURL, title: video.channelTitle, seed: video.channelId)
-                .aspectRatio(size == .large ? 4 / 3 : 1, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: size == .large ? 10 : 8))
+            ZStack(alignment: .bottom) {
+                ChannelArt(url: avatarURL, title: video.channelTitle, seed: video.channelId)
+                    .aspectRatio(size == .large ? 4 / 3 : 1, contentMode: .fit)
+                if let progress {
+                    ProgressView(value: progress)
+                        .tint(.white)
+                        .padding(.horizontal, size == .large ? 8 : 6)
+                        .padding(.bottom, size == .large ? 6 : 4)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: size == .large ? 10 : 8))
             Text(video.channelTitle)
                 .font((size == .large ? Font.caption : .caption2).weight(.semibold))
                 .foregroundStyle(.secondary)
@@ -32,7 +44,12 @@ struct EpisodeCard: View {
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
                 EpisodeBadge(video: video)
-                Text(video.formattedDuration)
+                if progress == nil {
+                    Text(video.formattedDuration)
+                } else {
+                    Text(video.formattedTimeLeft)
+                        .foregroundStyle(.primary)
+                }
                 Text(video.publishedAt, format: .relative(presentation: .named))
             }
             .font(.caption)

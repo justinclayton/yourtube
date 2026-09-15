@@ -40,4 +40,34 @@ final class DebugFixturesTests: XCTestCase {
         // A channel-name match pulls in that channel's videos too.
         XCTAssertTrue(hits.contains { $0.channelTitle == "Conan Clips Archive" })
     }
+
+    /// Your Shows needs something to draw, and the slices after this one
+    /// (show page, cadence, title cleaning) lean on these three shapes.
+    func testFixturesSeedShowShapedChannels() throws {
+        let container = try DebugFixtures.makeContainer()
+        let context = container.mainContext
+        let manager = ShowManager(modelContext: context)
+        let shows = try manager.shows()
+        XCTAssertGreaterThanOrEqual(shows.count, 3, "the grid has to have something in it")
+        XCTAssertTrue(shows.allSatisfy { $0.flagOrigin == .user })
+
+        for show in shows {
+            let episodes = try manager.episodes(of: show)
+            XCTAssertFalse(episodes.isEmpty, "\(show.title) has no episodes")
+            XCTAssertFalse(episodes.contains(where: \.isLikelyShort))
+            XCTAssertGreaterThan(try manager.unwatchedCount(for: show), 0,
+                                 "\(show.title) should show a badge")
+        }
+
+        // A daily show with cut-down segments, so the show page has something
+        // to hide behind its segment toggle.
+        let newsline = try XCTUnwrap(shows.first { $0.title == "Newsline Nightly" })
+        let episodes = try manager.episodes(of: newsline)
+        XCTAssertGreaterThan(episodes.filter { $0.durationSeconds < 900 }.count,
+                             episodes.filter { $0.durationSeconds > 1_800 }.count,
+                             "more segments than full episodes")
+        // A backlog podcast is watched forwards.
+        let podcast = try XCTUnwrap(shows.first { $0.title == "Second Take" })
+        XCTAssertEqual(podcast.playOrder, .oldestFirst)
+    }
 }
