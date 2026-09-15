@@ -214,9 +214,12 @@ and not a video.
 Flag a channel as a show from the Channels tab: swipe it, long-press it, or
 use its Categories sheet. Both answers are recorded — "Not a show" is stored
 as a standing decision, so the automatic detector below can't overrule either
-one. Channels marks its shows with a small screen icon. A show's episodes are
-every non-Short video from its channel, resolved live, so a new upload is an
-episode the moment it lands.
+one. Channels marks its shows with a small screen icon and lists them first
+inside each category, above a rule that reads "Other channels", so the split
+the app has made is visible at a glance; a category that is all shows or no
+shows has no rule to draw. A show's episodes are every non-Short video from
+its channel, resolved live, so a new upload is an episode the moment it
+lands.
 
 A channel-backed show can also be un-flagged from its own page: the toolbar
 menu next to Show settings offers "Not a show" too, for when a detector guess
@@ -282,7 +285,8 @@ on a show's newest episode. There's no autoplay of any kind.
 Channels itself has two presentations, toggled from the toolbar: the
 grouped list, and an avatar grid of square channel art with the full name
 wrapped beneath (never truncated). Both read the same category grouping and
-draw the same show/not-show split; the toggle is remembered across launches.
+draw the same show/not-show split — shows first, then the rule, then the
+rest; the toggle is remembered across launches.
 Tapping a tile opens the channel page, and long-press offers the same menu
 as the list row — categories, Priority, and the show flag.
 
