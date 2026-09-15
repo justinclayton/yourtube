@@ -5,6 +5,10 @@ enum SettingsKeys {
     static let showShorts = "settings.showShorts"
     /// Name of the category the feed is filtered to; empty = all.
     static let feedCategory = "settings.feedCategory"
+    /// Name of the category the Your Shows grid is filtered to; empty = all.
+    /// Remembered separately from the feed's chip so the two surfaces don't
+    /// drag each other around.
+    static let showsCategory = "settings.showsCategory"
     /// Max videos per channel per day before the rest fold into "+N more"; 0 = off.
     static let channelDailyCap = "settings.channelDailyCap"
     static let defaultChannelDailyCap = 2

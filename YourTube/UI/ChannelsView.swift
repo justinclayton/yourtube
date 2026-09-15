@@ -33,6 +33,9 @@ private struct ChannelList: View {
     @Query(sort: [SortDescriptor(\VideoCollection.sortOrder), SortDescriptor(\VideoCollection.name)])
     private var categories: [VideoCollection]
     @Query private var rules: [ChannelRule]
+    /// The show catalogue, so a row can say at a glance whether the channel
+    /// is one. Tombstones for "not a show" are rows too; `isActive` sorts them.
+    @Query private var showRecords: [Show]
     /// One query for every unwatched video, counted per channel here, rather
     /// than a live query per row — with several hundred subscriptions the
     /// per-row version makes the list unusable.
@@ -40,10 +43,14 @@ private struct ChannelList: View {
 
     @State private var collapsed: Set<String> = []
     @State private var filing: Subscription?
-    @State private var priorityError: String?
+    @State private var channelError: String?
 
     private var priorityChannelIds: Set<String> {
         Set(rules.filter(\.isPriority).map(\.channelId))
+    }
+
+    private var showChannelIds: Set<String> {
+        Set(showRecords.filter(\.isActive).map(\.channelId))
     }
 
     init(showShorts: Bool, searchQuery: String) {
@@ -135,7 +142,8 @@ private struct ChannelList: View {
                                 } label: {
                                     ChannelRow(
                                         subscription: subscription,
-                                        unwatchedCount: unwatchedByChannel[subscription.channelId] ?? 0
+                                        unwatchedCount: unwatchedByChannel[subscription.channelId] ?? 0,
+                                        isShow: showChannelIds.contains(subscription.channelId)
                                     )
                                 }
                                 .swipeActions(edge: .leading) {
@@ -147,12 +155,15 @@ private struct ChannelList: View {
                                     .tint(.indigo)
                                     priorityButton(for: subscription)
                                         .tint(.orange)
+                                    showButton(for: subscription)
+                                        .tint(.purple)
                                 }
                                 .contextMenu {
                                     Button("Categories…", systemImage: "folder") {
                                         filing = subscription
                                     }
                                     priorityButton(for: subscription)
+                                    showButton(for: subscription)
                                 }
                             }
                         }
@@ -178,13 +189,13 @@ private struct ChannelList: View {
             .sheet(item: $filing) { subscription in
                 CategoryPickerSheet(subscription: subscription, categories: categories)
             }
-            .alert("Couldn't update priority", isPresented: Binding(
-                get: { priorityError != nil },
-                set: { if !$0 { priorityError = nil } }
+            .alert("Couldn't update channel", isPresented: Binding(
+                get: { channelError != nil },
+                set: { if !$0 { channelError = nil } }
             )) {
-                Button("OK", role: .cancel) { priorityError = nil }
+                Button("OK", role: .cancel) { channelError = nil }
             } message: {
-                Text(priorityError ?? "")
+                Text(channelError ?? "")
             }
         }
     }
@@ -202,12 +213,36 @@ private struct ChannelList: View {
                     channelTitle: subscription.title
                 )
             } catch {
-                priorityError = error.localizedDescription
+                channelError = error.localizedDescription
             }
         } label: {
             Label(
                 isPriority ? "Remove priority" : "Mark as priority",
                 systemImage: isPriority ? "star.slash" : "star"
+            )
+        }
+    }
+
+    /// The manual show flag, beside Priority because filing a channel should
+    /// be one stop. Both directions are recorded, not just "yes": marking a
+    /// channel "Not a show" is a standing decision the automatic detector,
+    /// when it lands, isn't allowed to overrule.
+    private func showButton(for subscription: Subscription) -> some View {
+        let isShow = showChannelIds.contains(subscription.channelId)
+        return Button {
+            do {
+                try services.shows.setIsShow(
+                    !isShow,
+                    channelId: subscription.channelId,
+                    channelTitle: subscription.title
+                )
+            } catch {
+                channelError = error.localizedDescription
+            }
+        } label: {
+            Label(
+                isShow ? "Not a show" : "Mark as show",
+                systemImage: isShow ? "tv.slash" : "tv"
             )
         }
     }
@@ -249,6 +284,9 @@ private struct GroupHeader: View {
 private struct ChannelRow: View {
     let subscription: Subscription
     let unwatchedCount: Int
+    /// Channels flagged as shows carry a small screen so the split the app
+    /// has made is visible without opening anything.
+    let isShow: Bool
 
     var body: some View {
         HStack(spacing: 12) {
@@ -256,6 +294,12 @@ private struct ChannelRow: View {
             Text(subscription.title)
                 .font(.body)
                 .lineLimit(1)
+            if isShow {
+                Image(systemName: "tv")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Show")
+            }
             Spacer()
             if unwatchedCount > 0 {
                 Text("\(unwatchedCount)")
@@ -270,10 +314,10 @@ private struct ChannelRow: View {
     }
 }
 
-/// Manually file one channel under any number of categories. Each topic
-/// toggle saves immediately and marks the rule user-set so the classifier
-/// leaves it alone from then on. Priority has its own switch: flipping it
-/// doesn't lock the topics.
+/// Manually file one channel under any number of categories, and set the two
+/// hand-only flags. Each topic toggle saves immediately and marks the rule
+/// user-set so the classifier leaves it alone from then on. Priority and the
+/// show flag have their own switches: flipping either doesn't lock the topics.
 private struct CategoryPickerSheet: View {
     @Environment(AppServices.self) private var services
     @Environment(\.dismiss) private var dismiss
@@ -282,6 +326,7 @@ private struct CategoryPickerSheet: View {
 
     @State private var selected: Set<PersistentIdentifier> = []
     @State private var isPriority = false
+    @State private var isShow = false
     @State private var error: String?
 
     private var topicCategories: [VideoCollection] { categories.filter { !$0.isPriority } }
@@ -297,6 +342,13 @@ private struct CategoryPickerSheet: View {
                     } footer: {
                         Text("For the few channels you never want to miss. Set by hand only; automatic sorting never changes it.")
                     }
+                }
+                Section {
+                    Toggle(isOn: showBinding) {
+                        Label("Show", systemImage: "tv")
+                    }
+                } footer: {
+                    Text("Shows get a poster in Your Shows on the Shows tab, with a count of what you haven't watched. Turning this off records \"not a show\" for good.")
                 }
                 Section {
                     Button {
@@ -337,6 +389,7 @@ private struct CategoryPickerSheet: View {
                 let rule = try? services.categories.rule(forChannelId: subscription.channelId)
                 selected = Set((rule?.topicCollections ?? []).map(\.persistentModelID))
                 isPriority = rule?.isPriority ?? false
+                isShow = (try? services.shows.isShow(channelId: subscription.channelId)) ?? false
             }
         }
         .presentationDetents([.medium, .large])
@@ -349,6 +402,21 @@ private struct CategoryPickerSheet: View {
                 do {
                     try services.categories.setPriority(isOn, channelId: subscription.channelId, channelTitle: subscription.title)
                     isPriority = isOn
+                    error = nil
+                } catch {
+                    self.error = error.localizedDescription
+                }
+            }
+        )
+    }
+
+    private var showBinding: Binding<Bool> {
+        Binding(
+            get: { isShow },
+            set: { isOn in
+                do {
+                    try services.shows.setIsShow(isOn, channelId: subscription.channelId, channelTitle: subscription.title)
+                    isShow = isOn
                     error = nil
                 } catch {
                     self.error = error.localizedDescription

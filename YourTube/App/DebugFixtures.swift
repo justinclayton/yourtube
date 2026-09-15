@@ -29,7 +29,7 @@ enum DebugFixtures {
     @MainActor
     static func makeContainer() throws -> ModelContainer {
         let container = try ModelContainer(
-            for: Video.self, Subscription.self, VideoCollection.self, ChannelRule.self,
+            for: Video.self, Subscription.self, VideoCollection.self, ChannelRule.self, Show.self,
             configurations: ModelConfiguration(isStoredInMemoryOnly: true)
         )
         try seed(container.mainContext)
@@ -128,7 +128,221 @@ enum DebugFixtures {
                 ))
             }
         }
+        try seedShows(context, collections: collections, priority: priority)
         try context.save()
     }
 }
+
+// MARK: - Show-shaped channels
+
+/// Three channels that behave like television, kept apart from the awkward-data
+/// fixtures above because later slices lean on their shape rather than on their
+/// names: the show page, the cadence detector, and title cleaning all want
+/// something realistic to chew on.
+///
+/// - **The Bellwether** — twice-weekly long-form interviews, an hour or more,
+///   every title carrying the channel's ` | The Bellwether` suffix.
+/// - **Second Take** — a weekly numbered podcast, `#147 — Guest — Second Take`,
+///   with an oldest-first play order because a backlog is watched forwards.
+/// - **Newsline Nightly** — a weekday news hour, each full episode trailed by
+///   three cut-down segments. Segments are ordinary videos, not Shorts, which
+///   is exactly why a show has to tell them apart.
+extension DebugFixtures {
+    private struct ShowChannel {
+        var id: String
+        var title: String
+        var categories: [String]
+        var playOrder: PlayOrder = .newestFirst
+        /// Weekdays it posts on, `Calendar` numbering (1 = Sunday).
+        var weekdays: Set<Int>
+        var hour: Int
+        /// Full episodes, newest first, paired with their durations.
+        var episodes: [(title: String, seconds: Int)]
+        /// Segment titles cut from each episode, and their durations. Empty
+        /// for a show that doesn't cut its episodes up.
+        var segments: [(title: String, seconds: Int)] = []
+        /// How many of the newest episodes are left unwatched.
+        var unwatched: Int
+    }
+
+    private static let showChannels: [ShowChannel] = [
+        ShowChannel(
+            id: "UC-bellwether",
+            title: "The Bellwether",
+            categories: ["News & Politics", "Podcasts & Interviews"],
+            weekdays: [3, 6],
+            hour: 6,
+            episodes: [
+                ("Dana Ruiz on why the housing market broke | The Bellwether", 4_860),
+                ("Is the deficit actually a problem? | The Bellwether", 4_140),
+                ("Marcus Bell on the new labour movement | The Bellwether", 5_220),
+                ("What the polls keep missing | The Bellwether", 3_900),
+                ("Priya Raman on rebuilding the grid | The Bellwether", 4_500),
+                ("The case against the primary system | The Bellwether", 3_780),
+                ("Tom Ingram on the end of cheap money | The Bellwether", 5_040),
+                ("A conversation about attention | The Bellwether", 4_320),
+            ],
+            unwatched: 3
+        ),
+        ShowChannel(
+            id: "UC-secondtake",
+            title: "Second Take",
+            categories: ["Podcasts & Interviews", "Comedy"],
+            playOrder: .oldestFirst,
+            weekdays: [4],
+            hour: 9,
+            episodes: [
+                ("#147 — Wendy Cho — Second Take", 5_700),
+                ("#146 — Ray Ortiz — Second Take", 6_240),
+                ("#145 — Nina Haddad — Second Take", 5_100),
+                ("#144 — Desmond Pike — Second Take", 6_600),
+                ("#143 — Alice Fenn — Second Take", 5_460),
+                ("#142 — Gus Mbeki — Second Take", 5_880),
+            ],
+            unwatched: 2
+        ),
+        ShowChannel(
+            id: "UC-newsline",
+            title: "Newsline Nightly",
+            categories: ["Priority", "News & Politics"],
+            weekdays: [2, 3, 4, 5, 6],
+            hour: 19,
+            episodes: Array(repeating: (title: "Newsline Nightly — FULL EPISODE", seconds: 3_180), count: 10),
+            segments: [
+                ("Newsline Nightly: the budget fight, explained", 620),
+                ("Newsline Nightly: what the court ruling means", 480),
+                ("Newsline Nightly: the jobs numbers in context", 405),
+            ],
+            unwatched: 2
+        ),
+    ]
+
+    /// Seeds the show-shaped channels, their videos, and the `Show` rows that
+    /// put them in Your Shows. Flagged as the user would flag them by hand, so
+    /// a fixture run shows the grid populated without anything automatic
+    /// having to run.
+    static func seedShows(
+        _ context: ModelContext,
+        collections: [String: VideoCollection],
+        priority: VideoCollection
+    ) throws {
+        let calendar = Calendar.current
+        for channel in showChannels {
+            context.insert(Subscription(
+                channelId: channel.id,
+                title: channel.title,
+                channelDescription: "Fixture show channel for \(channel.title)."
+            ))
+            let filed = channel.categories.compactMap { name in
+                name == CategoryManager.priorityName ? priority : collections[name]
+            }
+            if !filed.isEmpty {
+                context.insert(ChannelRule(
+                    channelId: channel.id,
+                    channelTitle: channel.title,
+                    collections: filed,
+                    isUserSet: true
+                ))
+            }
+            context.insert(Show(
+                source: .channel(id: channel.id),
+                title: channel.title,
+                flagOrigin: .user,
+                override: .forceShow,
+                playOrder: channel.playOrder
+            ))
+
+            let dates = recentDates(
+                onWeekdays: channel.weekdays,
+                count: channel.episodes.count,
+                hour: channel.hour,
+                calendar: calendar
+            )
+            for (index, episode) in channel.episodes.enumerated() {
+                let date = dates[index]
+                let watched = index >= channel.unwatched
+                context.insert(fixtureVideo(
+                    id: "\(channel.id)-e\(index)",
+                    channel: channel,
+                    title: dateStamped(episode.title, date: date, calendar: calendar),
+                    publishedAt: date,
+                    seconds: episode.seconds,
+                    isWatched: watched
+                ))
+                // Segments land through the evening after the full episode.
+                for (offset, segment) in channel.segments.enumerated() {
+                    context.insert(fixtureVideo(
+                        id: "\(channel.id)-e\(index)s\(offset)",
+                        channel: channel,
+                        title: segment.title,
+                        publishedAt: date.addingTimeInterval(Double(offset + 1) * 2_700),
+                        seconds: segment.seconds,
+                        isWatched: watched
+                    ))
+                }
+            }
+        }
+    }
+
+    private static func fixtureVideo(
+        id: String,
+        channel: ShowChannel,
+        title: String,
+        publishedAt: Date,
+        seconds: Int,
+        isWatched: Bool
+    ) -> Video {
+        Video(
+            videoId: id,
+            channelId: channel.id,
+            channelTitle: channel.title,
+            title: title,
+            videoDescription: "Fixture episode of \(channel.title).",
+            publishedAt: publishedAt,
+            durationSeconds: seconds,
+            isLikelyShort: false,
+            isWatched: isWatched,
+            classifierVersion: ShortsHeuristic.version
+        )
+    }
+
+    /// A daily show's episodes are named for their day, so the fixture titles
+    /// are stamped at seed time rather than frozen into the table.
+    private static func dateStamped(_ title: String, date: Date, calendar: Calendar) -> String {
+        guard title.hasSuffix("FULL EPISODE") else { return title }
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.setLocalizedDateFormatFromTemplate("EEEMMMd")
+        return "\(title) — \(formatter.string(from: date))"
+    }
+
+    /// The most recent `count` dates falling on `weekdays`, newest first, at
+    /// `hour` local time. Cadence is a signal the show detector reads, so the
+    /// fixtures have to post on real weekdays rather than at round intervals.
+    static func recentDates(
+        onWeekdays weekdays: Set<Int>,
+        count: Int,
+        hour: Int,
+        calendar: Calendar = .current,
+        from reference: Date = .now
+    ) -> [Date] {
+        var dates: [Date] = []
+        var day = calendar.startOfDay(for: reference)
+        // Two years of days is far more than any fixture needs; the bound is
+        // there so a nonsense weekday set can't spin forever.
+        var remainingDays = 730
+        while dates.count < count, remainingDays > 0 {
+            remainingDays -= 1
+            if weekdays.contains(calendar.component(.weekday, from: day)),
+               let stamped = calendar.date(byAdding: .hour, value: hour, to: day),
+               stamped < reference {
+                dates.append(stamped)
+            }
+            guard let previous = calendar.date(byAdding: .day, value: -1, to: day) else { break }
+            day = previous
+        }
+        return dates
+    }
+}
 #endif
+
