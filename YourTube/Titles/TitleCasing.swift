@@ -209,11 +209,18 @@ enum TitleCasing {
     /// enough to be shouting is long enough not to be an initialism, and an
     /// initialism the vocabulary happens to know (`US`) is listed by hand.
     ///
+    /// Four letters, not five, because a five-letter one is rare (`USAID`)
+    /// and a five-letter shouted surname is not (`PRIYA`, `RAMAN`) — and the
+    /// two are indistinguishable by shape. The person recogniser catches the
+    /// surname when it can, but it doesn't everywhere: on CI's simulator it
+    /// found neither of those, which is exactly the device this has to be
+    /// right on without it.
+    ///
     /// This asks `isInUse` rather than `isOrdinaryWord` deliberately: the
     /// spell checker accepts `nasa` and `doge`, so bringing it in here would
     /// lower-case the two initialisms the reported titles turned on.
     static func isInitialism(_ word: String, _ key: String) -> Bool {
-        guard isShouted(word), word.allSatisfy(\.isLetter), (2...5).contains(word.count) else {
+        guard isShouted(word), word.allSatisfy(\.isLetter), (2...4).contains(word.count) else {
             return false
         }
         return !isInUse(key) || ambiguousInitialisms.contains(key)

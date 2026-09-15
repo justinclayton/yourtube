@@ -191,7 +191,9 @@ final class TitleRewriterTests: XCTestCase {
     }
 
     /// A name that was itself being shouted comes back as a name, not as an
-    /// initialism and not in lower case.
+    /// initialism and not in lower case — on every device, including the one
+    /// whose person recogniser doesn't find it. `PRIYA` and `RAMAN` are five
+    /// letters, which is why an initialism stops at four.
     func testAShoutedNameIsCalmedRatherThanFlattened() {
         XCTAssertEqual(
             TitleRewritePrompt.resolve(
