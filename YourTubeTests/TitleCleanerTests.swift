@@ -2,6 +2,31 @@ import XCTest
 import SwiftData
 @testable import YourTube
 
+/// Answers from a lookup table so the cleaner's tier-two bookkeeping can be
+/// tested without the on-device model, the way `CategoryManagerTests` stubs
+/// the categorizer.
+private struct StubRewriter: TitleRewriter {
+    struct Refused: Error {}
+
+    /// Stripped title -> what the model "answers". Anything not listed comes
+    /// back sentence-cased, which is what the real rewrite mostly does.
+    var answers: [String: String] = [:]
+    /// Stripped titles the stub throws on, standing in for a guardrail refusal.
+    var refuses: Set<String> = []
+    /// Every request the stub was given, so a test can assert on who was asked.
+    final class Log: @unchecked Sendable {
+        var requests: [TitleRewriteRequest] = []
+    }
+    var log = Log()
+
+    func rewrite(_ request: TitleRewriteRequest) async throws -> String {
+        log.requests.append(request)
+        if refuses.contains(request.strippedTitle) { throw Refused() }
+        if let answer = answers[request.strippedTitle] { return answer }
+        return request.strippedTitle.lowercased()
+    }
+}
+
 /// The cleaner's own job is the bookkeeping around `TitleStripper`: which
 /// videos are stale, which titles it judges them against, and that a version
 /// bump re-does the lot. Driven against an in-memory container, the way
@@ -14,7 +39,7 @@ final class TitleCleanerTests: XCTestCase {
     override func setUp() async throws {
         let config = ModelConfiguration(isStoredInMemoryOnly: true)
         container = try ModelContainer(
-            for: Video.self, Subscription.self, VideoCollection.self, ChannelRule.self,
+            for: Video.self, Subscription.self, VideoCollection.self, ChannelRule.self, Show.self,
             configurations: config
         )
     }
@@ -172,5 +197,213 @@ final class TitleCleanerTests: XCTestCase {
         await cleaner.cleanStale()
         XCTAssertEqual(cleaner.status, .idle)
         XCTAssertNil(cleaner.lastRunAt)
+    }
+
+    // MARK: - Tier two
+
+    private func makeShow(channelId: String, title: String) {
+        context.insert(Show(
+            source: .channel(id: channelId),
+            title: title,
+            flagOrigin: .user,
+            override: .forceShow
+        ))
+        try? context.save()
+    }
+
+    private func makeCleaner(
+        _ rewriter: (any TitleRewriter)?,
+        rewriteEnabled: Bool = true
+    ) -> TitleCleaner {
+        let defaults = UserDefaults(suiteName: "TitleCleanerTests-\(UUID().uuidString)")!
+        defaults.set(rewriteEnabled, forKey: TitleCleaner.rewriteEnabledKey)
+        return TitleCleaner(modelContext: context, rewriter: rewriter, defaults: defaults)
+    }
+
+    /// The whole point of tier two: the stripped title goes to the model and
+    /// the model's answer is what the viewer sees, with the raw title still
+    /// recoverable underneath it in the player.
+    func testShowEpisodesAreRewrittenOnTopOfTheStripping() async throws {
+        makeShow(channelId: "UC-qi", title: "QI")
+        seed(qi)
+        let rewriter = StubRewriter(answers: [
+            "How To Ruin University Challenge": "How to ruin University Challenge",
+        ])
+        await makeCleaner(rewriter).cleanStale()
+
+        let video = try stored()[0]
+        XCTAssertEqual(video.displayTitle, "How to ruin university challenge")
+        XCTAssertEqual(video.strippedTitle, "How To Ruin University Challenge")
+        XCTAssertTrue(video.isTitleRewritten)
+        XCTAssertTrue(video.hasCleanedTitle)
+        // The model is asked about the stripped title, never YouTube's, and is
+        // told the show so it doesn't put the name back.
+        XCTAssertEqual(rewriter.log.requests.first?.strippedTitle, "How To Ruin University Challenge")
+        XCTAssertEqual(rewriter.log.requests.first?.showTitle, "QI")
+    }
+
+    /// A channel that isn't a show gets tier one only. The rewrite is a model
+    /// call per title; spending it on every video in the store isn't worth it,
+    /// and the shows are where clickbait is most in the way.
+    func testVideosOutsideAShowGetTierOneOnly() async throws {
+        makeShow(channelId: "UC-qi", title: "QI")
+        seed(qi)
+        seed(["A | Maker Weekly", "B | Maker Weekly", "C | Maker Weekly", "D | Maker Weekly"],
+             channelId: "UC-maker")
+        let rewriter = StubRewriter()
+        await makeCleaner(rewriter).cleanStale()
+
+        let maker = try stored(channelId: "UC-maker")
+        XCTAssertEqual(Set(maker.map(\.displayTitle)), ["A", "B", "C", "D"])
+        XCTAssertTrue(maker.allSatisfy { !$0.isTitleRewritten })
+        XCTAssertTrue(rewriter.log.requests.allSatisfy { $0.showTitle == "QI" })
+    }
+
+    /// Shorts are never episodes of anything, so they're never rewritten.
+    func testShortsAreNotRewritten() async throws {
+        makeShow(channelId: "UC-qi", title: "QI")
+        let videos = seed(qi)
+        videos[0].isLikelyShort = true
+        try context.save()
+
+        let rewriter = StubRewriter()
+        await makeCleaner(rewriter).cleanStale()
+
+        XCTAssertFalse(try stored()[0].isTitleRewritten)
+        XCTAssertEqual(rewriter.log.requests.count, qi.count - 1)
+    }
+
+    /// An answer the app can't use costs the viewer the rewrite, never the
+    /// title: the stripped version stands.
+    func testAnUnusableAnswerLeavesTheStrippedTitle() async throws {
+        makeShow(channelId: "UC-qi", title: "QI")
+        seed(qi)
+        await makeCleaner(StubRewriter(answers: [
+            "How To Ruin University Challenge": "   ",
+            "Sandi's Favourite Malicious Compliance": String(repeating: "wordy ", count: 40),
+        ])).cleanStale()
+
+        let videos = try stored()
+        XCTAssertEqual(videos[0].displayTitle, "How To Ruin University Challenge")
+        XCTAssertEqual(videos[1].displayTitle, "Sandi's Favourite Malicious Compliance")
+    }
+
+    /// A guardrail refusal on one news headline must not abort the rest.
+    func testARefusedTitleIsCountedAndTheRunCarriesOn() async throws {
+        makeShow(channelId: "UC-qi", title: "QI")
+        seed(qi)
+        let cleaner = makeCleaner(StubRewriter(refuses: ["How To Ruin University Challenge"]))
+        await cleaner.cleanStale()
+
+        let videos = try stored()
+        XCTAssertEqual(videos[0].displayTitle, "How To Ruin University Challenge")
+        XCTAssertEqual(videos[1].displayTitle, "Sandi's favourite malicious compliance")
+        XCTAssertEqual(cleaner.lastRewriteFailures, 1)
+        XCTAssertEqual(cleaner.rewriteStatus, .idle)
+    }
+
+    /// The device without Apple Intelligence: stripping still happens, and
+    /// nothing is left half-cleaned waiting for a model that never arrives.
+    func testWithoutAModelStrippingStillApplies() async throws {
+        makeShow(channelId: "UC-qi", title: "QI")
+        seed(qi)
+        let cleaner = makeCleaner(nil)
+        XCTAssertFalse(cleaner.canRewrite)
+        await cleaner.cleanStale()
+
+        let videos = try stored()
+        XCTAssertEqual(videos[0].displayTitle, "How To Ruin University Challenge")
+        XCTAssertTrue(videos.allSatisfy { !$0.isTitleRewritten })
+        XCTAssertTrue(videos.allSatisfy { $0.titleCleanerVersion == TitleCleaner.version })
+    }
+
+    // MARK: - The setting
+
+    /// Off means stripping only, from the start.
+    func testWithTheSettingOffOnlyTheStrippingRuns() async throws {
+        makeShow(channelId: "UC-qi", title: "QI")
+        seed(qi)
+        let rewriter = StubRewriter()
+        await makeCleaner(rewriter, rewriteEnabled: false).cleanStale()
+
+        XCTAssertEqual(try stored()[0].displayTitle, "How To Ruin University Challenge")
+        XCTAssertTrue(rewriter.log.requests.isEmpty)
+    }
+
+    /// Turning it off puts the stripped titles back without re-running the
+    /// stripper, which is why tier one's output is kept alongside the rewrite.
+    func testTurningTheSettingOffRestoresTheStrippedTitles() async throws {
+        makeShow(channelId: "UC-qi", title: "QI")
+        seed(qi)
+        let defaults = UserDefaults(suiteName: "TitleCleanerTests-\(UUID().uuidString)")!
+        let cleaner = TitleCleaner(modelContext: context, rewriter: StubRewriter(), defaults: defaults)
+        await cleaner.cleanStale()
+        XCTAssertEqual(try stored()[0].displayTitle, "How to ruin university challenge")
+
+        cleaner.isRewriteEnabled = false
+        await cleaner.reconcileRewrites()
+
+        let videos = try stored()
+        XCTAssertEqual(videos[0].displayTitle, "How To Ruin University Challenge")
+        XCTAssertTrue(videos.allSatisfy { !$0.isTitleRewritten })
+        // Tier one's work is untouched: the version stamp doesn't move, so the
+        // next launch doesn't re-strip the store.
+        XCTAssertTrue(videos.allSatisfy { $0.titleCleanerVersion == TitleCleaner.version })
+    }
+
+    /// And turning it back on rewrites them again, without a second stripping
+    /// pass.
+    func testTurningTheSettingBackOnReRunsTheRewrite() async throws {
+        makeShow(channelId: "UC-qi", title: "QI")
+        seed(qi)
+        let defaults = UserDefaults(suiteName: "TitleCleanerTests-\(UUID().uuidString)")!
+        defaults.set(false, forKey: TitleCleaner.rewriteEnabledKey)
+        let cleaner = TitleCleaner(modelContext: context, rewriter: StubRewriter(), defaults: defaults)
+        await cleaner.cleanStale()
+        XCTAssertEqual(try stored()[0].displayTitle, "How To Ruin University Challenge")
+
+        cleaner.isRewriteEnabled = true
+        await cleaner.reconcileRewrites()
+
+        XCTAssertEqual(try stored()[0].displayTitle, "How to ruin university challenge")
+        XCTAssertTrue(try stored().allSatisfy { $0.isTitleRewritten })
+    }
+
+    /// A channel flagged as a show after cleaning has already run picks up the
+    /// rewrite on the next pass, with nothing to re-strip.
+    func testAChannelFlaggedAsAShowLaterIsRewrittenOnTheNextPass() async throws {
+        seed(qi)
+        let cleaner = makeCleaner(StubRewriter())
+        await cleaner.cleanStale()
+        XCTAssertEqual(try stored()[0].displayTitle, "How To Ruin University Challenge")
+
+        makeShow(channelId: "UC-qi", title: "QI")
+        await cleaner.cleanStale()
+
+        XCTAssertEqual(try stored()[0].displayTitle, "How to ruin university challenge")
+    }
+
+    /// The version bump with tier two in play: both tiers run again, so a
+    /// rewrite is never left standing on a stripping that has changed.
+    func testAVersionBumpReRunsBothTiers() async throws {
+        makeShow(channelId: "UC-qi", title: "QI")
+        seed(qi, cleanerVersion: TitleCleaner.version)
+        let seeded = try stored()
+        for video in seeded {
+            video.cleanedTitle = "stale rewrite"
+            video.strippedTitle = "stale stripping"
+            video.isTitleRewritten = true
+        }
+        seeded[0].titleCleanerVersion = TitleCleaner.version - 1
+        try context.save()
+
+        await makeCleaner(StubRewriter()).cleanStale()
+
+        let videos = try stored()
+        XCTAssertEqual(videos[0].strippedTitle, "How To Ruin University Challenge")
+        XCTAssertEqual(videos[0].displayTitle, "How to ruin university challenge")
+        XCTAssertEqual(videos[1].strippedTitle, "Sandi's Favourite Malicious Compliance")
+        XCTAssertTrue(videos.allSatisfy { $0.isTitleRewritten })
+        XCTAssertTrue(videos.allSatisfy { $0.titleCleanerVersion == TitleCleaner.version })
     }
 }
