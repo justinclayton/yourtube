@@ -366,10 +366,23 @@ forbid adding anything the original didn't say, forbid capitals for emphasis,
 and cap the length.
 
 The app doesn't trust the answer. `TitleRewritePrompt.resolve` collapses
-whitespace, drops surrounding quotes, and falls back to the stripped title
-whenever the answer is empty or longer than what it was given. A title the
-model refuses keeps its stripped version and isn't retried until a version
-bump.
+whitespace, drops surrounding quotes, and throws the answer away whenever it
+is empty, longer than what it was given, made of words the title didn't use,
+or missing more than half of the title's words. The word check is "never add
+information" made checkable: on a run over 120 real show titles it rejected
+nine answers and every one deserved it — `Hegseth` respelt `Hegsseth`, `Andy`
+corrected to `Andrew`, `G*ns` uncensored to `guns`, `Dr. Dre Is Using A.I.
+and I Hate It` cut down to `Dr. dre is using ai` (#87). Joining words (`a`,
+`the`, `of`, `to`…) are allowed, because taking the hype out of a sentence
+sometimes needs one to hold the rest together.
+
+What the viewer gets instead is not the stripped title as it stands but
+`TitleRewritePrompt.fallback(for:)`: the stripped title with its shouting
+taken off by `TitleCasing`, which needs no model. The same goes for a title
+the model refuses, and that matters more than it sounds: the model's safety
+guardrail objects to news, and on the Mac's model it refused 9 of 25 Breaking
+Points titles and 31 of 120 titles across every show — every one of which
+used to stay shouting. A refused title isn't retried until a version bump.
 
 It trusts the answer's *capitals* least of all. Asked the same title three
 times the model shouted it back verbatim, half-calmed it, and flattened it to
@@ -378,10 +391,13 @@ nothing but lower case — and the phone favours that last one, which made
 "lebron james, sydney sweeney gambling shilling". So the model is asked for
 the words and `TitleCasing` decides the case, from the title the model was
 given: a word written with an inner capital is copied exactly, a word the
-source shouted loses the shouting unless it's an initialism, and everything
-else is lower case unless it opens a sentence or is a name. Names are found
-by `NLTagger`'s person recognition plus "no dictionary has this word", which
-is what keeps `Syndney` and `Sweeney` capitalised while `Gambling` and
+source shouted loses the shouting unless it's an initialism (`DOGE`, `U.S.`,
+`SCOTUS`) or a roman numeral, letters mixed with digits (`WW3`, `F-15`,
+`MST3K`) are copied as written, a hyphenated word is decided one part at a
+time (`mail-in`, but `Ben-Gvir` and `US-Israel`), and everything else is
+lower case unless it opens a sentence or is a name. Names are found by
+`NLTagger`'s person recognition plus "no dictionary has this word", which is
+what keeps `Syndney` and `Sweeney` capitalised while `Gambling` and
 `Favourite` go down. The result is ordinary sentence case, which is the one
 house style that can be derived rather than guessed.
 
@@ -393,6 +409,17 @@ playlist-backed one — so the host channel of a podcast playlist keeps tier one
 on everything that isn't the podcast. Everything else gets tier one alone, and
 so does every device without Apple Intelligence — the feature degrades rather
 than disappears, and Settings says why the toggle is off.
+
+**Tuning the rewrite.** `scripts/rewrite-harness.sh titles.txt "Show name"
+[instructions.txt]` compiles the app's own `TitleRewriter` and `TitleCasing`
+sources into a Mac command-line tool and runs them over a file of stripped
+titles on the Mac's on-device model, printing the model's raw answer and what
+the viewer would see, with counts of refusals and rejected answers. Pull real
+titles out of a copy of the store (`SELECT ZSTRIPPEDTITLE FROM ZVIDEO WHERE
+ZCHANNELTITLE = '…'`) or a channel's RSS feed. The Mac's model is the
+simulator's, not the phone's: it is the place to check the validation and the
+casing, and a smoke test for wording changes that the phone has the last word
+on.
 
 **Settings → Titles → Rewrite show titles** turns tier two off. Tier one's
 output is kept alongside the rewrite (`strippedTitle`), so turning it off puts
@@ -667,8 +694,10 @@ Run with Cmd-U. Coverage is concentrated where the risk is:
   toggle restoring and re-running the rewrite, and a version bump re-running
   both tiers.
 - `TitleRewriterTests` — what the model is told and what the app believes of
-  the answer: the constraints present in the instructions, and the fallback to
-  the stripped title on an empty or over-long answer.
+  the answer: the constraints present in the instructions, the answers that
+  are thrown out (empty, over-long, in words the title didn't use, or missing
+  half of it), the calmed fallback they and a refusal get, and the casing
+  rules, on the titles Breaking Points and #87 actually produced.
 - `ISO8601DurationTests`, `PKCETests`, `SubscriptionTests`.
 
 **The Shorts corpus is synthetic**, and so is the show detector's. The cases

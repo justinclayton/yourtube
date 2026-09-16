@@ -392,8 +392,8 @@ final class TitleCleanerTests: XCTestCase {
     }
 
     /// An answer the app can't use costs the viewer the rewrite, never the
-    /// title: the stripped version stands.
-    func testAnUnusableAnswerLeavesTheStrippedTitle() async throws {
+    /// title: the stripped version stands, with its shouting taken off.
+    func testAnUnusableAnswerLeavesTheCalmedStrippedTitle() async throws {
         makeShow(channelId: "UC-qi", title: "QI")
         seed(qi)
         await makeCleaner(StubRewriter(answers: [
@@ -402,8 +402,8 @@ final class TitleCleanerTests: XCTestCase {
         ])).cleanStale()
 
         let videos = try stored()
-        XCTAssertEqual(videos[0].displayTitle, "How To Ruin University Challenge")
-        XCTAssertEqual(videos[1].displayTitle, "Sandi's Favourite Malicious Compliance")
+        XCTAssertEqual(videos[0].displayTitle, "How to ruin university challenge")
+        XCTAssertEqual(videos[1].displayTitle, "Sandi's favourite malicious compliance")
     }
 
     /// A guardrail refusal on one news headline must not abort the rest.
@@ -413,8 +413,11 @@ final class TitleCleanerTests: XCTestCase {
         let cleaner = makeCleaner(StubRewriter(refuses: ["How To Ruin University Challenge"]))
         await cleaner.cleanStale()
 
+        // The refused title isn't left as tier one had it: it gets the
+        // calming that needs no model, so a refusal costs the wording of
+        // the rewrite and not its calm.
         let videos = try stored()
-        XCTAssertEqual(videos[0].displayTitle, "How To Ruin University Challenge")
+        XCTAssertEqual(videos[0].displayTitle, "How to ruin university challenge")
         XCTAssertEqual(videos[1].displayTitle, "Sandi's favourite malicious compliance")
         XCTAssertEqual(cleaner.lastRewriteFailures, 1)
         XCTAssertEqual(cleaner.rewriteStatus, .idle)

@@ -1,6 +1,10 @@
 import Foundation
 import NaturalLanguage
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 
 /// Decides the capitalisation of a rewritten title, from the evidence in the
 /// title it was rewritten from.
@@ -21,17 +25,23 @@ import UIKit
 /// Each word of the answer is looked up in the title it came from, which is
 /// the only place any evidence lives:
 ///
+/// - **Letters and digits together** (`WW3`, `F-15`, `MST3K`, `DS9`) — a code
+///   or a name, never a word being shouted, so the source's spelling is
+///   copied exactly.
 /// - **Written with an inner capital** (`LeBron`, `iPhone`, `McCarthy`) — that
-///   spelling is deliberate and is copied exactly.
+///   spelling is deliberate and is copied exactly. A capital after a hyphen
+///   isn't inner: `Mail-In` is two words in Title Case, decided one at a time.
+/// - **Hyphenated** (`Mail-In`, `Ben-Gvir`, `US-Israel`) — each part decided
+///   on its own, and one name makes the whole a name.
 /// - **Capitalised** (`Trump`, `Cameras`) — ambiguous, because YouTube
 ///   capitalises every word of a title as a matter of style. `NLTagger`'s
 ///   *person* recognition decides, run over the original title where the
 ///   model's casing isn't in play, with "not a word `NLEmbedding` has ever
 ///   seen" as a second opinion for the names it misses (`Syndney`, `Sandi`).
 /// - **SHOUTED** — the emphasis the rewrite exists to remove, so it is taken
-///   off unless the word is a name (`TRUMP` → `Trump`) or an initialism
-///   (`DOGE`, `NASA`, `FBI` — short, all-capital, and not an ordinary English
-///   word).
+///   off unless the word is a name (`TRUMP` → `Trump`), an initialism
+///   (`DOGE`, `NASA`, `U.S.` — short or dotted, all-capital, and not an
+///   ordinary English word) or a roman numeral (`Vol VIII`).
 /// - **lower case**, or not in the source at all — left lower case unless it
 ///   opens the title or follows a full stop, question mark, exclamation mark
 ///   or colon.
@@ -41,12 +51,29 @@ import UIKit
 /// mid-sentence function words (`what The polls miss`). Case is copied here
 /// only for a name or a deliberate inner capital; a function word is never a
 /// name, so it always comes back lower case.
+///
+/// Given the stripped title as both answer and source, this is a
+/// deterministic calming of the title on its own — what the app shows when
+/// the model refuses a title or its answer can't be trusted.
 enum TitleCasing {
     /// Initialisms that are also ordinary English words, so the vocabulary
     /// check can't tell them apart from shouting. Kept deliberately tiny — one
     /// entry earns its place only when getting it wrong is worse than the
     /// occasional shout that survives, and "us" in a news feed is that.
     static let ambiguousInitialisms: Set<String> = ["us"]
+
+    /// Initialisms too long for the shape rule, which stops at four letters
+    /// so a five-letter shouted surname (`PRIYA`) isn't taken for one. The
+    /// ones a news feed meets often enough to list by hand.
+    static let knownInitialisms: Set<String> = [
+        "scotus", "potus", "flotus", "usaid", "nasdaq", "covid", "unesco", "unicef", "nafta", "nascar",
+    ]
+
+    /// Abbreviations whose full stop doesn't end a sentence, so the word
+    /// after `Dr.` or `No.` isn't capitalised for sitting there.
+    static let abbreviations: Set<String> = [
+        "dr", "mr", "mrs", "ms", "jr", "sr", "st", "mt", "ft", "feat", "no", "ep", "pt", "vol",
+    ]
 
     /// The answer in sentence case, decided word by word against `source`.
     static func restore(_ answer: String, from source: String) -> String {
@@ -66,6 +93,22 @@ enum TitleCasing {
             opensSentence = token.closesSentence
         }
         return pieces.joined(separator: " ")
+    }
+
+    /// The words of a title as this file sees them: lower-cased stems with
+    /// the punctuation, possessives and hyphens taken off, so `Durk’s`,
+    /// `Durk's` and `DURK` are all one word. What the rewrite's validation
+    /// compares an answer against.
+    static func words(in title: String) -> [String] {
+        title.split(whereSeparator: \.isWhitespace).flatMap { piece -> [String] in
+            let stem = Token(String(piece)).stem
+            guard !stem.isEmpty else { return [] }
+            return stem.split(separator: "-").map {
+                var word = $0.lowercased().replacingOccurrences(of: "\u{2019}", with: "'")
+                if word.hasSuffix("."), word.count > 1 { word.removeLast() }
+                return word
+            }
+        }
     }
 
     // MARK: - Words
@@ -98,12 +141,20 @@ enum TitleCasing {
                 possessive = String(core.suffix(2))
                 core = String(core.dropLast(2))
             }
+            // The last full stop of `U.S.` or `A.I.` belongs to the word, not
+            // to the sentence: kept on the stem so the initialism is looked
+            // up whole and the word after it isn't taken for a new sentence.
+            if core.contains("."), trail.first == "." {
+                core.append(".")
+                trail.removeFirst()
+            }
             stem = core
         }
 
         /// Whether the next word starts a new sentence.
         var closesSentence: Bool {
-            trail.contains { ".!?:\u{2026}".contains($0) }
+            guard let mark = trail.first(where: { ".!?:\u{2026}".contains($0) }) else { return false }
+            return mark != "." || !TitleCasing.abbreviations.contains(stem.lowercased())
         }
 
         func rebuilt(with stem: String) -> String {
@@ -117,7 +168,8 @@ enum TitleCasing {
     private struct Evidence {
         /// Lower-cased word -> how the source spells it. A word the source
         /// both shouts and writes normally keeps the normal spelling: that is
-        /// the one carrying information.
+        /// the one carrying information. The parts of a hyphenated word are
+        /// listed too, so `US-Israel` answers for `US` and for `Israel`.
         private var spelling: [String: String] = [:]
         /// Lower-cased words `NLTagger` recognised as part of a person's
         /// name. People only: see `TitleCasing.people(in:)`.
@@ -127,9 +179,10 @@ enum TitleCasing {
             for piece in source.split(whereSeparator: \.isWhitespace).map(String.init) {
                 let stem = Token(piece).stem
                 guard !stem.isEmpty else { continue }
-                let key = stem.lowercased()
-                if let existing = spelling[key], !TitleCasing.isShouted(existing) { continue }
-                spelling[key] = stem
+                record(stem)
+                if stem.contains("-") {
+                    for part in stem.split(separator: "-") { record(String(part)) }
+                }
             }
             people = TitleCasing.people(in: source)
             // Name recognition is trained on ordinary prose and gives up on a
@@ -139,47 +192,66 @@ enum TitleCasing {
             if calmed != source { people.formUnion(TitleCasing.people(in: calmed)) }
         }
 
+        private mutating func record(_ stem: String) {
+            let key = stem.lowercased()
+            if let existing = spelling[key], !TitleCasing.isShouted(existing) { return }
+            spelling[key] = stem
+            // `A.I.` answers for `A.I` too, however the model punctuates it.
+            if key.hasSuffix("."), key.count > 1 { spelling[String(key.dropLast())] = stem }
+        }
+
         /// How this word should be written, given what the source did with it.
         func `case`(_ stem: String, openingSentence: Bool) -> String {
             let key = stem.lowercased()
-            var text: String
-
-            if let source = spelling[key] {
-                if TitleCasing.isShouted(source) {
-                    // A person comes first: a surname of four or five letters
-                    // looks exactly like an initialism, and `PRIYA` is a name
-                    // being shouted where `NASA` never was.
-                    if people.contains(key) {
-                        text = TitleCasing.sentenceCased(source)
-                    } else if TitleCasing.isInitialism(source, key) {
-                        text = source
-                    } else if isName(key) {
-                        text = TitleCasing.sentenceCased(source)
-                    } else {
-                        text = key
-                    }
-                } else if TitleCasing.hasInnerCapital(source) {
-                    text = source
-                } else if source.first?.isUppercase == true {
-                    text = isName(key) ? source : key
-                } else {
-                    text = source
-                }
-            } else if TitleCasing.hasInnerCapital(stem) {
-                // The model wrote it with a deliberate inner capital of its
-                // own; nothing in the source contradicts that.
-                text = stem
-            } else if key.count > 1, isName(key) {
-                text = TitleCasing.sentenceCased(stem)
-            } else {
-                text = key
-            }
-
             // The pronoun, which is the one word whose capital owes nothing to
             // where it sits.
             if key == "i" { return "I" }
+            let text = decided(stem, key: key)
             guard openingSentence, let first = text.first else { return text }
             return first.uppercased() + text.dropFirst()
+        }
+
+        /// The word's case on its own merits, before any sentence-opening
+        /// capital.
+        private func decided(_ stem: String, key: String) -> String {
+            let source = spelling[key]
+
+            // Letters and digits together are a code or a name, never a word
+            // being shouted: whoever wrote `WW3` or `F-15` chose that case.
+            if TitleCasing.mixesLettersAndDigits(stem) { return source ?? stem }
+            // A capital somewhere other than the front is always deliberate,
+            // whether the source wrote it or the model did.
+            if TitleCasing.hasInnerCapital(source ?? stem) { return source ?? stem }
+            // A shouted numeral is a numeral, even when the recogniser has
+            // read `Vol XVI` as somebody's name.
+            if let source, TitleCasing.isShouted(source), TitleCasing.isRomanNumeral(source),
+               !TitleCasing.isInUse(key) {
+                return source
+            }
+            // A person comes next: a surname of four or five letters looks
+            // exactly like an initialism, and `PRIYA` is a name being
+            // shouted where `NASA` never was.
+            if people.contains(key) { return TitleCasing.sentenceCased(source ?? stem) }
+            // Each part of a hyphenated word on its own, and one name makes
+            // the whole a name: `mail-in`, but `Ben-Gvir` and `US-Israel`.
+            if let parts = TitleCasing.hyphenParts(stem) {
+                let decided = parts.map { self.decided($0, key: $0.lowercased()) }
+                guard decided.contains(where: { $0.first?.isUppercase == true }) else {
+                    return decided.joined(separator: "-")
+                }
+                return decided.map(TitleCasing.sentenceCased).joined(separator: "-")
+            }
+
+            guard let source else {
+                // Not in the source at all: the model's own word.
+                return key.count > 1 && isName(key) ? TitleCasing.sentenceCased(stem) : key
+            }
+            if TitleCasing.isShouted(source) {
+                if TitleCasing.isInitialism(source, key) { return source }
+                return isName(key) ? TitleCasing.sentenceCased(source) : key
+            }
+            if source.first?.isUppercase == true { return isName(key) ? source : key }
+            return source
         }
 
         /// Whether this word is a name: recognised as a person, or absent
@@ -200,30 +272,59 @@ enum TitleCasing {
     }
 
     /// A capital somewhere other than the front, which is always deliberate:
-    /// `LeBron`, `McCarthy`, `iPhone`.
+    /// `LeBron`, `McCarthy`, `iPhone`. A capital right after a hyphen doesn't
+    /// count — `Mail-In` is Title Case, not a spelling.
     static func hasInnerCapital(_ word: String) -> Bool {
-        !isShouted(word) && word.dropFirst().contains(where: \.isUppercase)
+        guard !isShouted(word) else { return false }
+        return zip(word.dropFirst(), word).contains { character, previous in
+            character.isUppercase && previous != "-"
+        }
     }
 
-    /// A short all-capital run of letters that isn't in ordinary use. Long
-    /// enough to be shouting is long enough not to be an initialism, and an
-    /// initialism the vocabulary happens to know (`US`) is listed by hand.
+    /// `WW3`, `F-15`, `MST3K`: a code or a name, whose case is whoever wrote
+    /// it's to choose.
+    static func mixesLettersAndDigits(_ word: String) -> Bool {
+        word.contains(where: \.isLetter) && word.contains(where: \.isNumber)
+    }
+
+    /// The parts of a hyphenated word, or nil for a word that isn't one.
+    static func hyphenParts(_ word: String) -> [String]? {
+        let parts = word.split(separator: "-", omittingEmptySubsequences: false).map(String.init)
+        guard parts.count > 1, parts.allSatisfy({ !$0.isEmpty }) else { return nil }
+        return parts
+    }
+
+    /// A short all-capital run of letters that isn't in ordinary use, or a
+    /// dotted one of any length: nobody shouts with full stops between the
+    /// letters. Long enough to be shouting is long enough not to be an
+    /// initialism, and an initialism the vocabulary happens to know (`US`)
+    /// is listed by hand.
     ///
     /// Four letters, not five, because a five-letter one is rare (`USAID`)
     /// and a five-letter shouted surname is not (`PRIYA`, `RAMAN`) — and the
     /// two are indistinguishable by shape. The person recogniser catches the
     /// surname when it can, but it doesn't everywhere: on CI's simulator it
     /// found neither of those, which is exactly the device this has to be
-    /// right on without it.
+    /// right on without it. The longer ones a news feed keeps meeting
+    /// (`SCOTUS`) are listed by hand instead.
     ///
     /// This asks `isInUse` rather than `isOrdinaryWord` deliberately: the
     /// spell checker accepts `nasa` and `doge`, so bringing it in here would
     /// lower-case the two initialisms the reported titles turned on.
     static func isInitialism(_ word: String, _ key: String) -> Bool {
-        guard isShouted(word), word.allSatisfy(\.isLetter), (2...4).contains(word.count) else {
-            return false
-        }
+        guard isShouted(word), word.allSatisfy({ $0.isLetter || $0 == "." }) else { return false }
+        if word.contains(".") || knownInitialisms.contains(key) { return true }
+        guard (2...4).contains(word.count) else { return false }
         return !isInUse(key) || ambiguousInitialisms.contains(key)
+    }
+
+    /// `VIII`, `XVI`: a well-formed roman numeral. `MIX` and `DIM` are
+    /// numerals too, or words; the caller checks the vocabulary.
+    static func isRomanNumeral(_ word: String) -> Bool {
+        !word.isEmpty && word.range(
+            of: #"^M{0,3}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})$"#,
+            options: .regularExpression
+        ) != nil
     }
 
     /// A word English uses, as opposed to a name, a brand or a misspelling.
@@ -246,22 +347,36 @@ enum TitleCasing {
     /// Accepted by the spell checker, in either spelling of English: `colour`
     /// and `color` are both words, and a show's titles may use either.
     private static func spellsAsAWord(_ key: String) -> Bool {
-        let checker = UITextChecker()
         let range = NSRange(location: 0, length: (key as NSString).length)
+        #if canImport(UIKit)
+        let checker = UITextChecker()
         return spellingLanguages.contains { language in
             checker.rangeOfMisspelledWord(
                 in: key, range: range, startingAt: 0, wrap: false, language: language
             ).location == NSNotFound
         }
+        #else
+        // The Mac, for `scripts/rewrite-harness.sh` alone; the app never runs here.
+        let checker = NSSpellChecker.shared
+        return spellingLanguages.contains { language in
+            checker.checkSpelling(
+                of: key, startingAt: 0, language: language, wrap: false,
+                inSpellDocumentWithTag: 0, wordCount: nil
+            ).location == NSNotFound
+        }
+        #endif
     }
 
     private static let spellingLanguages = ["en_US", "en_GB"]
 
-    /// A capital at the front and nothing shouted behind it.
+    /// A capital at the front and nothing shouted behind it, on each part of
+    /// a hyphenated word: `BEN-GVIR` → `Ben-Gvir`.
     static func sentenceCased(_ word: String) -> String {
-        guard let first = word.first else { return word }
-        let rest = isShouted(word) ? word.dropFirst().lowercased() : String(word.dropFirst())
-        return first.uppercased() + rest
+        word.split(separator: "-", omittingEmptySubsequences: false).map { part -> String in
+            guard let first = part.first else { return String(part) }
+            let rest = isShouted(String(part)) ? part.dropFirst().lowercased() : String(part.dropFirst())
+            return first.uppercased() + rest
+        }.joined(separator: "-")
     }
 
     /// The title with its shouting taken off, for the benefit of the name

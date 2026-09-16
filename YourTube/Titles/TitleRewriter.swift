@@ -36,7 +36,7 @@ enum TitleRewritePrompt {
     /// stripper's version to make `TitleCleaner.version`, so a bump here
     /// re-runs both tiers — tier one's output is tier two's input, and a
     /// rewrite judged against a stale stripping is not worth keeping.
-    static let version = 2
+    static let version = 3
 
     /// The longest rewrite worth showing. A title that comes back longer than
     /// this hasn't been calmed, it's been elaborated, which is the one thing
@@ -59,6 +59,8 @@ enum TitleRewritePrompt {
     - Keep it under \(maxLength) characters, and never longer than the title \
     you were given.
     - Drop hype, teases and shouting; keep the subject and the people named.
+    - Keep every clause of the title: take out the words used for emphasis, \
+    never the people, places or subjects it names.
     - Don't repeat the show's name. It is already on screen beside the title.
     - If the title is already calm and factual, give it back word for word.
 
@@ -74,26 +76,68 @@ enum TitleRewritePrompt {
         return lines.joined(separator: "\n")
     }
 
-    /// The title to store for an answer, which is the stripped title whenever
+    /// Words an answer may contain that the title didn't. The model is told
+    /// to reuse the title's own words, and every word outside this list that
+    /// it adds is one the app can't vouch for: a respelt name (`Hegsseth`),
+    /// a corrected one (`Andrew` for `Andy`), a claim (`crash` for `broke`).
+    /// Joining words are the exception, because taking hype out of a
+    /// sentence sometimes needs one to hold what's left together.
+    static let connectives: Set<String> = [
+        "a", "an", "the", "and", "or", "of", "on", "in", "to", "for", "with", "at", "by", "as", "from", "is",
+    ]
+
+    /// The title to show when the model gives nothing usable — because it
+    /// refused, answered with nothing, or answered with something the app
+    /// won't believe. Not the stripped title as it stands: that is what the
+    /// rewrite exists to calm, and a news show's titles are refused often
+    /// enough (a third of Breaking Points' on the Mac's model) that leaving
+    /// them shouting would leave the show shouting. `TitleCasing` needs no
+    /// model to take the capitals off, so it runs on the title alone.
+    static func fallback(for strippedTitle: String) -> String {
+        let title = strippedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        return TitleCasing.restore(title, from: title)
+    }
+
+    /// The title to store for an answer, which is `fallback(for:)` whenever
     /// the answer can't be trusted.
     ///
-    /// Two things disqualify an answer, and both are things a small model
-    /// does often enough to plan for: nothing at all, and a paragraph where a
-    /// title was asked for. The *wording* of everything else is taken as
-    /// given — second-guessing it is what the instructions are for — but the
-    /// *casing* is not: asked the same title three times the model shouted it
-    /// back, half-calmed it and flattened it to lower case, so `TitleCasing`
-    /// decides that from the title the model was given rather than from the
-    /// answer (#27).
+    /// Three things disqualify an answer, and all are things a small model
+    /// does often enough to plan for: nothing at all, a paragraph where a
+    /// title was asked for, and a title in words the original didn't use or
+    /// with most of the original's words gone — see `keepsToTheSource`. The
+    /// *wording* of everything else is taken as given — second-guessing it
+    /// is what the instructions are for — but the *casing* is not: asked the
+    /// same title three times the model shouted it back, half-calmed it and
+    /// flattened it to lower case, so `TitleCasing` decides that from the
+    /// title the model was given rather than from the answer (#27).
     static func resolve(_ answer: String, strippedTitle: String) -> String {
-        let fallback = strippedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let source = strippedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         let text = unquoted(collapsed(answer))
-        guard !text.isEmpty else { return fallback }
+        guard !text.isEmpty else { return fallback(for: source) }
         // A rewrite may be longer than the cap only if the original was
         // longer still, and even then only if it shortened it: some show
         // titles are genuinely long sentences.
-        guard text.count <= max(maxLength, fallback.count) else { return fallback }
-        return TitleCasing.restore(text, from: fallback)
+        guard text.count <= max(maxLength, source.count) else { return fallback(for: source) }
+        guard keepsToTheSource(text, source: source) else { return fallback(for: source) }
+        return TitleCasing.restore(text, from: source)
+    }
+
+    /// Whether an answer is made of the title's own words, and of enough of
+    /// them: every word of it is in the title or in `connectives`, and it
+    /// keeps at least half the title's words. The first is "never add
+    /// information" made checkable; the second catches the answer that
+    /// kept a name and dropped the sentence around it (`Mike Binder: The
+    /// Academy Kept Me Out Because of Politics` → `Mike Binder: Academy
+    /// politics`, #87). Words are compared the way `TitleCasing` sees them,
+    /// so case, punctuation and possessives don't count as changes.
+    static func keepsToTheSource(_ answer: String, source: String) -> Bool {
+        let sourceWords = Set(TitleCasing.words(in: source))
+        let answerWords = TitleCasing.words(in: answer)
+        guard !sourceWords.isEmpty else { return true }
+        guard answerWords.allSatisfy({ sourceWords.contains($0) || connectives.contains($0) }) else {
+            return false
+        }
+        return answerWords.count * 2 >= sourceWords.count
     }
 
     /// Whitespace and line breaks squeezed to single spaces, so an answer that
