@@ -472,11 +472,18 @@ private struct ChannelRow: View {
 /// hand-only flags. Each topic toggle saves immediately and marks the rule
 /// user-set so the classifier leaves it alone from then on. Priority and the
 /// show flag have their own switches: flipping either doesn't lock the topics.
-private struct CategoryPickerSheet: View {
+///
+/// Also reachable from a show page (`ShowPageView`), for correcting a show's
+/// category from where it's noticed wrong. A playlist-backed show has no
+/// categories of its own — they live on its host channel — so that caller
+/// passes the show's title through `playlistShowTitle`, which adds a footer
+/// line saying so.
+struct CategoryPickerSheet: View {
     @Environment(AppServices.self) private var services
     @Environment(\.dismiss) private var dismiss
     let subscription: Subscription
     let categories: [VideoCollection]
+    var playlistShowTitle: String? = nil
 
     @State private var selected: Set<PersistentIdentifier> = []
     @State private var isPriority = false
@@ -540,7 +547,12 @@ private struct CategoryPickerSheet: View {
                 } header: {
                     Text("Categories")
                 } footer: {
-                    Text("Pick as many as fit. The channel shows up under each one.")
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Pick as many as fit. The channel shows up under each one.")
+                        if let playlistShowTitle {
+                            Text("\(playlistShowTitle) is a playlist within \(subscription.title); these are \(subscription.title)'s categories, and changing them here moves \(playlistShowTitle) too.")
+                        }
+                    }
                 }
                 if let classifierEvidence {
                     Section {
