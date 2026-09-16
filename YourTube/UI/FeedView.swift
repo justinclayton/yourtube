@@ -467,12 +467,18 @@ private struct RefreshButton: View {
     var body: some View {
         Group {
             switch services.feed.status {
-            case .refreshing(let completed, let total):
-                if total > 0 {
-                    ProgressView(value: Double(completed), total: Double(total))
-                        .progressViewStyle(.circular)
-                } else {
-                    ProgressView()
+            case .refreshing(let phase):
+                HStack(spacing: 4) {
+                    if let progress = phase.progress, progress.total > 0 {
+                        ProgressView(value: Double(progress.completed), total: Double(progress.total))
+                            .progressViewStyle(.circular)
+                    } else {
+                        ProgressView()
+                    }
+                    Text(phase.label)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             default:
                 Button {

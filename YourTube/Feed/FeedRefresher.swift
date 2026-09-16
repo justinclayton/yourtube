@@ -15,8 +15,40 @@ import Observation
 final class FeedRefresher {
     enum Status: Equatable {
         case idle
-        case refreshing(completed: Int, total: Int)
+        case refreshing(Phase)
         case failed(String)
+
+        /// Where in a refresh we are, for `RefreshButton` to show. A refresh
+        /// used to look done the moment the channel fan-out finished, while
+        /// hydration, Shorts classification and the save still ran behind an
+        /// unmoving ring; each phase now gets its own label, and, where a
+        /// total is knowable, its own count.
+        enum Phase: Equatable {
+            case checkingChannels(completed: Int, total: Int)
+            case fetchingVideos(completed: Int, total: Int)
+            case sortingShorts
+
+            var label: String {
+                switch self {
+                case .checkingChannels(_, let total):
+                    "Checking \(total) channel\(total == 1 ? "" : "s")"
+                case .fetchingVideos(_, let total):
+                    "Fetching \(total) new video\(total == 1 ? "" : "s")"
+                case .sortingShorts:
+                    "Sorting Shorts"
+                }
+            }
+
+            /// `nil` when there's no meaningful total to draw a determinate
+            /// ring for.
+            var progress: (completed: Int, total: Int)? {
+                switch self {
+                case .checkingChannels(let completed, let total): (completed, total)
+                case .fetchingVideos(let completed, let total): (completed, total)
+                case .sortingShorts: nil
+                }
+            }
+        }
     }
 
     private(set) var status: Status = .idle
@@ -58,7 +90,7 @@ final class FeedRefresher {
 
     func refresh() async {
         guard !isRefreshing else { return }
-        status = .refreshing(completed: 0, total: 0)
+        status = .refreshing(.checkingChannels(completed: 0, total: 0))
 
         do {
             try await reclassifyStaleVideos()
@@ -70,13 +102,8 @@ final class FeedRefresher {
                 return
             }
 
-            status = .refreshing(completed: 0, total: subscriptions.count)
-            let newVideoIds = try await collectNewVideoIds(from: subscriptions)
-
-            if !newVideoIds.isEmpty {
-                let hydrated = try await api.videos(ids: Array(newVideoIds))
-                try await upsert(videos: hydrated)
-            }
+            let known = try await knownVideoIds()
+            try await fetchAndStoreNewVideos(from: subscriptions, known: known)
 
             lastRefreshedAt = .now
             status = .idle
@@ -124,9 +151,19 @@ final class FeedRefresher {
             seen.insert(channelId)
 
             if let record = byId[channelId] {
-                record.title = item.snippet.title
-                record.thumbnailURL = item.snippet.thumbnails?.best?.url
-                record.channelDescription = item.snippet.description
+                // Assign only when the value actually changed: SwiftData
+                // dirties (and therefore saves and re-notifies every live
+                // query for) a row on assignment alone, even when the new
+                // value equals the old one. An unchanged subscription list
+                // would otherwise touch all 629 rows every refresh.
+                let title = item.snippet.title
+                if record.title != title { record.title = title }
+                let thumbnailURL = item.snippet.thumbnails?.best?.url
+                if record.thumbnailURL != thumbnailURL { record.thumbnailURL = thumbnailURL }
+                let channelDescription = item.snippet.description
+                if record.channelDescription != channelDescription {
+                    record.channelDescription = channelDescription
+                }
             } else {
                 let record = Subscription(
                     channelId: channelId,
@@ -153,51 +190,73 @@ final class FeedRefresher {
         return result
     }
 
-    /// Fetches recent uploads across all channels and returns the video IDs we
-    /// haven't already stored.
+    /// Fetches recent uploads across all channels and stores whatever's new as
+    /// each channel's results land, rather than waiting for the whole
+    /// fan-out to finish.
     ///
-    /// Processed in fixed-size batches rather than one big task group so the
-    /// number of simultaneous connections to Google stays bounded.
-    private func collectNewVideoIds(
-        from subscriptions: [ChannelFeedTarget]
-    ) async throws -> Set<String> {
-        let known = try await knownVideoIds()
-        var candidates: Set<String> = []
-        var completed = 0
+    /// A task group refilled one channel at a time as each fetch completes,
+    /// rather than fixed-size lockstep batches: the slowest channel in a
+    /// batch of six used to hold up the other five's slots doing nothing, and
+    /// 629 channels made 105 such waits. This keeps six requests in flight
+    /// throughout with no idle gaps, and the same six-request ceiling on
+    /// simultaneous connections to Google.
+    ///
+    /// Storing per channel rather than once for the whole refresh — still
+    /// classify-before-insert (see `upsert`), just at channel granularity
+    /// instead of whole-refresh granularity — is what lets new videos reach
+    /// the feed while later channels are still being checked, instead of a
+    /// first fill of hundreds of videos showing nothing for minutes.
+    private func fetchAndStoreNewVideos(
+        from subscriptions: [ChannelFeedTarget], known: Set<String>
+    ) async throws {
+        var known = known
+        var checked = 0
+        let total = subscriptions.count
+        let limit = uploadsPerChannel
+        let client = api
 
-        for batch in subscriptions.chunked(into: maxConcurrentChannelFetches) {
-            let playlistIds = batch.map(\.playlistId)
-            let limit = uploadsPerChannel
-            let client = api
+        status = .refreshing(.checkingChannels(completed: checked, total: total))
 
-            let results: [[String]] = try await withThrowingTaskGroup(
-                of: [String].self
-            ) { group in
-                for playlistId in playlistIds {
-                    group.addTask {
-                        do {
-                            let items = try await client.recentUploads(
-                                playlistId: playlistId, limit: limit
-                            )
-                            return items.compactMap(\.videoId)
-                        } catch YouTubeAPI.APIError.http(let status, _) where status == 404 {
-                            // No uploads playlist, or it's private. Not worth
-                            // failing the whole refresh over.
-                            return []
-                        }
+        try await withThrowingTaskGroup(of: [String].self) { group in
+            var remaining = subscriptions.makeIterator()
+
+            func fillSlot() {
+                guard let target = remaining.next() else { return }
+                group.addTask {
+                    do {
+                        let items = try await client.recentUploads(
+                            playlistId: target.playlistId, limit: limit
+                        )
+                        return items.compactMap(\.videoId)
+                    } catch YouTubeAPI.APIError.http(let status, _) where status == 404 {
+                        // No uploads playlist, or it's private. Not worth
+                        // failing the whole refresh over.
+                        return []
                     }
                 }
-                var collected: [[String]] = []
-                for try await ids in group { collected.append(ids) }
-                return collected
             }
 
-            for ids in results { candidates.formUnion(ids) }
-            completed += batch.count
-            status = .refreshing(completed: completed, total: subscriptions.count)
-        }
+            for _ in 0..<maxConcurrentChannelFetches { fillSlot() }
 
-        return candidates.subtracting(known)
+            while let ids = try await group.next() {
+                checked += 1
+                status = .refreshing(.checkingChannels(completed: checked, total: total))
+
+                let newIds = Set(ids).subtracting(known)
+                if !newIds.isEmpty {
+                    status = .refreshing(.fetchingVideos(completed: 0, total: newIds.count))
+                    let hydrated = try await api.videos(ids: Array(newIds))
+
+                    status = .refreshing(.sortingShorts)
+                    try await upsert(videos: hydrated)
+
+                    known.formUnion(newIds)
+                    status = .refreshing(.checkingChannels(completed: checked, total: total))
+                }
+
+                fillSlot()
+            }
+        }
     }
 
     /// Every video ID already stored. Internal so a playlist-backed show's

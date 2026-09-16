@@ -12,8 +12,12 @@ extension StoreWriter {
     /// hydrate. Read here rather than on the main context because it walks the
     /// whole store: on a 6,000-video library, doing it on the main context
     /// materialised every one of them where the views could keep them alive.
+    /// `propertiesToFetch` keeps that materialisation to just the one string
+    /// per row instead of a full `Video` for each.
     func knownVideoIds() throws -> Set<String> {
-        Set(try modelContext.fetch(FetchDescriptor<Video>()).map(\.videoId))
+        var descriptor = FetchDescriptor<Video>()
+        descriptor.propertiesToFetch = [\.videoId]
+        return Set(try modelContext.fetch(descriptor).map(\.videoId))
     }
 
     /// Inserts hydrated videos that already carry their Shorts verdict,
