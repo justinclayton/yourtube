@@ -107,18 +107,18 @@ struct ChannelArt: View {
     let seed: String
 
     var body: some View {
-        Color.clear
-            .overlay {
-                AsyncImage(url: url.flatMap(URL.init(string:))) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable().scaledToFill()
-                    default:
-                        monogram
-                    }
-                }
+        GeometryReader { proxy in
+            CachedAsyncImage(
+                url: url.flatMap(URL.init(string:)),
+                size: proxy.size
+            ) { image in
+                image.resizable().scaledToFill()
+            } placeholder: {
+                monogram
             }
-            .clipped()
+            .frame(width: proxy.size.width, height: proxy.size.height)
+        }
+        .clipped()
     }
 
     private var monogram: some View {

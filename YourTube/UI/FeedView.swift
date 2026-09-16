@@ -16,6 +16,11 @@ struct FeedView: View {
 
     /// Local search over the cached store. Never hits the API; see `LocalSearch`.
     @State private var searchQuery = ""
+    /// How many inbox rows the list is asking for. Lives here rather than in
+    /// the list because `@Query` takes its descriptor at init, so the window
+    /// has to arrive from outside for a change to reach the store. See
+    /// `FeedWindow`.
+    @State private var window = FeedWindow()
 
     private var chipNames: [String] {
         categories.map(\.name) + [CategoryManager.uncategorizedName]
@@ -73,9 +78,16 @@ struct FeedView: View {
                     channelIds: channelFilter,
                     channelDailyCap: channelDailyCap,
                     searchQuery: searchQuery,
-                    matchingChannels: matchingChannels
+                    matchingChannels: matchingChannels,
+                    window: window,
+                    showOlder: { window.showOlder() }
                 )
             }
+            // A different chip is a different feed, so it starts at the top
+            // of its own first page rather than inheriting how far the last
+            // one had been opened up.
+            .onChange(of: selectedCategory.wrappedValue) { window = FeedWindow() }
+            .onChange(of: showShorts) { window = FeedWindow() }
             .navigationTitle("Feed")
             .searchable(text: $searchQuery, prompt: "Search titles and channels")
             .toolbar {
@@ -95,31 +107,52 @@ struct FeedView: View {
 /// toggle and category filter — the macro needs them fixed at init time.
 private struct SubscriptionFeedList: View {
     @Environment(AppServices.self) private var services
-    /// The inbox: matches the Shorts/category filter and excludes watched
-    /// and earmarked videos, so triaging a row removes it automatically.
+    @Environment(\.modelContext) private var modelContext
+    /// The inbox, one window at a time: matches the Shorts/category filter,
+    /// excludes watched and earmarked videos so triaging a row removes it
+    /// automatically, and stops at `window.limit` rows. See `FeedWindow`.
     @Query private var videos: [Video]
-    /// Same Shorts/category filter, without the triage exclusion — used only
-    /// to tell "nothing new" apart from "everything's been triaged" for the
-    /// empty state.
+    /// One row from the same Shorts/category filter without the triage
+    /// exclusion — used only to tell "nothing new" apart from "everything's
+    /// been triaged" for the empty state, which is a question about whether
+    /// anything at all matches, not about how much.
     @Query private var allMatchingVideos: [Video]
     let channelDailyCap: Int
     let searchQuery: String
     let matchingChannels: [Subscription]
     let showShorts: Bool
+    let window: FeedWindow
+    let showOlder: () -> Void
+    /// The inbox predicate, kept so search can ask the store the same
+    /// question the window asks, without the window's limit.
+    private let inboxPredicate: Predicate<Video>
+    /// What the filters amount to, so search re-runs when they change and not
+    /// otherwise.
+    private let filterKey: String
     /// Folds the user has opened, keyed by `ChannelDailyCap.key`.
     @State private var expandedFolds: Set<String> = []
+    /// Search results, fetched from the whole inbox rather than filtered out
+    /// of the window: paging the list you scroll is one thing, but a search
+    /// that quietly only looked at the newest few hundred videos would be
+    /// wrong rather than merely short.
+    @State private var searchMatches: [Video] = []
 
     init(
         showShorts: Bool,
         channelIds: [String]?,
         channelDailyCap: Int,
         searchQuery: String,
-        matchingChannels: [Subscription]
+        matchingChannels: [Subscription],
+        window: FeedWindow,
+        showOlder: @escaping () -> Void
     ) {
         self.channelDailyCap = channelDailyCap
         self.searchQuery = searchQuery
         self.matchingChannels = matchingChannels
         self.showShorts = showShorts
+        self.window = window
+        self.showOlder = showOlder
+        self.filterKey = "\(showShorts)|\(channelIds?.joined(separator: ",") ?? "*")"
         let basePredicate: Predicate<Video>?
         let inboxPredicate: Predicate<Video>
         switch (showShorts, channelIds) {
@@ -143,22 +176,39 @@ private struct SubscriptionFeedList: View {
                     && $0.savedForLaterAt == nil && !$0.isWatched
             }
         }
-        _videos = Query(
-            filter: inboxPredicate,
-            sort: [SortDescriptor(\Video.publishedAt, order: .reverse)]
-        )
-        _allMatchingVideos = Query(
-            filter: basePredicate,
-            sort: [SortDescriptor(\Video.publishedAt, order: .reverse)]
-        )
+        self.inboxPredicate = inboxPredicate
+        let newestFirst = [SortDescriptor(\Video.publishedAt, order: .reverse)]
+        var inbox = FetchDescriptor<Video>(predicate: inboxPredicate, sortBy: newestFirst)
+        inbox.fetchLimit = window.limit
+        _videos = Query(inbox)
+        // One row is all the empty state needs to know; fetching every
+        // matching video to ask whether there is one is the whole bug.
+        var anyMatching = FetchDescriptor<Video>(predicate: basePredicate, sortBy: newestFirst)
+        anyMatching.fetchLimit = 1
+        _allMatchingVideos = Query(anyMatching)
     }
 
     private var isSearching: Bool { !LocalSearch.terms(in: searchQuery).isEmpty }
 
-    /// The Shorts toggle and category chip are already in the `@Query`
-    /// predicate, so search only ever narrows what the chip would show.
-    private var searchedVideos: [Video] {
-        LocalSearch.filter(videos, query: searchQuery) { [$0.title, $0.displayTitle, $0.channelTitle] }
+    /// Re-reads the search results: the whole inbox under the current chip
+    /// and Shorts setting, narrowed by `LocalSearch`. Runs on every store
+    /// save while the field has something in it, so marking a result watched
+    /// still takes it off the list.
+    private func refreshSearchMatches() {
+        guard isSearching else {
+            if !searchMatches.isEmpty { searchMatches = [] }
+            return
+        }
+        let descriptor = FetchDescriptor<Video>(
+            predicate: inboxPredicate,
+            sortBy: [SortDescriptor(\Video.publishedAt, order: .reverse)]
+        )
+        let all = (try? modelContext.fetch(descriptor)) ?? []
+        // The Shorts toggle and category chip are already in the predicate,
+        // so search only ever narrows what the chip would show.
+        searchMatches = LocalSearch.filter(all, query: searchQuery) {
+            [$0.title, $0.displayTitle, $0.channelTitle]
+        }
     }
 
     var body: some View {
@@ -193,9 +243,15 @@ private struct SubscriptionFeedList: View {
                             }
                         }
                     }
+                    if window.hasOlder(loaded: videos.count) {
+                        ShowOlderRow(action: showOlder)
+                    }
                 }
                 .listStyle(.plain)
             }
+        }
+        .recomputingFromStore(id: filterKey + "\u{1F}" + searchQuery) {
+            refreshSearchMatches()
         }
         .refreshable { await services.feed.refresh() }
     }
@@ -205,7 +261,7 @@ private struct SubscriptionFeedList: View {
     /// daily cap doesn't apply because a search is already a narrow slice.
     @ViewBuilder
     private var searchResults: some View {
-        let matches = searchedVideos
+        let matches = searchMatches
         if matches.isEmpty && matchingChannels.isEmpty {
             ContentUnavailableView.search(text: searchQuery)
         } else {
@@ -290,6 +346,32 @@ private struct FeedVideoRow: View {
             }
             .tint(.green)
         }
+    }
+}
+
+/// The foot of the feed: another page of older videos, on request.
+///
+/// The inbox is windowed (see `FeedWindow`), and this is the window's edge
+/// made visible — deliberately a row you tap rather than an infinite scroll,
+/// so reaching the bottom of the feed still means something.
+private struct ShowOlderRow: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack {
+                Spacer()
+                Text("Show older")
+                    .font(.subheadline)
+                Image(systemName: "chevron.down")
+                    .font(.caption.weight(.semibold))
+                Spacer()
+            }
+            .foregroundStyle(.secondary)
+            .padding(.vertical, 8)
+        }
+        .buttonStyle(.plain)
+        .listRowSeparator(.hidden)
     }
 }
 
