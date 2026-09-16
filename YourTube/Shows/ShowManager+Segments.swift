@@ -193,7 +193,7 @@ extension ShowManager {
     /// of lengths with nothing under this ratio anywhere in it; a channel
     /// that really mixes full episodes and cut-downs has a real jump, well
     /// past it, between the two.
-    private static let minimumGapRatio = 1.5
+    private nonisolated static let minimumGapRatio = 1.5
 
     /// How long a full episode of this show runs, with the cut-downs kept out
     /// of the reckoning. Nil when nothing has a duration yet, or when the
