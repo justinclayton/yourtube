@@ -7,23 +7,30 @@ enum ChannelsPresentation: String {
     case list, grid
 }
 
-/// Browse the feed one subscribed channel at a time, grouped by category. A
-/// channel with several categories is listed under each of them; Priority is
-/// the first group. Inside every group the channels flagged as shows come
-/// first, separated from the rest by a labelled rule, so the split the app
-/// has made is visible without reading every row's glyph. A toolbar toggle
-/// switches between this grouped list and an avatar grid
-/// (`ChannelsGridView`); both read the same grouping and share the same
-/// long-press menu (`ChannelRowMenu`), so they can't drift out of sync.
+/// Browse the feed one subscribed channel at a time. The feed's chip row
+/// (`CategoryChips`) narrows the list to one category at a time, Priority
+/// included; "All" is one flat alphabetical list. Inside whatever the chip
+/// leaves, the channels flagged as shows come first, separated from the rest
+/// by a labelled rule, so the split the app has made is visible without
+/// reading every row's glyph. A toolbar toggle switches between this list and
+/// an avatar grid (`ChannelsGridView`); both read the same filtered channels
+/// and share the same long-press menu (`ChannelRowMenu`), so they can't drift
+/// out of sync.
 struct ChannelsView: View {
     @AppStorage(SettingsKeys.showShorts) private var showShorts = false
     @AppStorage(SettingsKeys.channelsPresentation) private var presentation = ChannelsPresentation.list
+    @AppStorage(SettingsKeys.channelsCategory) private var channelsCategory = ""
     /// Local, name-only filter over cached subscriptions; see `LocalSearch`.
     @State private var searchQuery = ""
 
     var body: some View {
         NavigationStack {
-            ChannelList(showShorts: showShorts, searchQuery: searchQuery, presentation: presentation)
+            ChannelList(
+                showShorts: showShorts,
+                searchQuery: searchQuery,
+                presentation: presentation,
+                channelsCategory: $channelsCategory
+            )
                 .navigationTitle("Channels")
                 .searchable(text: $searchQuery, prompt: "Search channels")
                 .toolbar {
@@ -48,6 +55,7 @@ private struct ChannelList: View {
     let showShorts: Bool
     let searchQuery: String
     let presentation: ChannelsPresentation
+    @Binding var channelsCategory: String
 
     @Query(sort: \Subscription.title) private var allSubscriptions: [Subscription]
     /// Subscriptions narrowed by the search field; everything when it's empty.
@@ -68,11 +76,24 @@ private struct ChannelList: View {
     /// `StoreCounts.unwatchedByChannel(in:includingShorts:)`.
     @State private var unwatchedByChannel: [String: Int] = [:]
 
-    @State private var collapsed: Set<String> = []
     @State private var filing: Subscription?
     /// The channel whose playlists are being browsed, if any.
     @State private var pickingPlaylist: Subscription?
     @State private var channelError: String?
+
+    private var chipNames: [String] {
+        categories.map(\.name) + [CategoryManager.uncategorizedName]
+    }
+
+    /// The remembered chip, or "All" (empty) if that category has since been
+    /// deleted. Falling back rather than showing an empty list means a stale
+    /// selection never greets the user with nothing on launch.
+    private var selectedCategory: Binding<String> {
+        Binding(
+            get: { chipNames.contains(channelsCategory) ? channelsCategory : "" },
+            set: { channelsCategory = $0 }
+        )
+    }
 
     private var priorityChannelIds: Set<String> {
         Set(rules.filter(\.isPriority).map(\.channelId))
@@ -86,47 +107,20 @@ private struct ChannelList: View {
         Set(showRecords.filter { $0.isActive && !$0.isPlaylistBacked }.map(\.channelId))
     }
 
-    init(showShorts: Bool, searchQuery: String, presentation: ChannelsPresentation) {
+    init(showShorts: Bool, searchQuery: String, presentation: ChannelsPresentation, channelsCategory: Binding<String>) {
         self.showShorts = showShorts
         self.searchQuery = searchQuery
         self.presentation = presentation
+        self._channelsCategory = channelsCategory
     }
 
-    private var groups: [ChannelGroup] {
-        let ruleByChannel = Dictionary(rules.map { ($0.channelId, $0) }, uniquingKeysWith: { first, _ in first })
-        var byCollection: [PersistentIdentifier: [Subscription]] = [:]
-        var uncategorized: [Subscription] = []
-        for sub in subscriptions {
-            let rule = ruleByChannel[sub.channelId]
-            for c in rule?.collections ?? [] {
-                byCollection[c.persistentModelID, default: []].append(sub)
-            }
-            // Priority says nothing about topic, so a priority-only channel
-            // is still listed here for filing.
-            if rule?.topicCollections.isEmpty ?? true {
-                uncategorized.append(sub)
-            }
-        }
-        func count(_ subs: [Subscription]) -> Int {
-            subs.reduce(0) { $0 + (unwatchedByChannel[$1.channelId] ?? 0) }
-        }
-
-        let shows = showChannelIds
-        var result: [ChannelGroup] = categories.compactMap { c in
-            guard let subs = byCollection[c.persistentModelID], !subs.isEmpty else { return nil }
-            return ChannelGroup(id: c.name, title: c.name, collection: c, channels: subs, shows: shows, unwatched: count(subs))
-        }
-        if !uncategorized.isEmpty {
-            result.append(ChannelGroup(
-                id: CategoryManager.uncategorizedName,
-                title: CategoryManager.uncategorizedName,
-                collection: nil,
-                channels: uncategorized,
-                shows: shows,
-                unwatched: count(uncategorized)
-            ))
-        }
-        return result
+    /// The channels the current chip leaves, name-searched, split shows
+    /// first. Routed through `CategoryManager.channelIds(in:)`, the one
+    /// derivation the Feed, Your Shows and Channels all share.
+    private var filtered: FilteredChannels {
+        let allowed = Set((try? services.categories.channelIds(in: selectedCategory.wrappedValue)) ?? subscriptions.map(\.channelId))
+        let channels = subscriptions.filter { allowed.contains($0.channelId) }
+        return FilteredChannels(channels: channels, shows: showChannelIds)
     }
 
     var body: some View {
@@ -151,21 +145,31 @@ private struct ChannelList: View {
                     .padding(.horizontal)
                     .padding(.vertical, 8)
                 }
-                switch presentation {
-                case .list:
-                    listBody(unwatchedByChannel: unwatchedByChannel)
-                case .grid:
-                    ChannelsGridView(
-                        groups: groups,
-                        unwatchedByChannel: unwatchedByChannel,
-                        showChannelIds: showChannelIds,
-                        priorityChannelIds: priorityChannelIds,
-                        showShorts: showShorts,
-                        collapsed: $collapsed,
-                        onFile: { filing = $0 },
-                        onAddPlaylist: { pickingPlaylist = $0 },
-                        onError: { channelError = $0 }
-                    )
+                if !categories.isEmpty {
+                    CategoryChips(names: chipNames, selected: selectedCategory)
+                }
+                if filtered.channels.isEmpty {
+                    Spacer()
+                    Text("No channels in \(selectedCategory.wrappedValue.isEmpty ? "All" : selectedCategory.wrappedValue).")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                } else {
+                    switch presentation {
+                    case .list:
+                        listBody(unwatchedByChannel: unwatchedByChannel)
+                    case .grid:
+                        ChannelsGridView(
+                            filtered: filtered,
+                            unwatchedByChannel: unwatchedByChannel,
+                            showChannelIds: showChannelIds,
+                            priorityChannelIds: priorityChannelIds,
+                            showShorts: showShorts,
+                            onFile: { filing = $0 },
+                            onAddPlaylist: { pickingPlaylist = $0 },
+                            onError: { channelError = $0 }
+                        )
+                    }
                 }
             }
             .sheet(item: $filing) { subscription in
@@ -193,39 +197,16 @@ private struct ChannelList: View {
 
     private func listBody(unwatchedByChannel: [String: Int]) -> some View {
         List {
-            ForEach(groups) { group in
-                Section {
-                    if !collapsed.contains(group.id) {
-                        // A channel can appear in several groups, so the
-                        // row identity has to include the group.
-                        ForEach(group.shows, id: \.channelId) { subscription in
-                            row(for: subscription, unwatchedByChannel: unwatchedByChannel)
-                        }
-                        if group.isSplit {
-                            ChannelSplitRule()
-                                .listRowSeparator(.hidden)
-                                .padding(.top, 6)
-                        }
-                        ForEach(group.others, id: \.channelId) { subscription in
-                            row(for: subscription, unwatchedByChannel: unwatchedByChannel)
-                        }
-                    }
-                } header: {
-                    GroupHeader(
-                        title: group.title,
-                        channelCount: group.channels.count,
-                        unwatched: group.unwatched,
-                        isCollapsed: collapsed.contains(group.id)
-                    ) {
-                        withAnimation(.snappy) {
-                            if collapsed.contains(group.id) {
-                                collapsed.remove(group.id)
-                            } else {
-                                collapsed.insert(group.id)
-                            }
-                        }
-                    }
-                }
+            ForEach(filtered.shows, id: \.channelId) { subscription in
+                row(for: subscription, unwatchedByChannel: unwatchedByChannel)
+            }
+            if filtered.isSplit {
+                ChannelSplitRule()
+                    .listRowSeparator(.hidden)
+                    .padding(.top, 6)
+            }
+            ForEach(filtered.others, id: \.channelId) { subscription in
+                row(for: subscription, unwatchedByChannel: unwatchedByChannel)
             }
         }
         .listStyle(.plain)
@@ -262,36 +243,25 @@ private struct ChannelList: View {
     }
 }
 
-/// One category section from `ChannelList.groups`: shared file-scope so
-/// `ChannelsGridView` groups its tiles exactly the way the list groups its
-/// rows.
-///
-/// Within a group the channels are split once, here, so both presentations
-/// draw the same boundary: the ones flagged as shows first, then the rest,
-/// each half keeping the title order the query gave it.
-struct ChannelGroup: Identifiable {
-    let id: String
-    let title: String
-    let collection: VideoCollection?
-    /// The group's channels that are shows, listed first.
+/// The channels a chip leaves, split once, file-scope so `ChannelsGridView`
+/// splits its tiles exactly the way the list splits its rows: the ones
+/// flagged as shows first, then the rest, each half keeping the title order
+/// the query gave it.
+struct FilteredChannels {
+    /// The chip's channels that are shows, listed first.
     let shows: [Subscription]
-    /// Everything else in the group, in the same order it arrived.
+    /// Everything else the chip leaves, in the same order it arrived.
     let others: [Subscription]
-    let unwatched: Int
 
-    init(id: String, title: String, collection: VideoCollection?, channels: [Subscription], shows showIds: Set<String>, unwatched: Int) {
-        self.id = id
-        self.title = title
-        self.collection = collection
+    init(channels: [Subscription], shows showIds: Set<String>) {
         self.shows = channels.filter { showIds.contains($0.channelId) }
         self.others = channels.filter { !showIds.contains($0.channelId) }
-        self.unwatched = unwatched
     }
 
-    /// Every channel in the group, shows first.
+    /// Every channel the chip leaves, shows first.
     var channels: [Subscription] { shows + others }
-    /// Whether there is a boundary to draw. A group that is all shows or no
-    /// shows has nothing to split, and stays as quiet as it was before.
+    /// Whether there is a boundary to draw. All-shows or no-shows has
+    /// nothing to split, and stays as quiet as it was before.
     var isSplit: Bool { !shows.isEmpty && !others.isEmpty }
 }
 
@@ -402,39 +372,6 @@ struct ChannelRowMenu {
     }
 }
 
-struct GroupHeader: View {
-    let title: String
-    let channelCount: Int
-    let unwatched: Int
-    let isCollapsed: Bool
-    let toggle: () -> Void
-
-    var body: some View {
-        Button(action: toggle) {
-            HStack(spacing: 8) {
-                Image(systemName: "chevron.down")
-                    .font(.caption.weight(.semibold))
-                    .rotationEffect(.degrees(isCollapsed ? -90 : 0))
-                Text(title)
-                    .font(.headline)
-                    .foregroundStyle(.primary)
-                Text("\(channelCount)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                if unwatched > 0 {
-                    Text("\(unwatched) new")
-                        .font(.caption.weight(.semibold).monospacedDigit())
-                        .foregroundStyle(.tint)
-                }
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .textCase(nil)
-    }
-}
-
 private struct ChannelRow: View {
     let subscription: Subscription
     let unwatchedCount: Int
@@ -472,11 +409,18 @@ private struct ChannelRow: View {
 /// hand-only flags. Each topic toggle saves immediately and marks the rule
 /// user-set so the classifier leaves it alone from then on. Priority and the
 /// show flag have their own switches: flipping either doesn't lock the topics.
-private struct CategoryPickerSheet: View {
+///
+/// Also reachable from a show page (`ShowPageView`), for correcting a show's
+/// category from where it's noticed wrong. A playlist-backed show has no
+/// categories of its own — they live on its host channel — so that caller
+/// passes the show's title through `playlistShowTitle`, which adds a footer
+/// line saying so.
+struct CategoryPickerSheet: View {
     @Environment(AppServices.self) private var services
     @Environment(\.dismiss) private var dismiss
     let subscription: Subscription
     let categories: [VideoCollection]
+    var playlistShowTitle: String? = nil
 
     @State private var selected: Set<PersistentIdentifier> = []
     @State private var isPriority = false
@@ -484,6 +428,10 @@ private struct CategoryPickerSheet: View {
     /// The detector's reasons, when it was the detector that flagged this
     /// channel. Empty for a hand-made flag.
     @State private var showReasons: [String] = []
+    /// The category classifier's evidence for this channel's rule, when it
+    /// was the classifier that filed it. Nil for a hand-filed channel, or one
+    /// never classified at all.
+    @State private var classifierEvidence: ChannelRule?
     @State private var error: String?
 
     private var topicCategories: [VideoCollection] { categories.filter { !$0.isPriority } }
@@ -511,7 +459,7 @@ private struct CategoryPickerSheet: View {
                         if !showReasons.isEmpty {
                             Text("Flagged automatically: " + showReasons.joined(separator: "; ") + ".")
                         }
-                        Text("Shows get a poster in Your Shows on the Shows tab, with a count of what you haven't watched. Turning it off records \u{201C}not a show\u{201D}, which automatic sorting can never undo.")
+                        Text("Shows get a poster in Your Shows, with an unwatched count. Turning this off marks \u{201C}not a show\u{201D} permanently.")
                     }
                 }
                 Section {
@@ -536,7 +484,46 @@ private struct CategoryPickerSheet: View {
                 } header: {
                     Text("Categories")
                 } footer: {
-                    Text("Pick as many as fit. The channel shows up under each one.")
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Pick as many as fit. The channel shows up under each one.")
+                        if let playlistShowTitle {
+                            Text("\(playlistShowTitle) is a playlist within \(subscription.title); these are \(subscription.title)'s categories, and changing them here moves \(playlistShowTitle) too.")
+                        }
+                    }
+                }
+                if let classifierEvidence {
+                    Section {
+                        VStack(alignment: .leading, spacing: 6) {
+                            if let raw = classifierEvidence.classifierRawAnswer {
+                                // Which half of a two-chip answer is wrong is
+                                // the first thing to know before correcting
+                                // it, so the model's category and YouTube's
+                                // are named separately.
+                                if let model = classifierEvidence.classifierModelCategory {
+                                    Text("\u{201C}\(model)\u{201D} — chosen by the on-device model")
+                                } else {
+                                    Text(raw.isEmpty ? "No usable answer" : raw.joined(separator: ", "))
+                                }
+                                if let youtube = classifierEvidence.classifierYouTubeCategory {
+                                    let reason = classifierEvidence.classifierYouTubeReason
+                                        ?? "YouTube files most of its videos there"
+                                    Text("\u{201C}\(youtube)\u{201D} — added from YouTube's own filing: \(reason)")
+                                } else if let dominant = classifierEvidence.classifierDominantCategoryId {
+                                    // No second category, so YouTube's filing
+                                    // is context rather than a source: either
+                                    // it agreed with the model or it was one
+                                    // of the catch-alls that means nothing.
+                                    Text("YouTube files it under \(YouTubeCategory.name(forId: dominant))")
+                                }
+                            } else {
+                                Text("Not recorded")
+                            }
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    } header: {
+                        Text("Why")
+                    }
                 }
                 if let error {
                     Text(error).foregroundStyle(.red).font(.caption)
@@ -556,6 +543,9 @@ private struct CategoryPickerSheet: View {
                 isShow = (try? services.shows.isShow(channelId: subscription.channelId)) ?? false
                 let record = try? services.shows.record(forChannelId: subscription.channelId)
                 showReasons = record?.flagOrigin == .heuristic ? (record?.detectorReasons ?? []) : []
+                // A user-set rule shows no reasons: it's the user's call now,
+                // not the classifier's guess.
+                classifierEvidence = (rule?.isUserSet == false && rule?.classifiedAt != nil) ? rule : nil
             }
         }
         .presentationDetents([.medium, .large])
@@ -612,6 +602,9 @@ private struct CategoryPickerSheet: View {
                 to: topicCategories.filter { ids.contains($0.persistentModelID) }
             )
             selected = ids
+            // The filing is the user's now; the classifier's evidence stays
+            // on the rule for the export, but "Why" is for a guess.
+            classifierEvidence = nil
             error = nil
         } catch {
             self.error = error.localizedDescription

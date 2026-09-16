@@ -2,22 +2,20 @@ import SwiftUI
 import SwiftData
 
 /// Channels as a browsing surface rather than a management one: a grid of
-/// square channel avatars with the full name wrapped beneath, grouped by
-/// category exactly like `ChannelList`'s rows — same sections, same
-/// collapse state, same Priority-first ordering, same shows-then-the-rest
-/// split within each group — so switching the toolbar toggle changes only
-/// the shape of the tiles, never what's in them.
+/// square channel avatars with the full name wrapped beneath, filtered by
+/// the same chip and split into the same shows-then-the-rest halves as
+/// `ChannelList`'s rows, so switching the toolbar toggle changes only the
+/// shape of the tiles, never what's in them.
 ///
 /// Tapping a tile opens the same channel page as the list row; long-press
 /// offers the same menu (`ChannelRowMenu`). See `ChannelTile` for how a
 /// show is distinguished from a plain channel, mirroring `ChannelRow`.
 struct ChannelsGridView: View {
-    let groups: [ChannelGroup]
+    let filtered: FilteredChannels
     let unwatchedByChannel: [String: Int]
     let showChannelIds: Set<String>
     let priorityChannelIds: Set<String>
     let showShorts: Bool
-    @Binding var collapsed: Set<String>
     let onFile: (Subscription) -> Void
     let onAddPlaylist: (Subscription) -> Void
     let onError: (String) -> Void
@@ -33,42 +31,22 @@ struct ChannelsGridView: View {
     // trap the same way.
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 22) {
-                ForEach(groups) { group in
-                    VStack(alignment: .leading, spacing: 12) {
-                        GroupHeader(
-                            title: group.title,
-                            channelCount: group.channels.count,
-                            unwatched: group.unwatched,
-                            isCollapsed: collapsed.contains(group.id)
-                        ) {
-                            withAnimation(.snappy) {
-                                if collapsed.contains(group.id) {
-                                    collapsed.remove(group.id)
-                                } else {
-                                    collapsed.insert(group.id)
-                                }
-                            }
-                        }
-                        if !collapsed.contains(group.id) {
-                            // Two grids rather than one, so the boundary
-                            // between the group's shows and its other
-                            // channels gets a full-width rule instead of
-                            // being lost mid-row.
-                            if !group.shows.isEmpty {
-                                tiles(group.shows)
-                            }
-                            if group.isSplit {
-                                ChannelSplitRule()
-                            }
-                            if !group.others.isEmpty {
-                                tiles(group.others)
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 16)
+            // Two grids rather than one, so the boundary between the shows
+            // and the other channels gets a full-width rule instead of being
+            // lost mid-row.
+            LazyVStack(alignment: .leading, spacing: 12) {
+                if !filtered.shows.isEmpty {
+                    tiles(filtered.shows)
+                }
+                if filtered.isSplit {
+                    ChannelSplitRule()
+                        .padding(.horizontal, 16)
+                }
+                if !filtered.others.isEmpty {
+                    tiles(filtered.others)
                 }
             }
+            .padding(.horizontal, 16)
             .padding(.vertical, 12)
         }
     }

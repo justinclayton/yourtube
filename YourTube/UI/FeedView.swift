@@ -11,7 +11,6 @@ struct FeedView: View {
 
     @Query(sort: [SortDescriptor(\VideoCollection.sortOrder), SortDescriptor(\VideoCollection.name)])
     private var categories: [VideoCollection]
-    @Query private var rules: [ChannelRule]
     @Query private var subscriptions: [Subscription]
 
     /// Local search over the cached store. Never hits the API; see `LocalSearch`.
@@ -39,17 +38,12 @@ struct FeedView: View {
     /// Channel IDs the feed should be limited to, or nil for everything.
     /// A channel appears under every category it carries, Priority included.
     /// Uncategorized means no topic category, so a priority-only channel is
-    /// still there to be filed.
+    /// still there to be filed. Routed through `CategoryManager.channelIds(in:)`,
+    /// the one derivation the Feed, Your Shows and Channels all share.
     private var channelFilter: [String]? {
         let feedCategory = selectedCategory.wrappedValue
         guard !feedCategory.isEmpty else { return nil }
-        if feedCategory == CategoryManager.uncategorizedName {
-            let filed = Set(rules.filter { !$0.topicCollections.isEmpty }.map(\.channelId))
-            return subscriptions.map(\.channelId).filter { !filed.contains($0) }
-        }
-        return rules
-            .filter { rule in rule.collections.contains { $0.name == feedCategory } }
-            .map(\.channelId)
+        return try? services.categories.channelIds(in: feedCategory)
     }
 
     /// Subscribed channels whose name matches the query, within the current

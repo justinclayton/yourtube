@@ -9,6 +9,10 @@ enum SettingsKeys {
     /// Remembered separately from the feed's chip so the two surfaces don't
     /// drag each other around.
     static let showsCategory = "settings.showsCategory"
+    /// Name of the category Channels is filtered to; empty = all. Remembered
+    /// separately from the feed's and Your Shows' chips, like those two are
+    /// from each other.
+    static let channelsCategory = "settings.channelsCategory"
     /// Max videos per channel per day before the rest fold into "+N more"; 0 = off.
     static let channelDailyCap = "settings.channelDailyCap"
     static let defaultChannelDailyCap = 2
@@ -72,15 +76,11 @@ struct SettingsView: View {
                     Text("Feed")
                 } footer: {
                     Text("""
-                    Shorts are detected heuristically — YouTube's API has no \
-                    flag for them. A video of 3 minutes or less is treated as one \
-                    if it's tagged #shorts or its thumbnail shows vertical video. \
-                    Turn this on if \
-                    something you wanted got filtered out.
+                    Shorts are detected heuristically: 3 minutes or less, tagged \
+                    #shorts, or vertical video.
 
-                    The daily cap folds a channel's extra uploads on a given day \
-                    into a single "+N more" row so one prolific channel can't \
-                    crowd out the rest.
+                    The daily cap folds a channel's extra uploads on one day into \
+                    a single "+N more" row.
                     """)
                 }
 
@@ -159,16 +159,13 @@ struct SettingsView: View {
             Text("Titles")
         } footer: {
             Text("""
-            Every title has the channel's repeated boilerplate stripped — the \
-            show name after a pipe, "FULL EPISODE", episode numbers — and that \
-            happens on every device with no model involved.
+            Boilerplate — the show name after a pipe, "FULL EPISODE", episode \
+            numbers — is stripped on every device, no model involved.
 
-            On top of that, episodes of your shows are rewritten on-device by \
-            Apple's language model into calm, factual titles, with nothing \
-            added that the original didn't say. Nothing leaves the phone. Turn \
-            this off to keep the stripping and lose the rewrite; turning it \
-            back on rewrites them again. The original title is always under \
-            the cleaned one in the player.
+            Show episodes are also rewritten on-device by Apple's language \
+            model into calmer titles. Off keeps the stripping and drops the \
+            rewrite; on redoes it. The original title stays under the cleaned \
+            one in the player.
             """)
         }
     }

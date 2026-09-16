@@ -3,9 +3,11 @@ import SwiftData
 import Observation
 
 /// Owns categories (`VideoCollection`) and channel assignments (`ChannelRule`),
-/// and drives the on-device classifier over subscribed channels. A channel can
-/// carry up to three topic categories at once, plus the built-in Priority tag,
-/// which only the user assigns and which survives every automatic pass.
+/// and drives the on-device classifier over subscribed channels. A channel
+/// carries at most two automatic topic categories — one from the model, one
+/// from YouTube's own filing (see `CategoryDecision`) — plus the built-in
+/// Priority tag, which only the user assigns and which survives every
+/// automatic pass.
 ///
 /// Classification is one call per channel, run sequentially in the background;
 /// a few hundred channels take a few minutes on first launch and are then
@@ -71,12 +73,40 @@ final class CategoryManager {
     ///
     /// 3: multi-tagging. Channels filed under one category get a chance to
     /// pick up a second or third.
-    static let classifierVersion = 3
+    /// 4: one grounded answer. The model is constrained to a single on-list
+    /// category and sampled greedily, and a second category can only come
+    /// from YouTube's own filing — so every channel padded out to two or
+    /// three guesses needs re-sorting once.
+    static let classifierVersion = 4
     static let classifierVersionKey = "categories.classifierVersion"
 
     /// Which scope the automatic launch-time pass should use.
     nonisolated static func automaticScope(storedVersion: Int) -> Scope {
         storedVersion < classifierVersion ? .allAutomatic : .unassigned
+    }
+
+    /// Whether an automatically-filed channel's recent uploads have turned
+    /// over enough to be worth asking the classifier about again. Compares
+    /// the `videoId`s in the current recent-titles window against the ones
+    /// recorded at the last automatic pass (`ChannelRule.classifierRecentVideoIds`),
+    /// the way `ShowDetectionRunner.fingerprint` tracks a channel's shape for
+    /// the show detector.
+    ///
+    /// A single new upload isn't enough — a weekly show would get re-filed
+    /// every week — so the bar is a majority of the window being new, with a
+    /// floor of two regardless of how small the window is. A rule with no
+    /// recorded fingerprint (classified before this existed, or classified
+    /// with the window empty) is treated as due, so it picks up a baseline on
+    /// the next pass rather than never being looked at again.
+    nonisolated static func hasTurnedOver(
+        previousVideoIds: [String]?,
+        currentVideoIds: [String],
+        windowSize: Int
+    ) -> Bool {
+        guard let previousVideoIds else { return true }
+        let threshold = max(2, windowSize / 2)
+        let newCount = Set(currentVideoIds).subtracting(previousVideoIds).count
+        return newCount >= threshold
     }
 
     private(set) var status: Status = .idle
@@ -298,20 +328,46 @@ final class CategoryManager {
         try assign(channelId: channelId, channelTitle: channelTitle, to: current)
     }
 
-    /// Channel IDs whose tag set contains a category, or (for nil) has no
-    /// topic category. Used to build feed predicates. Priority is a tag like
-    /// any other here, so a channel that is Priority and Comedy is in both.
-    func channelIds(in collection: VideoCollection?) throws -> [String] {
+    /// The chip row's names, in display order: every category (Priority
+    /// first, by sort order) plus Uncategorized. The one place the Feed,
+    /// Your Shows and Channels all read the chip list from, so adding,
+    /// renaming or deleting a category can't drift out of sync between them.
+    func chipNames() throws -> [String] {
+        try categories().map(\.name) + [Self.uncategorizedName]
+    }
+
+    /// Channel IDs a chip leaves, in the chip's own vocabulary: nil or empty
+    /// is "All" (every subscribed channel), `uncategorizedName` is channels
+    /// with no topic category, and any other name is channels whose rule
+    /// carries a category of that name. A channel appears under every chip
+    /// it carries, Priority included, so a channel that is Priority and
+    /// Comedy is under both. The one derivation the Feed, Your Shows and
+    /// Channels all filter through.
+    func channelIds(in categoryName: String?) throws -> [String] {
         let subscriptions = try modelContext.fetch(FetchDescriptor<Subscription>())
+        guard let categoryName, !categoryName.isEmpty else {
+            return subscriptions.map(\.channelId)
+        }
         let ruleByChannel = Dictionary(
             try rules().map { ($0.channelId, $0) },
             uniquingKeysWith: { first, _ in first }
         )
         return subscriptions.map(\.channelId).filter { id in
-            guard let rule = ruleByChannel[id] else { return collection == nil }
-            if let collection { return rule.contains(collection) }
-            return rule.topicCollections.isEmpty
+            guard let rule = ruleByChannel[id] else {
+                return categoryName == Self.uncategorizedName
+            }
+            if categoryName == Self.uncategorizedName {
+                return rule.topicCollections.isEmpty
+            }
+            return rule.collections.contains { $0.name == categoryName }
         }
+    }
+
+    /// Channel ids carrying the Priority tag. Used to pin Priority channels
+    /// first within a chip's filtered list — Your Shows and Channels both
+    /// do this; the Feed doesn't, since it's ordered by publish date instead.
+    func priorityChannelIds() throws -> Set<String> {
+        Set(try rules().filter(\.isPriority).map(\.channelId))
     }
 
     // MARK: - Classification
@@ -373,5 +429,17 @@ final class CategoryManager {
     private func reportProgress(_ completed: Int, _ total: Int) {
         guard case .running = status else { return }
         status = .running(completed: completed, total: total)
+    }
+
+    // MARK: - Export
+
+    /// One JSON document, one record per subscribed channel: what the
+    /// classifier saw and answered, and any correction the user has since
+    /// made by hand. See `StoreWriter.ChannelClassifierRecord`.
+    func exportClassifierEvidence() async throws -> Data {
+        let records = try await writer.exportClassifierEvidence(recentTitlesPerChannel: recentTitlesPerChannel)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try encoder.encode(records)
     }
 }
