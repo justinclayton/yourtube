@@ -158,7 +158,7 @@ private struct SubscriptionFeedList: View {
     /// The Shorts toggle and category chip are already in the `@Query`
     /// predicate, so search only ever narrows what the chip would show.
     private var searchedVideos: [Video] {
-        LocalSearch.filter(videos, query: searchQuery) { [$0.title, $0.channelTitle] }
+        LocalSearch.filter(videos, query: searchQuery) { [$0.title, $0.displayTitle, $0.channelTitle] }
     }
 
     var body: some View {
