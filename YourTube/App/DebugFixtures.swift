@@ -25,6 +25,39 @@ enum DebugFixtures {
         ProcessInfo.processInfo.arguments.contains(launchArgument)
     }
 
+    /// Manual verification hook for issue #68's Done-when: a visible feed
+    /// row's title doesn't change while it stays on screen during a rewrite
+    /// batch. `TitleRewriter` needs the on-device model, which the shared
+    /// simulator pool may not have, so this stands in for a real batch by
+    /// mutating one video's `cleanedTitle` a few seconds after launch —
+    /// enough time to have the feed on screen and latched, but short enough
+    /// to drive by hand. Combine with `-seedFixtures`.
+    static let mutateTitleLaunchArgument = "-mutateFixtureTitle"
+
+    static var shouldMutateTitle: Bool {
+        ProcessInfo.processInfo.arguments.contains(mutateTitleLaunchArgument)
+    }
+
+    /// Rewrites the newest fixture video's title after a short delay, as if
+    /// a `TitleRewriter` batch (#65) had just landed underneath it. Whatever
+    /// feed row is showing that video should keep displaying the title it
+    /// first drew — see `FeedVideoRow`'s `TitleLatch` — until it scrolls off
+    /// screen and back, at which point the lazy list recreates the row and
+    /// the new title appears.
+    @MainActor
+    static func scheduleTitleMutation(in context: ModelContext) {
+        guard shouldMutateTitle else { return }
+        Task {
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            let newestFirst = FetchDescriptor<Video>(
+                sortBy: [SortDescriptor(\Video.publishedAt, order: .reverse)]
+            )
+            guard let video = try? context.fetch(newestFirst).first else { return }
+            video.cleanedTitle = "MUTATED TITLE — latch should hide this"
+            try? context.save()
+        }
+    }
+
     /// Placeholder OAuth values so a fixture run doesn't need `Config.plist`.
     static let config = AppConfig.Values(clientId: "fixtures", redirectScheme: "fixtures")
 
