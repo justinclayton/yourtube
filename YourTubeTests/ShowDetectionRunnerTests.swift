@@ -107,6 +107,25 @@ final class ShowDetectionRunnerTests: XCTestCase {
         XCTAssertEqual(try shows.record(forChannelId: "UC-clips")?.flagOrigin, .user)
     }
 
+    /// A playlist-backed show's `forceShow` is the user's opinion about that
+    /// playlist, not about the channel that hosts it — the channel itself
+    /// still needs a verdict.
+    func testAChannelWithOnlyAPlaylistShowStillGetsAVerdict() async throws {
+        seedShowShapedChannel(id: "UC-bellwether", title: "The Bellwether")
+        try shows.addPlaylistShow(
+            [PlaylistChoice(playlistId: "PL-bellwether", title: "Season 1")],
+            channelId: "UC-bellwether"
+        )
+
+        try await runner.detect()
+
+        let channelRecord = try XCTUnwrap(shows.record(forChannelId: "UC-bellwether"))
+        XCTAssertEqual(channelRecord.flagOrigin, .heuristic, "the detector reached the channel")
+        XCTAssertTrue(try shows.isShow(channelId: "UC-bellwether"))
+        // The playlist show is untouched.
+        XCTAssertEqual(try shows.playlistShows(forChannelId: "UC-bellwether").count, 1)
+    }
+
     // MARK: - Examining a channel once
 
     func testASecondPassOverAnUnchangedStoreExaminesNothing() async throws {

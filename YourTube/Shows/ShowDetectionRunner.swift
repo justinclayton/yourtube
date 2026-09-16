@@ -71,8 +71,12 @@ final class ShowDetectionRunner {
             grouping: try modelContext.fetch(FetchDescriptor<Video>()).filter { !$0.isLikelyShort },
             by: \.channelId
         )
+        // Only a channel-backed record speaks for the channel's own override:
+        // a playlist-backed show's forced override is the user's opinion
+        // about that playlist, not about whether the channel itself is a
+        // show, so it must not remove the channel from consideration.
         let decided = Set(try shows.allRecords()
-            .filter { $0.override != .none || $0.flagOrigin == .user }
+            .filter { !$0.isPlaylistBacked && ($0.override != .none || $0.flagOrigin == .user) }
             .map(\.channelId))
 
         var verdicts: [ShowVerdict] = []

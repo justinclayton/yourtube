@@ -271,8 +271,10 @@ Every guess says why. The show page and the channel's Categories sheet list
 the reasons the detector found, so a wrong one can be recognised and
 corrected rather than just overturned. Corrections are permanent: a channel
 you have flagged either way is skipped entirely by every later pass, and a
-show you created by hand is never taken back. Channels are examined once and
-then only again when their uploads actually move.
+show you created by hand is never taken back. Adding a playlist-backed show
+is not a decision about its channel, though — a channel that only hosts a
+playlist show still gets its own verdict from the detector. Channels are
+examined once and then only again when their uploads actually move.
 
 The player offers a Next episode button whenever the video it's playing
 belongs to a show and a later episode exists — it swaps the player to that
