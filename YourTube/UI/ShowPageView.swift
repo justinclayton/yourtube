@@ -254,7 +254,12 @@ struct ShowPageView: View {
                     }
                 }
             }
-            DetectorReasons(show: show)
+            // A playlist-backed show has no channel-level decision to
+            // record, so it gets the reasons without the button.
+            DetectorReasons(
+                show: show,
+                markAsNotAShow: show.isPlaylistBacked ? nil : markAsNotAShow
+            )
             seasonPicker
             buttons(unwatched: unwatched)
         }
@@ -587,24 +592,78 @@ private extension Video {
 /// Why the detector thought this channel was a show. Shown only for a guess:
 /// a flag the user made by hand needs no justifying, and a guess that can't be
 /// read can't be trusted or corrected.
+///
+/// Collapsed to one line by default — most of the time the guess is right and
+/// the reasons are noise above the episodes. Tapping the line reveals them,
+/// together with the one correction that matters: "Not a show", which records
+/// the standing decision the detector can never overrule.
 struct DetectorReasons: View {
     let show: Show
+    /// Records "not a show" and leaves the page. Nil when the page has no
+    /// channel-level decision to record (a playlist-backed show), in which
+    /// case only the reasons are offered.
+    var markAsNotAShow: (() -> Void)?
+
+    @State private var isExpanded = false
 
     var body: some View {
         if show.flagOrigin == .heuristic, !show.detectorReasons.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Flagged as a show automatically")
-                    .font(.subheadline.weight(.semibold))
-                ForEach(show.detectorReasons, id: \.self) { reason in
-                    Text("· \(reason)")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 10) {
+                Button {
+                    withAnimation(.snappy) { isExpanded.toggle() }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text("Flagged as a show automatically")
+                            .font(.subheadline.weight(.semibold))
+                        Spacer(minLength: 0)
+                        // The hint goes once the answer is showing, so the
+                        // title keeps its line; the chevron says the rest.
+                        if !isExpanded {
+                            Text("Why?")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    }
+                    .contentShape(Rectangle())
                 }
-                Text("Fix above, or in Channels.")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
+                // Plain, so the tap lands on this button alone rather than
+                // on every button in the enclosing list row.
+                .buttonStyle(.plain)
+                .accessibilityLabel("Flagged as a show automatically")
+                .accessibilityHint(isExpanded ? "Hides why" : "Shows why")
+
+                if isExpanded {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(show.detectorReasons, id: \.self) { reason in
+                            Text("· \(reason)")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    if let markAsNotAShow {
+                        HStack(alignment: .firstTextBaseline, spacing: 12) {
+                            Button(role: .destructive) {
+                                markAsNotAShow()
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "tv.slash")
+                                    Text("Not a show")
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .font(.subheadline)
+                            Text("That decision sticks.")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12)
