@@ -69,32 +69,32 @@ private struct UpNextSection: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Up Next")
-                    .font(.title3.weight(.semibold))
-                Spacer()
-                if videos.count > 1 {
-                    Button("Edit") { isEditing = true }
-                        .font(.subheadline)
+        if !videos.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Up Next")
+                        .font(.title3.weight(.semibold))
+                    Spacer()
+                    if videos.count > 1 {
+                        Button("Edit") { isEditing = true }
+                            .font(.subheadline)
+                    }
                 }
-            }
-            if videos.isEmpty {
-                emptyHint
-            } else if videos.count == 1, let video = videos.first {
-                card(video, size: .large)
-            } else {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 2),
-                          alignment: .leading, spacing: 16) {
-                    ForEach(videos) { video in
-                        card(video, size: .medium)
-                            .frame(maxHeight: .infinity, alignment: .top)
+                if videos.count == 1, let video = videos.first {
+                    card(video, size: .large)
+                } else {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 2),
+                              alignment: .leading, spacing: 16) {
+                        ForEach(videos) { video in
+                            card(video, size: .medium)
+                                .frame(maxHeight: .infinity, alignment: .top)
+                        }
                     }
                 }
             }
-        }
-        .sheet(isPresented: $isEditing) {
-            UpNextEditSheet()
+            .sheet(isPresented: $isEditing) {
+                UpNextEditSheet()
+            }
         }
     }
 
@@ -113,17 +113,6 @@ private struct UpNextSection: View {
             Button("Remove from Up Next", systemImage: "bookmark.slash", role: .destructive) {
                 remove(video)
             }
-        }
-    }
-
-    private var emptyHint: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Nothing earmarked")
-                .font(.subheadline.weight(.semibold))
-            Text("Up Next is yours to build. Earmark a video with the bookmark button in the player, and it waits here until you've watched it.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

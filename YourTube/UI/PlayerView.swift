@@ -199,7 +199,7 @@ struct PlayerView: View {
                 try? services.upNext.toggle(video)
             } label: {
                 Label(
-                    video.isInUpNext ? "Earmarked" : "Earmark",
+                    video.isInUpNext ? "Remove from Up Next" : "Add To Up Next",
                     systemImage: video.isInUpNext ? "bookmark.fill" : "bookmark"
                 )
             }
