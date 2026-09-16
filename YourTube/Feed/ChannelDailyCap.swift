@@ -7,10 +7,19 @@ enum FeedRow<V>: Identifiable where V: Identifiable {
     /// feed order; `key` identifies the fold so the UI can track expansion.
     case more(key: String, channelTitle: String, hidden: [V])
 
-    var id: String {
+    /// An enum case over the row's own id rather than a string built by
+    /// concatenation — cheaper per row, and it can't collide a video and a
+    /// fold that happen to share a raw id the way two prefixed strings could
+    /// in theory.
+    enum ID: Hashable {
+        case video(V.ID)
+        case more(String)
+    }
+
+    var id: ID {
         switch self {
-        case .video(let video): return "video-\(video.id)"
-        case .more(let key, _, _): return "more-\(key)"
+        case .video(let video): return .video(video.id)
+        case .more(let key, _, _): return .more(key)
         }
     }
 }
