@@ -29,6 +29,9 @@ struct YourTubeApp: App {
                         modelContext: container.mainContext,
                         defaults: defaults
                     )
+                    // Manual verification hook for issue #68; no-op unless
+                    // launched with -mutateFixtureTitle. See `DebugFixtures`.
+                    DebugFixtures.scheduleTitleMutation(in: container.mainContext)
                     return Setup(container: container, services: services, defaults: defaults)
                 }
                 #endif

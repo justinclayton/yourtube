@@ -2,6 +2,13 @@ import SwiftUI
 
 struct VideoRow: View {
     let video: Video
+    /// Overrides the title text shown for this row without touching
+    /// `video.displayTitle` itself. Feed rows pass their latched title here
+    /// (see `FeedVideoRow`); every other caller leaves this nil and gets
+    /// `video.displayTitle` live, as before. See issue #68.
+    var displayTitleOverride: String? = nil
+
+    private var title: String { displayTitleOverride ?? video.displayTitle }
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -9,7 +16,7 @@ struct VideoRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 // Cleaned, with the channel's boilerplate stripped; the raw
                 // title is a tap away in the player. See `TitleCleaner`.
-                Text(video.displayTitle)
+                Text(title)
                     .font(.subheadline.weight(.medium))
                     .fixedSize(horizontal: false, vertical: true)
                     .foregroundStyle(video.isWatched ? .secondary : .primary)

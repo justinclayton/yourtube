@@ -332,12 +332,23 @@ private struct SubscriptionFeedList: View {
 private struct FeedVideoRow: View {
     @Environment(AppServices.self) private var services
     let video: Video
+    /// The title this row drew when it first appeared. See `TitleLatch`.
+    /// `@State` storage is tied to this row's identity (the video's id, via
+    /// `FeedRow`'s `Identifiable` conformance), so it survives `sections`
+    /// being recomputed as long as the lazy list keeps this row instance
+    /// alive, and resets — showing the new title — only once the list
+    /// actually recreates the row, e.g. after it scrolls far enough off
+    /// screen to be discarded. See issue #68.
+    @State private var titleLatch = TitleLatch()
 
     var body: some View {
         NavigationLink {
             PlayerView(video: video)
         } label: {
-            VideoRow(video: video)
+            VideoRow(video: video, displayTitleOverride: titleLatch.displayTitle(current: video.displayTitle))
+        }
+        .onAppear {
+            titleLatch.capture(video.displayTitle)
         }
         .swipeActions(edge: .leading) {
             Button {
