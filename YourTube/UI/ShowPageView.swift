@@ -20,6 +20,8 @@ struct ShowPageView: View {
     let show: Show
 
     @Query private var subscriptions: [Subscription]
+    @Query(sort: [SortDescriptor(\VideoCollection.sortOrder), SortDescriptor(\VideoCollection.name)])
+    private var categories: [VideoCollection]
     /// The videos the show's episodes are drawn from, newest first: its
     /// channel's for a channel-backed show, and every stored video for a
     /// playlist-backed one, since a playlist may hold a guest channel's video
@@ -28,6 +30,10 @@ struct ShowPageView: View {
     /// lists exactly what the catalogue counts.
     @Query private var channelVideos: [Video]
     @State private var isShowingSettings = false
+    /// Opens the same Categories sheet Channels uses, filed under the show's
+    /// host channel — the channel itself for a channel-backed show, the
+    /// channel a playlist-backed show's playlist lives in for the other kind.
+    @State private var isShowingCategories = false
     /// Segments start hidden every time the page opens: the full episodes are
     /// what a show is, and the cut-downs are there when they're asked for.
     /// Not stored on the show — it's a way of looking at the page, not a
@@ -137,21 +143,20 @@ struct ShowPageView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 // A playlist-backed show has no channel-level "not a show"
                 // decision to record — that flag lives on the channel, and
-                // this page is one playlist within it — so it keeps the
-                // plain settings button. A channel-backed show gets the menu.
-                if show.isPlaylistBacked {
+                // this page is one playlist within it — so it's left out of
+                // its menu. Both kinds get Show settings and Categories.
+                Menu {
                     settingsButton
-                } else {
-                    Menu {
-                        settingsButton
+                    categoriesButton
+                    if !show.isPlaylistBacked {
                         Button {
                             markAsNotAShow()
                         } label: {
                             Label("Not a show", systemImage: "tv.slash")
                         }
-                    } label: {
-                        Label("Show settings", systemImage: "slider.horizontal.3")
                     }
+                } label: {
+                    Label("Show settings", systemImage: "slider.horizontal.3")
                 }
             }
         }
@@ -160,6 +165,15 @@ struct ShowPageView: View {
         }
         .sheet(isPresented: $isShowingSettings) {
             ShowSettingsSheet(show: show, videos: channelVideos)
+        }
+        .sheet(isPresented: $isShowingCategories) {
+            if let subscription {
+                CategoryPickerSheet(
+                    subscription: subscription,
+                    categories: categories,
+                    playlistShowTitle: show.isPlaylistBacked ? show.title : nil
+                )
+            }
         }
         .task { await refreshMembershipIfNeeded() }
     }
@@ -183,6 +197,14 @@ struct ShowPageView: View {
             isShowingSettings = true
         } label: {
             Label("Show settings", systemImage: "slider.horizontal.3")
+        }
+    }
+
+    private var categoriesButton: some View {
+        Button {
+            isShowingCategories = true
+        } label: {
+            Label("Categories…", systemImage: "folder")
         }
     }
 
