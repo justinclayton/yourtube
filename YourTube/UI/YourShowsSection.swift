@@ -101,7 +101,7 @@ struct YourShowsSection: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("No shows yet")
                 .font(.subheadline.weight(.semibold))
-            Text("Mark a channel as a show in Channels — swipe it, long-press it, or use its Categories sheet — and it appears here with a count of what you haven't watched.")
+            Text("Mark a channel as a show in Channels.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

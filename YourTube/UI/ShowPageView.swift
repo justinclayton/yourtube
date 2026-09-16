@@ -483,7 +483,7 @@ private struct ShowSettingsSheet: View {
                 } header: {
                     Text("Play order")
                 } footer: {
-                    Text("Newest first suits a daily news show. Oldest first walks a backlog forwards, which is how a podcast is meant to be heard. Either way, an episode you're partway through is offered first.")
+                    Text("An episode already in progress is offered first either way.")
                 }
                 segmentsSection
                 retentionSection
@@ -495,7 +495,7 @@ private struct ShowSettingsSheet: View {
                 } header: {
                     Text("Art")
                 } footer: {
-                    Text("Channel art keeps the show recognisable and leaves YouTube's thumbnails out of it. Switch to thumbnails for a channel whose avatar carries no information. This applies to the show's episodes here and its cards in Continue Watching and Up Next.")
+                    Text("Applies to episodes here and cards in Continue Watching and Up Next.")
                 }
             }
             .navigationTitle(show.title)
@@ -540,7 +540,7 @@ private struct ShowSettingsSheet: View {
         } header: {
             Text("Segments")
         } footer: {
-            Text("A news hour posts its full episode and then cuts clips out of it. A video shorter than this much of a typical episode is taken to be one of those clips: hidden on this page unless you ask for it, and left out of the show's unwatched count. It stays in the feed either way. Turn this off if a show's clips are getting hidden even though it doesn't post full episodes at all.")
+            Text("Shorter videos are hidden here and left out of the unwatched count, still in the feed. Turn off if this show has no real clips.")
         }
     }
 
@@ -572,7 +572,7 @@ private struct ShowSettingsSheet: View {
         } header: {
             Text("Retention")
         } footer: {
-            Text("Keeping the last few episodes stops a daily show piling up a backlog you feel obliged to clear. The older ones are hidden from this page and its counts, never deleted, and they stay in the feed.")
+            Text("Older episodes are hidden here, not deleted.")
         }
     }
 }
@@ -593,7 +593,7 @@ struct DetectorReasons: View {
     var body: some View {
         if show.flagOrigin == .heuristic, !show.detectorReasons.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
-                Label("Flagged as a show automatically", systemImage: "wand.and.stars")
+                Text("Flagged as a show automatically")
                     .font(.subheadline.weight(.semibold))
                 ForEach(show.detectorReasons, id: \.self) { reason in
                     Text("· \(reason)")
@@ -601,7 +601,7 @@ struct DetectorReasons: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Text("Mark it \u{201C}Not a show\u{201D} above, or in Channels, if this is wrong; that decision sticks.")
+                Text("Fix above, or in Channels.")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)

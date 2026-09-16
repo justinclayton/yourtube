@@ -459,7 +459,7 @@ struct CategoryPickerSheet: View {
                         if !showReasons.isEmpty {
                             Text("Flagged automatically: " + showReasons.joined(separator: "; ") + ".")
                         }
-                        Text("Shows get a poster in Your Shows on the Shows tab, with a count of what you haven't watched. Turning it off records \u{201C}not a show\u{201D}, which automatic sorting can never undo.")
+                        Text("Shows get a poster in Your Shows, with an unwatched count. Turning this off marks \u{201C}not a show\u{201D} permanently.")
                     }
                 }
                 Section {
@@ -502,7 +502,7 @@ struct CategoryPickerSheet: View {
                                 if let model = classifierEvidence.classifierModelCategory {
                                     Text("\u{201C}\(model)\u{201D} — chosen by the on-device model")
                                 } else {
-                                    Text("The model answered: " + (raw.isEmpty ? "nothing usable" : raw.joined(separator: ", ")))
+                                    Text(raw.isEmpty ? "No usable answer" : raw.joined(separator: ", "))
                                 }
                                 if let youtube = classifierEvidence.classifierYouTubeCategory {
                                     let reason = classifierEvidence.classifierYouTubeReason
