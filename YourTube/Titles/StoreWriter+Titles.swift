@@ -126,10 +126,12 @@ extension StoreWriter {
                 break
             } catch {
                 // Typically the model's safety guardrail objecting to a news
-                // headline. One title must not abort the rest; it keeps the
-                // stripped version and isn't retried until a version bump.
+                // headline — a third of a political show's titles, on the
+                // Mac's model. One title must not abort the rest; it gets the
+                // deterministic calming instead and isn't retried until a
+                // version bump.
                 outcome.failures += 1
-                video.cleanedTitle = stripped
+                video.cleanedTitle = TitleRewritePrompt.fallback(for: stripped)
             }
             video.isTitleRewritten = true
 
