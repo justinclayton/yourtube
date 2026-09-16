@@ -193,38 +193,55 @@ struct PlayerView: View {
         }
     }
 
+    /// Apple TV-style "normal" action button: white pill, black content.
+    /// `lineLimit(1)` keeps each label on one line — the row scrolls
+    /// horizontally instead, so three buttons never force their text to
+    /// wrap and collide with the row above.
+    private struct PlayerActionButtonStyle: ButtonStyle {
+        func makeBody(configuration: Configuration) -> some View {
+            configuration.label
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+                .foregroundStyle(.black)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(.white, in: Capsule())
+                .opacity(configuration.isPressed ? 0.7 : 1)
+        }
+    }
+
     private var actions: some View {
-        HStack(spacing: 12) {
-            Button {
-                try? services.upNext.toggle(video)
-            } label: {
-                Label(
-                    video.isInUpNext ? "Remove from Up Next" : "Add To Up Next",
-                    systemImage: video.isInUpNext ? "bookmark.fill" : "bookmark"
-                )
-            }
-            .buttonStyle(.bordered)
-
-            Button {
-                toggleWatched()
-            } label: {
-                Label(
-                    video.isWatched ? "Watched" : "Mark watched",
-                    systemImage: video.isWatched ? "checkmark.circle.fill" : "checkmark.circle"
-                )
-            }
-            .buttonStyle(.bordered)
-
-            if nextEpisode != nil {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 12) {
                 Button {
-                    advanceToNextEpisode()
+                    try? services.upNext.toggle(video)
                 } label: {
-                    Label("Next episode", systemImage: "forward.end.fill")
+                    Label(
+                        video.isInUpNext ? "Remove from Up Next" : "Add To Up Next",
+                        systemImage: video.isInUpNext ? "bookmark.fill" : "bookmark"
+                    )
                 }
-                .buttonStyle(.bordered)
-            }
+                .buttonStyle(PlayerActionButtonStyle())
 
-            Spacer()
+                Button {
+                    toggleWatched()
+                } label: {
+                    Label(
+                        video.isWatched ? "Watched" : "Mark watched",
+                        systemImage: video.isWatched ? "checkmark.circle.fill" : "checkmark.circle"
+                    )
+                }
+                .buttonStyle(PlayerActionButtonStyle())
+
+                if nextEpisode != nil {
+                    Button {
+                        advanceToNextEpisode()
+                    } label: {
+                        Label("Next episode", systemImage: "forward.end.fill")
+                    }
+                    .buttonStyle(PlayerActionButtonStyle())
+                }
+            }
         }
     }
 
