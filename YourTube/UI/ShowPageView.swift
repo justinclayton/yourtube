@@ -156,12 +156,20 @@ struct ShowPageView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 // A playlist-backed show has no channel-level "not a show"
                 // decision to record — that flag lives on the channel, and
-                // this page is one playlist within it — so it's left out of
-                // its menu. Both kinds get Show settings and Categories.
+                // this page is one playlist within it — so it offers "Remove
+                // show" instead, which drops the playlist show outright
+                // rather than tombstoning it. Both kinds get Show settings
+                // and Categories.
                 Menu {
                     settingsButton
                     categoriesButton
-                    if !show.isPlaylistBacked {
+                    if show.isPlaylistBacked {
+                        Button(role: .destructive) {
+                            removeShow()
+                        } label: {
+                            Label("Remove show", systemImage: "trash")
+                        }
+                    } else {
                         Button {
                             markAsNotAShow()
                         } label: {
@@ -230,6 +238,14 @@ struct ShowPageView: View {
             channelId: show.channelId,
             channelTitle: subscription?.title ?? show.title
         )
+        dismiss()
+    }
+
+    /// Removes a playlist-backed show outright, no confirmation, and leaves
+    /// the page since the show it was showing is gone. The channel's own
+    /// show flag is a separate record and is never touched here.
+    private func removeShow() {
+        try? services.shows.removePlaylistShow(show)
         dismiss()
     }
 
