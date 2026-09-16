@@ -3,19 +3,32 @@ import SwiftUI
 struct RootView: View {
     @Environment(AppServices.self) private var services
 
+    /// The tabs, in bar order. Selection is tracked rather than left to
+    /// `TabView` so a tab can tell whether it's the one showing; see
+    /// `LazyTab`.
+    private enum Tab: Hashable {
+        case shows, feed, channels, settings
+    }
+
+    @State private var selection = Tab.shows
+
     var body: some View {
-        TabView {
-            ShowsView()
+        TabView(selection: $selection) {
+            LazyTab(isSelected: selection == .shows) { ShowsView() }
                 .tabItem { Label("Shows", systemImage: "tv") }
+                .tag(Tab.shows)
 
-            FeedView()
+            LazyTab(isSelected: selection == .feed) { FeedView() }
                 .tabItem { Label("Feed", systemImage: "play.square.stack") }
+                .tag(Tab.feed)
 
-            ChannelsView()
+            LazyTab(isSelected: selection == .channels) { ChannelsView() }
                 .tabItem { Label("Channels", systemImage: "person.2") }
+                .tag(Tab.channels)
 
-            SettingsView()
+            LazyTab(isSelected: selection == .settings) { SettingsView() }
                 .tabItem { Label("Settings", systemImage: "gear") }
+                .tag(Tab.settings)
         }
         .task {
             services.categories.seedDefaultCategoriesIfNeeded()
