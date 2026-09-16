@@ -27,7 +27,7 @@ Infer the repo from `git remote -v`; `gh` does this automatically when run insid
 
 ## Running issues with subagents
 
-A coordinator session can work a batch of `ready-for-agent` issues by launching one subagent per issue, each in its own worktree (`.claude/worktrees/issue-<n>`, branch `claude/issue-<n>`), in dependency order. `/run-issues` (in `.claude/skills`) is that process; `/take-issue` is the single-issue path for a Sonnet session in the main checkout. Defaults, from measuring the September 2026 runs:
+A coordinator session can work a batch of `ready-for-agent` issues by launching one subagent per issue, each in its own worktree (`.claude/worktrees/issue-<n>`, branch `claude/issue-<n>`), in dependency order. `/run-issues` (a user-level skill, shared across projects) is that process; `/take-issue` is the single-issue path for a Sonnet session in the main checkout. Defaults, from measuring the September 2026 runs:
 
 - **Model: Sonnet by default.** Sonnet finished the same issues in the same number of turns as Opus, every PR merged, and it costs about 2.4× less per turn. Use Opus only for architecture or refactor issues that rewrite files other issues also touch (the SwiftData writer move in #64 is the shape). Keep Fable for the coordinator itself; it draws from a separate, tighter weekly budget.
 - **Concurrency: 2–3 agents at once.** Waves of 4–5 hit the plan's 5-hour limit twice and killed five agents mid-task; a killed agent does not resume, and its replacement re-derives state. Check the plan usage (`get_usage`) before launching each wave.
