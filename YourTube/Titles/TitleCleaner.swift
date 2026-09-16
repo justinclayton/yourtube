@@ -47,6 +47,24 @@ final class TitleCleaner {
     /// no setting; this covers tier two alone.
     static let rewriteEnabledKey = "settings.rewriteTitles"
 
+    /// How many pending episodes a show's automatic pass rewrites when it has
+    /// no retention setting of its own. The rest are rewritten lazily, only
+    /// once the show's page is opened — issue #65: titles are read on the
+    /// show page and the Shows tab, so a show nobody has opened yet doesn't
+    /// need every backlogged episode calmed before launch goes idle.
+    static let defaultRewriteWindow = 10
+
+    /// Which pending episodes one rewrite pass may draw from.
+    enum RewriteScope: Sendable, Equatable {
+        /// Every show's pending episodes, newest first, but only the newest
+        /// `perShow` of each (a show's own `retentionCount`, or `perShow`
+        /// when it hasn't set one). What the automatic pass uses.
+        case retentionWindow(perShow: Int)
+        /// Every pending episode of one show, regardless of window — what
+        /// opening that show's page asks for.
+        case show(id: String)
+    }
+
     private(set) var status: Status = .idle
     private(set) var rewriteStatus: Status = .idle
     private(set) var lastRunAt: Date?
@@ -60,15 +78,44 @@ final class TitleCleaner {
     private let defaults: UserDefaults
     private var runningTask: Task<Void, Never>?
 
+    /// How many model calls one launch may spend on rewrites in total, across
+    /// the automatic pass and every show page opened along the way. Bounds
+    /// the cold-launch cost the performance audit measured (261 calls, 4.5
+    /// minutes) to something that goes idle quickly; the rest is picked up
+    /// lazily as shows are opened, or on the next launch.
+    private let rewriteBudgetPerLaunch: Int
+    /// How long the automatic pass waits before its first model call, so
+    /// launch's first frame and the user's first tap never compete with it.
+    /// Only the very first automatic pass of a launch waits; later ones (a
+    /// refresh finishing) are already given their own idle delay by
+    /// `RootView`.
+    private let startDelay: Duration
+    /// True once a refresh is under way. Read at the start of the automatic
+    /// pass so it never competes with the feed the user is about to read;
+    /// see `RootView` and `FeedRefresher.isRefreshing`.
+    private let isRefreshingProvider: @MainActor () -> Bool
+
+    private var rewritesSpentThisLaunch = 0
+    private var hasWaitedForStartDelay = false
+
+    /// What's left of this launch's rewrite budget.
+    private var remainingBudget: Int { max(0, rewriteBudgetPerLaunch - rewritesSpentThisLaunch) }
+
     init(
         modelContext: ModelContext,
         rewriter: (any TitleRewriter)? = nil,
         defaults: UserDefaults = .standard,
-        writer: StoreWriter? = nil
+        writer: StoreWriter? = nil,
+        rewriteBudgetPerLaunch: Int = 40,
+        startDelay: Duration = .seconds(3),
+        isRefreshingProvider: @escaping @MainActor () -> Bool = { false }
     ) {
         self.writer = writer ?? StoreWriter(modelContainer: modelContext.container)
         self.rewriter = rewriter
         self.defaults = defaults
+        self.rewriteBudgetPerLaunch = rewriteBudgetPerLaunch
+        self.startDelay = startDelay
+        self.isRefreshingProvider = isRefreshingProvider
     }
 
     /// Whether this device can rewrite at all. False leaves tier-one stripping
@@ -90,22 +137,56 @@ final class TitleCleaner {
 
     /// Fire-and-forget entry point, used at launch and after each refresh.
     /// Cheap when there's nothing stale, which is every launch but the first
-    /// after an update that changed either tier.
+    /// after an update that changed either tier. The very first call of a
+    /// launch waits `startDelay` before its first model call; RootView gives
+    /// later, refresh-triggered calls their own idle delay, so this one is a
+    /// no-op by the time they land.
     func cleanStaleInBackground() {
         guard !isRunning else { return }
-        runningTask = Task { await cleanStale() }
+        runningTask = Task {
+            await waitForStartDelayIfNeeded()
+            guard !Task.isCancelled else { return }
+            await cleanStale()
+        }
     }
 
     /// Called when the Settings toggle moves: turning it off puts the stripped
     /// titles back, turning it on rewrites the show episodes that were left
-    /// stripped. Neither costs a pass over the whole store.
+    /// stripped. Neither costs a pass over the whole store. A user action, so
+    /// it never waits on `startDelay`.
     func applyRewriteSettingInBackground() {
         guard !isRunning else { return }
         runningTask = Task { await reconcileRewrites() }
     }
 
+    /// Rewrites one show's pending episodes, in full, ahead of the automatic
+    /// pass's own retention window — what opening a show page asks for.
+    /// Preempts whatever automatic pass may be running, since the page on
+    /// screen matters more than a background pass over shows nobody is
+    /// looking at; the preempted pass leaves its own remaining work pending
+    /// for next time. Still spends from the same per-launch budget, so
+    /// opening show after show can't turn into an unbounded run either.
+    func rewriteEpisodes(ofShowId showId: String) async {
+        guard canRewrite, isRewriteEnabled else { return }
+        runningTask?.cancel()
+        let task: Task<Void, Never> = Task { [weak self] in
+            _ = await self?.rewritePending(scope: .show(id: showId))
+        }
+        runningTask = task
+        await task.value
+    }
+
     func cancel() {
         runningTask?.cancel()
+    }
+
+    /// Waits out `startDelay` once per launch. Direct calls to `cleanStale()`
+    /// and `reconcileRewrites()` (tests, the settings toggle, a show page)
+    /// skip it entirely; only the fire-and-forget automatic entry point does.
+    private func waitForStartDelayIfNeeded() async {
+        guard !hasWaitedForStartDelay else { return }
+        hasWaitedForStartDelay = true
+        try? await Task.sleep(for: startDelay)
     }
 
     func cleanStale() async {
@@ -147,7 +228,10 @@ final class TitleCleaner {
     // MARK: - Tier two
 
     /// Brings the store in line with what the rewrite setting asks for.
-    /// Returns whether it had anything to do.
+    /// Returns whether it had anything to do. Skips the pass while a refresh
+    /// is running — that's exactly when the user is reading the fresh feed,
+    /// the one moment the model must not compete for the main thread — and
+    /// leaves everything pending for the next trigger.
     @discardableResult
     func reconcileRewrites() async -> Bool {
         guard canRewrite, isRewriteEnabled else {
@@ -155,20 +239,26 @@ final class TitleCleaner {
             rewriteStatus = .idle
             return reverted
         }
-        return await rewritePending()
+        guard !isRefreshingProvider() else { return false }
+        return await rewritePending(scope: .retentionWindow(perShow: Self.defaultRewriteWindow))
     }
 
-    private func rewritePending() async -> Bool {
+    private func rewritePending(scope: RewriteScope) async -> Bool {
         guard let rewriter else { return false }
+        let limit = remainingBudget
+        guard limit > 0 else { return false }
         rewriteStatus = .running(completed: 0, total: 0)
         lastRewriteFailures = 0
         do {
             let outcome = try await writer.rewritePendingTitles(
                 version: Self.version,
                 using: rewriter,
+                scope: scope,
+                limit: limit,
                 onProgress: progress { [weak self] in self?.reportRewrite($0, $1) }
             )
             lastRewriteFailures = outcome.failures
+            rewritesSpentThisLaunch += outcome.processed
             rewriteStatus = .idle
             return outcome.didWork
         } catch {

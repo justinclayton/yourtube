@@ -11,6 +11,10 @@ struct RootView: View {
     }
 
     @State private var selection = Tab.shows
+    /// Debounces the background passes a refresh triggers: cancelled and
+    /// restarted on every `lastRefreshedAt` change, so only the feed's last
+    /// idle moment actually starts them. See `postRefreshIdleDelay`.
+    @State private var postRefreshTask: Task<Void, Never>?
 
     var body: some View {
         TabView(selection: $selection) {
@@ -44,13 +48,25 @@ struct RootView: View {
             services.showDetector.detectInBackground()
         }
         .onChange(of: services.feed.lastRefreshedAt) {
-            // New subscriptions arrive via refresh; file them as they appear.
-            services.categories.classifyUnassignedInBackground()
-            services.titles.cleanStaleInBackground()
-            // New uploads can turn a channel into a show, or stop it being one.
-            services.showDetector.detectInBackground()
+            postRefreshTask?.cancel()
+            postRefreshTask = Task {
+                // The refresh just finished, which is exactly when the user
+                // is reading the fresh feed; racing the model against that
+                // scroll cost 55% of the main thread on the real store (#65).
+                // Wait for the feed to sit idle a few seconds before any of
+                // these touch it.
+                try? await Task.sleep(for: Self.postRefreshIdleDelay)
+                guard !Task.isCancelled else { return }
+                // New subscriptions arrive via refresh; file them as they appear.
+                services.categories.classifyUnassignedInBackground()
+                services.titles.cleanStaleInBackground()
+                // New uploads can turn a channel into a show, or stop it being one.
+                services.showDetector.detectInBackground()
+            }
         }
     }
+
+    private static let postRefreshIdleDelay: Duration = .seconds(3)
 }
 
 /// Shown when `Config.plist` is missing or incomplete, which is the state a

@@ -12,6 +12,10 @@ extension StoreWriter {
     struct RewriteOutcome: Sendable {
         var didWork = false
         var failures = 0
+        /// How many titles the model was actually asked about — at most
+        /// `limit` even when more were pending — so the caller can debit its
+        /// per-launch budget by what really happened.
+        var processed = 0
     }
 
     // MARK: - Tier one
@@ -101,22 +105,31 @@ extension StoreWriter {
     }
 
     /// One model call per show episode that tier two hasn't seen, newest
-    /// first so the titles the viewer is about to scroll past settle first.
+    /// first so the titles the viewer is about to scroll past settle first —
+    /// bounded to `scope` (a lazy per-show window, or one show in full) and
+    /// to `limit` calls (what's left of the launch's rewrite budget). Not
+    /// every episode `scope` names is guaranteed to be tried: the run stops
+    /// as soon as `limit` is spent, leaving the rest pending for the next
+    /// pass or the next time the show's page is opened.
     func rewritePendingTitles(
         version: Int,
         using rewriter: any TitleRewriter,
+        scope: TitleCleaner.RewriteScope,
+        limit: Int,
         onProgress: @escaping StoreWriterProgress
     ) async throws -> RewriteOutcome {
-        let pending = try pendingRewrites(version: version)
+        guard limit > 0 else { return RewriteOutcome() }
+        let pending = try pendingRewrites(version: version, scope: scope)
         guard !pending.isEmpty else { return RewriteOutcome() }
         onProgress(0, pending.count)
 
         let interval = Self.progressInterval(total: pending.count)
-        var outcome = RewriteOutcome(didWork: true)
+        var outcome = RewriteOutcome()
         var completed = 0
 
         for (video, showTitle) in pending {
             if Task.isCancelled { break }
+            if outcome.processed >= limit { break }
             guard let stripped = video.strippedTitle else { continue }
             let request = TitleRewriteRequest(strippedTitle: stripped, showTitle: showTitle)
             do {
@@ -134,18 +147,21 @@ extension StoreWriter {
                 video.cleanedTitle = TitleRewritePrompt.fallback(for: stripped)
             }
             video.isTitleRewritten = true
+            outcome.processed += 1
 
             completed += 1
             if completed.isMultiple(of: Self.chunkSize) { try? modelContext.save() }
             if completed.isMultiple(of: interval) { onProgress(completed, pending.count) }
         }
 
+        outcome.didWork = outcome.processed > 0
         try? modelContext.save()
         return outcome
     }
 
     /// Show episodes that tier one has cleaned and tier two hasn't seen, each
-    /// paired with the title of the show to name it under.
+    /// paired with the title of the show to name it under — scoped down to
+    /// what `scope` asks for and always newest first overall.
     ///
     /// Membership is the one `ShowManager` resolves, inverted into lookups
     /// because this is a pass over the store rather than over one show: a
@@ -157,24 +173,37 @@ extension StoreWriter {
     /// Precedence follows `show(containing:)`: a channel-backed show wins over
     /// a playlist-backed one on the same channel, and a playlist's member that
     /// came from a guest channel is still named under the playlist's show.
-    private func pendingRewrites(version: Int) throws -> [(video: Video, showTitle: String)] {
+    ///
+    /// `.retentionWindow` keeps only each show's newest `perShow` pending
+    /// episodes (the show's own `retentionCount` when it has one) — filtered
+    /// out of the newest-first list rather than queried per show, so a show
+    /// with a small window still cedes its later slots to another show's
+    /// newer episodes instead of claiming a fixed block of the run.
+    /// `.show` keeps one show's episodes, every one of them.
+    private func pendingRewrites(
+        version: Int,
+        scope: TitleCleaner.RewriteScope
+    ) throws -> [(video: Video, showTitle: String)] {
         let shows = ShowManager.active(try modelContext.fetch(FetchDescriptor<Show>()))
         guard !shows.isEmpty else { return [] }
-        var titleByChannel: [String: String] = [:]
-        var titleByMemberVideo: [String: String] = [:]
+        let showById = Dictionary(uniqueKeysWithValues: shows.map { ($0.id, $0) })
+        var idAndTitleByChannel: [String: (id: String, title: String)] = [:]
+        var idAndTitleByMemberVideo: [String: (id: String, title: String)] = [:]
         // The catalogue is alphabetical, so first-wins is a stable choice when
         // two playlists claim the same video.
         for show in shows {
             switch show.source {
             case .channel(let channelId):
-                if titleByChannel[channelId] == nil { titleByChannel[channelId] = show.title }
+                if idAndTitleByChannel[channelId] == nil {
+                    idAndTitleByChannel[channelId] = (show.id, show.title)
+                }
             case .playlist:
-                for videoId in show.memberVideoIds where titleByMemberVideo[videoId] == nil {
-                    titleByMemberVideo[videoId] = show.title
+                for videoId in show.memberVideoIds where idAndTitleByMemberVideo[videoId] == nil {
+                    idAndTitleByMemberVideo[videoId] = (show.id, show.title)
                 }
             }
         }
-        guard !titleByChannel.isEmpty || !titleByMemberVideo.isEmpty else { return [] }
+        guard !idAndTitleByChannel.isEmpty || !idAndTitleByMemberVideo.isEmpty else { return [] }
 
         let candidates = try modelContext.fetch(FetchDescriptor<Video>(
             predicate: #Predicate {
@@ -182,10 +211,24 @@ extension StoreWriter {
             },
             sortBy: [SortDescriptor(\.publishedAt, order: .reverse)]
         ))
-        return candidates.compactMap { video in
-            guard let title = titleByChannel[video.channelId] ?? titleByMemberVideo[video.videoId]
-            else { return nil }
-            return (video, title)
+
+        var perShowCount: [String: Int] = [:]
+        var result: [(video: Video, showTitle: String)] = []
+        for video in candidates {
+            guard let (showId, title) = idAndTitleByChannel[video.channelId] ?? idAndTitleByMemberVideo[video.videoId]
+            else { continue }
+
+            switch scope {
+            case .show(let targetId):
+                guard showId == targetId else { continue }
+            case .retentionWindow(let defaultPerShow):
+                let window = showById[showId]?.retentionCount ?? defaultPerShow
+                let seen = perShowCount[showId, default: 0]
+                guard seen < window else { continue }
+                perShowCount[showId] = seen + 1
+            }
+            result.append((video, title))
         }
+        return result
     }
 }
