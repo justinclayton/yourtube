@@ -46,6 +46,20 @@ final class ChannelRule {
     /// a snapshot independent of `collections` — which the user may have
     /// edited since. Nil alongside `classifierRawAnswer`.
     var classifierResolvedCategories: [String]?
+    /// Which of `classifierResolvedCategories` the model itself chose — the
+    /// one category it was allowed to give. Nil when the model gave nothing
+    /// usable, and for rules classified before v4, which recorded the answer
+    /// without saying where each half came from. Optional with no default so
+    /// existing stores open without a migration.
+    var classifierModelCategory: String?
+    /// The category YouTube's own per-video filing contributed, present only
+    /// when it differed from `classifierModelCategory`. Keeping the two apart
+    /// is what lets a wrong chip be blamed on the model or on YouTube rather
+    /// than on "the classifier". See `CategoryDecision`.
+    var classifierYouTubeCategory: String?
+    /// Why `classifierYouTubeCategory` is there, in `YouTubeCategorySignal`'s
+    /// own words ("YouTube files most of its videos under Gaming").
+    var classifierYouTubeReason: String?
     /// The channel's dominant YouTube video category (`Video.youtubeCategoryId`)
     /// as of the last automatic pass, e.g. `"24"` for Entertainment. Look up
     /// the display name with `YouTubeCategory.name(forId:)`. Nil alongside

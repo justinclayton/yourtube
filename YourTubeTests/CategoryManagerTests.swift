@@ -301,17 +301,99 @@ final class CategoryManagerTests: XCTestCase {
         XCTAssertNotNil(rule.classifiedAt, "should not be retried on the next unassigned pass")
     }
 
-    func testMultipleAnswersFileChannelUnderEach() async throws {
+    /// v4: only the model's first answer counts, and a second category can
+    /// only come from YouTube's own filing. A comedian's interview show is
+    /// Podcasts & Interviews because the model said so, and Comedy because
+    /// YouTube files its uploads there.
+    func testSecondCategoryComesFromYouTubeNotFromTheModel() async throws {
         let stub = StubCategorizer(answers: [
-            "Neal Brennan": guess("Podcasts & Interviews", "Comedy"),
+            "Neal Brennan": guess("Podcasts & Interviews", "Games", "Food"),
         ])
         let manager = makeManager(stub)
         let sub = subscribe("Neal Brennan")
+        for _ in 0..<3 { addVideo(channelId: sub.channelId, categoryId: "23") }
 
         await manager.classify(scope: .unassigned)
 
         let rule = try XCTUnwrap(manager.rule(forChannelId: sub.channelId))
+        // `collections` is an unordered relationship; the recorded answer is
+        // what keeps the model's category first.
         XCTAssertEqual(Set(rule.collections.map(\.name)), ["Podcasts & Interviews", "Comedy"])
+        XCTAssertEqual(rule.classifierResolvedCategories, ["Podcasts & Interviews", "Comedy"],
+                       "the model's answer first, YouTube's second")
+        XCTAssertEqual(rule.classifierModelCategory, "Podcasts & Interviews")
+        XCTAssertEqual(rule.classifierYouTubeCategory, "Comedy")
+    }
+
+    /// The hard ceiling the whole change is for: however many names come back,
+    /// a pass leaves at most two topic chips on a channel.
+    func testNoChannelCarriesMoreThanTwoAutomaticCategories() async throws {
+        let stub = StubCategorizer(answers: [
+            "Everything": guess("Cars", "Comedy", "Food", "Games"),
+        ])
+        let manager = makeManager(stub)
+        let sub = subscribe("Everything")
+        for _ in 0..<3 { addVideo(channelId: sub.channelId, categoryId: "20") }
+
+        await manager.classify(scope: .unassigned)
+
+        let rule = try XCTUnwrap(manager.rule(forChannelId: sub.channelId))
+        XCTAssertEqual(rule.topicCollections.count, CategoryPrompt.maxCategoriesPerChannel)
+        XCTAssertEqual(Set(rule.collections.map(\.name)), ["Cars", "Games"])
+    }
+
+    /// When YouTube agrees with the model there's nothing to add: one chip,
+    /// not the same one twice.
+    func testAgreeingYouTubeSignalAddsNoSecondCategory() async throws {
+        let stub = StubCategorizer(answers: ["Auto Focus": guess("Cars")])
+        let manager = makeManager(stub)
+        let sub = subscribe("Auto Focus")
+        for _ in 0..<3 { addVideo(channelId: sub.channelId, categoryId: "2") }
+
+        await manager.classify(scope: .unassigned)
+
+        let rule = try XCTUnwrap(manager.rule(forChannelId: sub.channelId))
+        XCTAssertEqual(rule.collections.map(\.name), ["Cars"])
+        XCTAssertEqual(rule.classifierModelCategory, "Cars")
+        XCTAssertNil(rule.classifierYouTubeCategory)
+    }
+
+    /// A channel the model wouldn't commit on stays Uncategorised even when
+    /// YouTube files it somewhere: the second category is a second, never a
+    /// first. Precision over recall — a missing chip is invisible.
+    func testYouTubeSignalAloneDoesNotFileAChannel() async throws {
+        let stub = StubCategorizer(answers: ["Mystery": .unsure])
+        let manager = makeManager(stub)
+        let sub = subscribe("Mystery")
+        for _ in 0..<3 { addVideo(channelId: sub.channelId, categoryId: "20") }
+
+        await manager.classify(scope: .unassigned)
+
+        let rule = try XCTUnwrap(manager.rule(forChannelId: sub.channelId))
+        XCTAssertTrue(rule.topicCollections.isEmpty)
+        XCTAssertNil(rule.classifierYouTubeCategory)
+    }
+
+    /// The prompt states YouTube's filing as a prior, so the model can use it
+    /// as evidence about the subject rather than being overruled by it.
+    func testPromptStatesTheYouTubeSignalAsAPrior() async throws {
+        final class Recorder: ChannelCategorizer, @unchecked Sendable {
+            var prompts: [String] = []
+            func categorize(_ channel: ChannelDescriptor, among categories: [String]) async throws -> CategoryGuess {
+                prompts.append(CategoryPrompt.prompt(for: channel))
+                return CategoryGuess(categories: ["Cars"])
+            }
+        }
+        let recorder = Recorder()
+        let manager = makeManager(recorder)
+        let sub = subscribe("Prior")
+        for _ in 0..<3 { addVideo(channelId: sub.channelId, categoryId: "20") }
+
+        await manager.classify(scope: .unassigned)
+
+        let prompt = try XCTUnwrap(recorder.prompts.first)
+        XCTAssertTrue(prompt.contains("YouTube files most of its videos under Gaming"), prompt)
+        XCTAssertTrue(prompt.contains("Games"), prompt)
     }
 
     /// Names the manager can't find in the list are skipped, not fatal.
@@ -448,6 +530,23 @@ final class CategoryManagerTests: XCTestCase {
         XCTAssertEqual(YouTubeCategory.name(forId: rule.classifierDominantCategoryId!), "Autos & Vehicles")
     }
 
+    /// The recorded reasons have to say which chip came from where, or a
+    /// wrong one can't be blamed on the model or on YouTube.
+    func testRecordedReasonsNameTheModelsCategoryAndYouTubes() async throws {
+        let stub = StubCategorizer(answers: ["Split": guess("Podcasts & Interviews")])
+        let manager = makeManager(stub)
+        let sub = subscribe("Split")
+        for _ in 0..<3 { addVideo(channelId: sub.channelId, categoryId: "23") }
+
+        await manager.classify(scope: .unassigned)
+
+        let rule = try XCTUnwrap(manager.rule(forChannelId: sub.channelId))
+        XCTAssertEqual(rule.classifierResolvedCategories, ["Podcasts & Interviews", "Comedy"])
+        XCTAssertEqual(rule.classifierModelCategory, "Podcasts & Interviews")
+        XCTAssertEqual(rule.classifierYouTubeCategory, "Comedy")
+        XCTAssertEqual(rule.classifierYouTubeReason, "YouTube files most of its videos under Comedy")
+    }
+
     /// An unsure guess is still a recorded answer — an empty one — distinct
     /// from a rule that's never been classified at all.
     func testUnsureGuessRecordsEmptyEvidenceNotNil() async throws {
@@ -518,6 +617,8 @@ final class CategoryManagerTests: XCTestCase {
         XCTAssertEqual(record.rawAnswer, ["Cars"])
         XCTAssertEqual(record.resolvedCategories, ["Cars"])
         XCTAssertEqual(record.dominantYouTubeCategory, "Autos & Vehicles")
+        XCTAssertEqual(record.modelCategory, "Cars")
+        XCTAssertNil(record.youtubeCategory, "YouTube agreed, so it added nothing")
         XCTAssertFalse(record.isUserSet)
         XCTAssertNil(record.userCategories)
     }
@@ -542,6 +643,25 @@ final class CategoryManagerTests: XCTestCase {
         XCTAssertEqual(record.resolvedCategories, ["Cars"])
     }
 
+    /// The export has to carry the same split as the sheet, since it's what
+    /// the answers get compared against by hand.
+    func testExportSeparatesTheModelsCategoryFromYouTubes() async throws {
+        let stub = StubCategorizer(answers: ["Split": guess("Podcasts & Interviews")])
+        let manager = makeManager(stub)
+        let sub = subscribe("Split")
+        for _ in 0..<3 { addVideo(channelId: sub.channelId, categoryId: "23") }
+        await manager.classify(scope: .unassigned)
+
+        let data = try await manager.exportClassifierEvidence()
+        let records = try JSONDecoder().decode([StoreWriter.ChannelClassifierRecord].self, from: data)
+        let record = try XCTUnwrap(records.first { $0.channelId == sub.channelId })
+
+        XCTAssertEqual(record.resolvedCategories, ["Podcasts & Interviews", "Comedy"])
+        XCTAssertEqual(record.modelCategory, "Podcasts & Interviews")
+        XCTAssertEqual(record.youtubeCategory, "Comedy")
+        XCTAssertEqual(record.youtubeReason, "YouTube files most of its videos under Comedy")
+    }
+
     /// A rule classified before this change carries no evidence; the export
     /// must say so rather than crash or invent an answer.
     func testExportShowsNotRecordedForPreExistingRule() async throws {
@@ -563,6 +683,8 @@ final class CategoryManagerTests: XCTestCase {
 
         XCTAssertNil(record.rawAnswer)
         XCTAssertNil(record.resolvedCategories)
+        XCTAssertNil(record.modelCategory)
+        XCTAssertNil(record.youtubeCategory)
         XCTAssertNil(record.dominantYouTubeCategory)
         XCTAssertFalse(record.isUserSet)
         XCTAssertNil(record.userCategories)
@@ -578,6 +700,7 @@ final class CategoryManagerTests: XCTestCase {
         let manager = makeManager(stub)
         let x = subscribe("X")
         let y = subscribe("Y")
+        for _ in 0..<3 { addVideo(channelId: y.channelId, categoryId: "23") }
         await manager.classify(scope: .unassigned)
         let cars = try XCTUnwrap(manager.categories().first { $0.name == "Cars" })
 
@@ -680,6 +803,7 @@ final class CategoryManagerTests: XCTestCase {
         let manager = makeManager(stub)
         let filed = subscribe("Filed")
         let both = subscribe("Both")
+        for _ in 0..<3 { addVideo(channelId: both.channelId, categoryId: "23") }
         let unsure = subscribe("Unsure")
         await manager.classify(scope: .unassigned)
         let untouched = subscribe("Untouched")
@@ -831,31 +955,32 @@ final class CategoryPromptTests: XCTestCase {
         XCTAssertFalse(prompt.contains("Recent videos:"))
     }
 
-    func testInstructionsListEveryCategoryAndAskForUpToThree() {
+    func testInstructionsListEveryCategoryAndAskForExactlyOne() {
         let text = CategoryPrompt.instructions(categories: ["Cars", "Food"])
         XCTAssertTrue(text.contains("- Cars"))
         XCTAssertTrue(text.contains("- Food"))
-        XCTAssertTrue(text.contains("one to 3 category names"))
+        XCTAssertTrue(text.contains("exactly one category name"))
     }
 
-    /// Multi-answer resolution: each name resolved on its own, off-list ones
-    /// dropped, duplicates collapsed, order kept, capped at three.
-    func testResolveManyDropsOffListDedupesAndCaps() {
-        let categories = CategoryManager.defaultCategoryNames
-        XCTAssertEqual(
-            CategoryPrompt.resolve(["Podcasts & Interviews", "Sports", "comedy"], among: categories),
-            ["Podcasts & Interviews", "Comedy"]
-        )
-        XCTAssertEqual(
-            CategoryPrompt.resolve(["Comedy", "COMEDY", "Comedy."], among: categories),
-            ["Comedy"]
-        )
-        XCTAssertEqual(
-            CategoryPrompt.resolve(["Cars", "Food", "Games", "Comedy"], among: categories),
-            ["Cars", "Food", "Games"]
-        )
-        XCTAssertEqual(CategoryPrompt.resolve(["Sports", ""], among: categories), [])
-        XCTAssertEqual(CategoryPrompt.resolve([], among: categories), [])
+    func testPriorLineNamesYouTubesCategoryAndItsTaxonomyHome() {
+        let prompt = CategoryPrompt.prompt(for: ChannelDescriptor(
+            channelId: "UC1",
+            title: "T",
+            about: "",
+            recentVideoTitles: [],
+            youtubeSignal: YouTubeCategorySuggestion(
+                categoryName: "Games",
+                reason: "YouTube files most of its videos under Gaming"
+            )
+        ))
+        XCTAssertTrue(prompt.contains("YouTube files most of its videos under Gaming, which is usually Games."), prompt)
+    }
+
+    func testNoPriorLineWithoutASignal() {
+        let prompt = CategoryPrompt.prompt(for: ChannelDescriptor(
+            channelId: "UC1", title: "T", about: "", recentVideoTitles: []
+        ))
+        XCTAssertFalse(prompt.contains("YouTube"))
     }
 
     func testResolveToleratesCaseAndAmpersand() {
@@ -878,12 +1003,95 @@ final class CategoryPromptTests: XCTestCase {
         XCTAssertEqual(CategoryPrompt.resolve("News, Politics", among: categories), "News & Politics")
     }
 
-    /// After a bump every non-user-set channel is re-classified once, so
-    /// channels filed under one category can pick up extra tags.
+    /// After a bump every non-user-set channel is re-classified once, which
+    /// is how channels padded out to three guesses are re-sorted under v4.
     func testAutomaticScopeWidensOnceAfterVersionBump() {
         XCTAssertEqual(CategoryManager.automaticScope(storedVersion: 0), .allAutomatic)
         XCTAssertEqual(CategoryManager.automaticScope(storedVersion: CategoryManager.classifierVersion - 1), .allAutomatic)
         XCTAssertEqual(CategoryManager.automaticScope(storedVersion: CategoryManager.classifierVersion), .unassigned)
     }
 
+}
+
+// MARK: - The decision
+
+/// The policy itself, without a store: one category from the model, a second
+/// only from YouTube's own filing.
+final class CategoryDecisionTests: XCTestCase {
+    private let taxonomy = CategoryManager.defaultCategoryNames
+
+    private func youtube(_ name: String) -> YouTubeCategorySuggestion {
+        YouTubeCategorySuggestion(categoryName: name, reason: "YouTube files most of its videos under Gaming")
+    }
+
+    func testModelAnswerIsPrimaryAndYouTubeIsSecond() {
+        let decided = CategoryDecision.decide(
+            modelAnswer: CategoryGuess(categories: ["Comedy"], rawCategories: ["Comedy"]),
+            youtube: youtube("Games"),
+            taxonomy: taxonomy
+        )
+        XCTAssertEqual(decided.categories, ["Comedy", "Games"])
+        XCTAssertEqual(decided.modelCategory, "Comedy")
+        XCTAssertEqual(decided.youtubeCategory, "Games")
+        XCTAssertEqual(decided.youtubeReason, "YouTube files most of its videos under Gaming")
+        XCTAssertEqual(decided.rawCategories, ["Comedy"])
+    }
+
+    func testExtraModelAnswersAreDropped() {
+        let decided = CategoryDecision.decide(
+            modelAnswer: CategoryGuess(categories: ["Comedy", "Food", "Cars"]),
+            youtube: nil,
+            taxonomy: taxonomy
+        )
+        XCTAssertEqual(decided.categories, ["Comedy"])
+        XCTAssertNil(decided.youtubeCategory)
+    }
+
+    func testOffListModelAnswersAreSkipped() {
+        let decided = CategoryDecision.decide(
+            modelAnswer: CategoryGuess(categories: ["Sports", "Cars"]),
+            youtube: nil,
+            taxonomy: taxonomy
+        )
+        XCTAssertEqual(decided.categories, ["Cars"], "the first on-list name is the primary")
+
+        let none = CategoryDecision.decide(
+            modelAnswer: CategoryGuess(categories: ["Sports"], rawCategories: ["Sports"]),
+            youtube: youtube("Games"),
+            taxonomy: taxonomy
+        )
+        XCTAssertEqual(none.categories, [])
+        XCTAssertNil(none.modelCategory)
+        XCTAssertEqual(none.rawCategories, ["Sports"], "the raw answer is kept for the evidence export")
+    }
+
+    func testAgreementProducesOneCategory() {
+        let decided = CategoryDecision.decide(
+            modelAnswer: CategoryGuess(categories: ["Games"]),
+            youtube: youtube("Games"),
+            taxonomy: taxonomy
+        )
+        XCTAssertEqual(decided.categories, ["Games"])
+        XCTAssertNil(decided.youtubeCategory)
+    }
+
+    func testYouTubeCategoryMissingFromTheTaxonomyIsIgnored() {
+        let decided = CategoryDecision.decide(
+            modelAnswer: CategoryGuess(categories: ["Comedy"]),
+            youtube: youtube("Sports"),
+            taxonomy: taxonomy
+        )
+        XCTAssertEqual(decided.categories, ["Comedy"])
+    }
+
+    func testNeverMoreThanTwo() {
+        for answer in [["Comedy", "Food", "Cars", "Games"], ["Comedy"], []] {
+            let decided = CategoryDecision.decide(
+                modelAnswer: CategoryGuess(categories: answer),
+                youtube: youtube("Games"),
+                taxonomy: taxonomy
+            )
+            XCTAssertLessThanOrEqual(decided.categories.count, CategoryPrompt.maxCategoriesPerChannel)
+        }
+    }
 }

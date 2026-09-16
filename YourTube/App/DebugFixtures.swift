@@ -54,7 +54,26 @@ enum DebugFixtures {
         var id: String
         var title: String
         var categories: [String]
+        /// Present when the fixture channel stands for one the classifier
+        /// filed rather than one filed by hand: the rule is then not
+        /// user-set, and carries the evidence a v4 pass records — which
+        /// category the model chose and which YouTube's own filing added.
+        /// That's what the Categories sheet's "Why" section reads.
+        var classifier: ClassifierEvidence?
+        /// YouTube's own `snippet.categoryId` on every one of this channel's
+        /// videos, so `YouTubeCategorySignal` has a majority to find. Nil
+        /// leaves the videos uncategorised on YouTube's side, which is what
+        /// most fixture channels want.
+        var youtubeCategoryId: String?
         var videos: [(title: String, hoursAgo: Double, seconds: Int, short: Bool)]
+    }
+
+    /// See `Channel.classifier`.
+    private struct ClassifierEvidence {
+        var modelCategory: String
+        var youtubeCategory: String?
+        var youtubeReason: String?
+        var dominantCategoryId: String
     }
 
     private static let channels: [Channel] = [
@@ -75,19 +94,35 @@ enum DebugFixtures {
             ("Straße walk in Kreuzberg", 12, 2400, false),
             ("Späti tour", 13, 60, true),
         ]),
-        Channel(id: "UC-nasa", title: "NASA", categories: ["Priority", "Science & Explainers"], videos: [
+        // The automatically-filed fixture, and the one that shows a channel's
+        // two chips coming from two sources: the model reads the uploads as
+        // explainers while YouTube's own filing is Science & Technology,
+        // which the taxonomy calls Tech & Engineering.
+        Channel(
+            id: "UC-nasa",
+            title: "NASA",
+            categories: ["Priority", "Science & Explainers", "Tech & Engineering"],
+            classifier: ClassifierEvidence(
+                modelCategory: "Science & Explainers",
+                youtubeCategory: "Tech & Engineering",
+                youtubeReason: "YouTube files most of its videos under Science & Technology",
+                dominantCategoryId: "28"
+            ),
+            youtubeCategoryId: "28",
+            videos: [
             ("Artemis III launch briefing", 1, 5400, false),
             ("Mars weather this week", 2, 300, false),
             ("Space station timelapse", 4, 240, false),
             ("Live Q&A with the crew", 6, 4200, false),
             ("Rocket engine test #shorts", 7, 20, true),
-        ]),
+            ]
+        ),
         Channel(id: "UC-conanfans", title: "Conan Clips Archive", categories: ["Comedy"], videos: [
             ("Late Night 1997: Triumph at Westminster", 100, 500, false),
         ]),
         // Every title carries the show name after a pipe and an episode
         // number, so the title cleaner has something to bite on signed out.
-        Channel(id: "UC-blocks", title: "Blocks Podcast", categories: ["Podcasts & Interviews"], videos: [
+        Channel(id: "UC-blocks", title: "Blocks Podcast", categories: ["Podcasts & Interviews"], youtubeCategoryId: "23", videos: [
             ("Ali Macofsky | Blocks Podcast w/ Neal Brennan | Ep. 214", 9, 4500, false),
             ("Mark Normand | Blocks Podcast w/ Neal Brennan | Ep. 213", 33, 4200, false),
             ("Bill Burr | Blocks Podcast w/ Neal Brennan | FULL EPISODE | Ep. 212", 58, 5100, false),
@@ -128,12 +163,22 @@ enum DebugFixtures {
                 name == CategoryManager.priorityName ? priority : collections[name]
             }
             if !filed.isEmpty {
-                context.insert(ChannelRule(
+                let rule = ChannelRule(
                     channelId: channel.id,
                     channelTitle: channel.title,
                     collections: filed,
-                    isUserSet: true
-                ))
+                    isUserSet: channel.classifier == nil,
+                    classifiedAt: channel.classifier == nil ? nil : .now
+                )
+                if let evidence = channel.classifier {
+                    rule.classifierRawAnswer = [evidence.modelCategory]
+                    rule.classifierResolvedCategories = filed.map(\.name)
+                    rule.classifierModelCategory = evidence.modelCategory
+                    rule.classifierYouTubeCategory = evidence.youtubeCategory
+                    rule.classifierYouTubeReason = evidence.youtubeReason
+                    rule.classifierDominantCategoryId = evidence.dominantCategoryId
+                }
+                context.insert(rule)
             }
             for (index, video) in channel.videos.enumerated() {
                 let videoId = "\(channel.id)-\(index)"
@@ -146,6 +191,7 @@ enum DebugFixtures {
                     videoDescription: "",
                     publishedAt: Date(timeIntervalSinceNow: -video.hoursAgo * 3600),
                     durationSeconds: video.seconds,
+                    youtubeCategoryId: channel.youtubeCategoryId,
                     isLikelyShort: video.short,
                     isWatched: index == channel.videos.count - 1,
                     savedForLaterAt: position.map { Date(timeIntervalSinceNow: -Double($0 + 1) * 86_400) },

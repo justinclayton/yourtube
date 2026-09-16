@@ -39,15 +39,14 @@ extension StoreWriter {
             for subscription in targets {
                 try Task.checkCancellation()
                 let videos = try recentVideos(forChannelId: subscription.channelId, limit: recentTitlesPerChannel)
-                let channelDescriptor = ChannelDescriptor(
-                    channelId: subscription.channelId,
-                    title: subscription.title,
-                    about: subscription.channelDescription ?? "",
-                    recentVideoTitles: videos.map(\.title)
+                let channelDescriptor = try descriptor(
+                    for: subscription,
+                    recentTitles: recentTitlesPerChannel,
+                    taxonomy: names
                 )
-                let guess: CategoryGuess
+                let answer: CategoryGuess
                 do {
-                    guess = try await categorizer.categorize(channelDescriptor, among: names)
+                    answer = try await categorizer.categorize(channelDescriptor, among: names)
                 } catch is CancellationError {
                     throw CancellationError()
                 } catch {
@@ -55,8 +54,13 @@ extension StoreWriter {
                     // channel name or title. One bad channel must not abort
                     // the other six hundred; record it as unsure and carry on.
                     outcome.failures += 1
-                    guess = .unsure
+                    answer = .unsure
                 }
+                // The model gives one category; YouTube's own filing gives the
+                // only possible second. See `CategoryDecision`.
+                let guess = CategoryDecision.decide(
+                    modelAnswer: answer, youtube: channelDescriptor.youtubeSignal, taxonomy: names
+                )
                 try apply(guess, recentVideoIds: videos.map(\.videoId), to: subscription)
 
                 outcome.completed += 1
@@ -119,17 +123,47 @@ extension StoreWriter {
         return try modelContext.fetch(fetch)
     }
 
+    /// Exactly what the classifier is shown for one channel: its title, about
+    /// text, recent titles, and — when YouTube's own filing says something —
+    /// that as a prior. `taxonomy` is what the signal has to land in to count;
+    /// pass nil to build the descriptor without one (the export, which shows
+    /// YouTube's category separately).
     private func descriptor(
         for subscription: Subscription,
-        recentTitles: Int
+        recentTitles: Int,
+        taxonomy: [String]? = nil
     ) throws -> ChannelDescriptor {
         let videos = try recentVideos(forChannelId: subscription.channelId, limit: recentTitles)
         return ChannelDescriptor(
             channelId: subscription.channelId,
             title: subscription.title,
             about: subscription.channelDescription ?? "",
-            recentVideoTitles: videos.map(\.title)
+            recentVideoTitles: videos.map(\.title),
+            youtubeSignal: try taxonomy.flatMap {
+                try youtubeSuggestion(forChannelId: subscription.channelId, taxonomy: $0)
+            }
         )
+    }
+
+    /// YouTube's own filing for a channel, as a taxonomy category: a majority
+    /// vote over every stored video's `snippet.categoryId`, the same
+    /// population `dominantCategoryId` reads. Nil when there's no clear
+    /// majority or the majority is one of YouTube's catch-alls — see
+    /// `YouTubeCategorySignal`.
+    private func youtubeSuggestion(
+        forChannelId channelId: String,
+        taxonomy: [String]
+    ) throws -> YouTubeCategorySuggestion? {
+        let fetch = FetchDescriptor<Video>(predicate: #Predicate { $0.channelId == channelId })
+        let signals = try modelContext.fetch(fetch).map {
+            EpisodeSignals(
+                durationSeconds: $0.durationSeconds,
+                publishedAt: $0.publishedAt,
+                title: $0.title,
+                categoryId: $0.youtubeCategoryId
+            )
+        }
+        return YouTubeCategorySignal.suggestion(for: signals, taxonomy: taxonomy)
     }
 
     /// Writes the classifier's topics onto the channel's rule. The Priority
@@ -152,6 +186,9 @@ extension StoreWriter {
             rule.classifiedAt = .now
             rule.classifierRawAnswer = guess.rawCategories
             rule.classifierResolvedCategories = guess.categories
+            rule.classifierModelCategory = guess.modelCategory
+            rule.classifierYouTubeCategory = guess.youtubeCategory
+            rule.classifierYouTubeReason = guess.youtubeReason
             rule.classifierDominantCategoryId = dominantCategoryId
             rule.classifierRecentVideoIds = recentVideoIds
         } else {
@@ -164,6 +201,9 @@ extension StoreWriter {
             )
             rule.classifierRawAnswer = guess.rawCategories
             rule.classifierResolvedCategories = guess.categories
+            rule.classifierModelCategory = guess.modelCategory
+            rule.classifierYouTubeCategory = guess.youtubeCategory
+            rule.classifierYouTubeReason = guess.youtubeReason
             rule.classifierDominantCategoryId = dominantCategoryId
             rule.classifierRecentVideoIds = recentVideoIds
             modelContext.insert(rule)
@@ -221,9 +261,19 @@ extension StoreWriter {
         /// means no automatic pass has recorded evidence: never classified
         /// under this version, or filed by hand from the start.
         var rawAnswer: [String]?
-        /// The classifier's resolved categories from that same pass. Nil
-        /// alongside `rawAnswer`.
+        /// The classifier's resolved categories from that same pass — the
+        /// model's first, YouTube's second when there is one. Nil alongside
+        /// `rawAnswer`.
         var resolvedCategories: [String]?
+        /// Which of `resolvedCategories` the model chose. Nil when the model
+        /// gave nothing usable, or for a rule classified before v4.
+        var modelCategory: String?
+        /// The category YouTube's own filing added, present only when it
+        /// differs from `modelCategory`. Together with it, this is what makes
+        /// a wrong chip attributable to one source or the other.
+        var youtubeCategory: String?
+        /// Why `youtubeCategory` is there, in the signal's own words.
+        var youtubeReason: String?
         /// `YouTubeCategory.name(forId:)` of the channel's dominant video
         /// category as of that pass. Nil alongside `rawAnswer`.
         var dominantYouTubeCategory: String?
@@ -256,6 +306,9 @@ extension StoreWriter {
                 recentVideoTitles: evidence.recentVideoTitles,
                 rawAnswer: rule?.classifierRawAnswer,
                 resolvedCategories: rule?.classifierResolvedCategories,
+                modelCategory: rule?.classifierModelCategory,
+                youtubeCategory: rule?.classifierYouTubeCategory,
+                youtubeReason: rule?.classifierYouTubeReason,
                 dominantYouTubeCategory: rule?.classifierDominantCategoryId.map(YouTubeCategory.name(forId:)),
                 isUserSet: rule?.isUserSet ?? false,
                 userCategories: (rule?.isUserSet ?? false) ? rule?.topicCollections.map(\.name) : nil
