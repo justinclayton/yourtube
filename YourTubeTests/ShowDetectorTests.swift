@@ -23,8 +23,8 @@ final class ShowDetectorTests: XCTestCase {
     /// lands on the same weekdays every run.
     private static let reference = Date(timeIntervalSince1970: 1_767_225_600)
 
-    private func verdict(_ channel: ChannelEvidence) -> ShowVerdict {
-        ShowDetector.verdict(for: channel, calendar: Self.calendar)
+    private func verdict(_ channel: ChannelEvidence, now: Date = ShowDetectorTests.reference) -> ShowVerdict {
+        ShowDetector.verdict(for: channel, calendar: Self.calendar, now: now)
     }
 
     // MARK: - Corpus
@@ -225,6 +225,7 @@ final class ShowDetectorTests: XCTestCase {
         XCTAssertFalse(result.isShow)
         XCTAssertTrue(result.reasons.contains { $0.hasPrefix("Episodes usually run") }, "\(result.reasons)")
         XCTAssertFalse(result.reasons.contains { $0.hasPrefix("Posts on a regular") }, "\(result.reasons)")
+        XCTAssertFalse(result.dormant, "scoring below the threshold isn't the same as going quiet")
     }
 
     func testClipsChannelIsRejectedForHavingNoFullLengthUploads() {
@@ -232,6 +233,7 @@ final class ShowDetectorTests: XCTestCase {
         XCTAssertFalse(result.isShow)
         XCTAssertEqual(result.reasons.count, 1)
         XCTAssertTrue(result.reasons[0].contains("over twenty minutes"), "\(result.reasons)")
+        XCTAssertFalse(result.dormant)
     }
 
     // MARK: - Gate
@@ -242,12 +244,31 @@ final class ShowDetectorTests: XCTestCase {
         let result = verdict(channel)
         XCTAssertFalse(result.isShow)
         XCTAssertTrue(result.reasons[0].contains("Too few uploads"), "\(result.reasons)")
+        XCTAssertFalse(result.dormant, "never having enough evidence isn't the same as going quiet")
     }
 
     func testAShowIsStillAShowWithTheFewestUploadsTheGateAllows() {
         var channel = twiceWeeklyNewsShow
         channel.videos = Array(channel.videos.prefix(ShowDetector.minimumVideos))
         XCTAssertTrue(verdict(channel).isShow)
+    }
+
+    /// A channel that's gone dark — cancelled, on hiatus, or its host no
+    /// longer able to post — isn't a recurring thing to auto-add someone to,
+    /// however show-shaped its back catalogue is.
+    func testADormantChannelIsNoLongerAShow() {
+        let newest = twiceWeeklyNewsShow.videos.map(\.publishedAt).max()!
+        let asOf = Self.calendar.date(byAdding: .day, value: ShowDetector.maximumDormantDays + 1, to: newest)!
+        let result = verdict(twiceWeeklyNewsShow, now: asOf)
+        XCTAssertFalse(result.isShow)
+        XCTAssertTrue(result.reasons.contains { $0.hasPrefix("Hasn't posted in") }, "\(result.reasons)")
+        XCTAssertTrue(result.dormant, "this false has to be distinguishable from never having looked like a show")
+    }
+
+    func testAShowOnAnOrdinaryHiatusIsStillAShow() {
+        let newest = twiceWeeklyNewsShow.videos.map(\.publishedAt).max()!
+        let asOf = Self.calendar.date(byAdding: .day, value: ShowDetector.maximumDormantDays, to: newest)!
+        XCTAssertTrue(verdict(twiceWeeklyNewsShow, now: asOf).isShow)
     }
 
     // MARK: - Signals in isolation

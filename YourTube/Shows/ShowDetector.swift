@@ -50,6 +50,16 @@ struct ChannelEvidence: Sendable, Equatable {
 /// show — whose median upload is a five-minute cut-down — still gets through:
 /// its full episodes are there underneath the segments.
 ///
+/// The gate also asks that the channel is still posting. A channel that once
+/// had a slot but hasn't uploaded in months — cancelled, on hiatus, or its
+/// host no longer able to — isn't a recurring thing to auto-add someone to
+/// today, whatever its back catalogue looks like. This is re-checked every
+/// pass, not just once, and marks its verdict `dormant` rather than plain
+/// `false`: a channel that never looked like a show is silently skipped, but
+/// one that was already flagged and has gone quiet is a question for the
+/// user, not a verdict the detector gets to act on unasked — see
+/// `ShowManager.applyAutomaticVerdicts`.
+///
 /// The signals, in descending strength:
 /// - a median duration over twenty minutes: the channel's ordinary upload is
 ///   an episode, not a clip;
@@ -66,7 +76,7 @@ struct ChannelEvidence: Sendable, Equatable {
 enum ShowDetector {
     /// Bump when the decision logic changes, so every channel is examined
     /// again on the next pass (see `ShowDetectionRunner`).
-    static let version = 1
+    static let version = 2
 
     // MARK: - Gate
 
@@ -77,6 +87,11 @@ enum ShowDetector {
     static let longFormSeconds = 1_200
     /// How many full-length uploads a show has to have among what we've seen.
     static let minimumLongFormVideos = 3
+    /// A channel silent for longer than this isn't a recurring thing to
+    /// auto-add someone to, whatever its history looks like. Four months
+    /// covers an ordinary hiatus (a season break, a summer off) without
+    /// covering a cancellation or a host who's gone.
+    static let maximumDormantDays = 120
 
     // MARK: - Scoring
 
@@ -121,13 +136,14 @@ enum ShowDetector {
     /// recorded for a "not a show" verdict too — a channel that scored two out
     /// of three is worth being able to look at — but only a flagged show shows
     /// them to the user.
-    static func verdict(for evidence: ChannelEvidence, calendar: Calendar = .current) -> ShowVerdict {
-        func answer(_ isShow: Bool, _ reasons: [String]) -> ShowVerdict {
+    static func verdict(for evidence: ChannelEvidence, calendar: Calendar = .current, now: Date = .now) -> ShowVerdict {
+        func answer(_ isShow: Bool, _ reasons: [String], dormant: Bool = false) -> ShowVerdict {
             ShowVerdict(
                 channelId: evidence.channelId,
                 channelTitle: evidence.channelTitle,
                 isShow: isShow,
-                reasons: reasons
+                reasons: reasons,
+                dormant: dormant
             )
         }
 
@@ -138,6 +154,11 @@ enum ShowDetector {
         let longForm = videos.filter { $0.durationSeconds > longFormSeconds }.count
         guard longForm >= minimumLongFormVideos else {
             return answer(false, ["Nothing long enough to be an episode (\(longForm) uploads over twenty minutes)"])
+        }
+        let newestUpload = videos.map(\.publishedAt).max() ?? .distantPast
+        let daysSinceLastUpload = calendar.dateComponents([.day], from: newestUpload, to: now).day ?? 0
+        guard daysSinceLastUpload <= maximumDormantDays else {
+            return answer(false, ["Hasn't posted in \(daysSinceLastUpload) days"], dormant: true)
         }
 
         var score = 0

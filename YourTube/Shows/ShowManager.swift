@@ -10,6 +10,11 @@ struct ShowVerdict: Sendable, Equatable {
     var channelTitle: String
     var isShow: Bool
     var reasons: [String] = []
+    /// True when `isShow` is false specifically because the channel's gone
+    /// quiet, rather than never having looked like a show. `applyAutomaticVerdicts`
+    /// treats this case differently for a channel already flagged: it holds
+    /// the row for the user to decide about instead of dropping it.
+    var dormant: Bool = false
 }
 
 /// Owns the show catalogue: which channels are shows, which videos are their
@@ -77,6 +82,13 @@ final class ShowManager {
     /// Whether the channel is in the catalogue right now.
     func isShow(channelId: String) throws -> Bool {
         try record(forChannelId: channelId)?.isActive ?? false
+    }
+
+    /// Heuristic shows whose latest pass found the channel gone quiet —
+    /// still in the catalogue, but waiting on the user to say whether to
+    /// keep them. What a dormancy prompt should list.
+    func showsPendingDormancyReview() throws -> [Show] {
+        try shows().filter(\.pendingDormancyReview)
     }
 
     /// Flags a channel as a show by hand. A hand-made flag is permanent until
@@ -154,6 +166,7 @@ final class ShowManager {
             existing.flagOrigin = flagOrigin
             existing.override = override
             existing.detectorReasons = reasons
+            existing.pendingDormancyReview = false
             return existing
         }
         let show = Show(source: source, title: title, flagOrigin: flagOrigin, override: override)
@@ -260,7 +273,11 @@ final class ShowManager {
     /// The user always wins: a channel with an override in either direction is
     /// skipped whole, and so is a show the user created by hand. A channel the
     /// detector flags gets a heuristic show; one it un-flags loses its
-    /// heuristic show and nothing else. Returns how many rows changed.
+    /// heuristic show — unless the un-flagging is dormancy, which is a
+    /// question for the user rather than a verdict the detector gets to act
+    /// on by itself: the row stays, `pendingDormancyReview` goes up, and
+    /// `markAsShow`/`markAsNotAShow` are how the user answers it. Returns how
+    /// many rows changed.
     @discardableResult
     func applyAutomaticVerdicts(_ verdicts: [ShowVerdict]) throws -> Int {
         try Self.applyAutomaticVerdicts(verdicts, in: modelContext)
@@ -281,9 +298,20 @@ final class ShowManager {
             }
             switch (verdict.isShow, existing) {
             case (true, let existing?):
-                existing.title = verdict.channelTitle
-                existing.detectorReasons = verdict.reasons
-                changed += 1
+                // A heuristic show is re-verdicted every pass (its dormancy
+                // gate depends on wall-clock time, not just its stored
+                // videos), so most passes reconfirm a verdict that hasn't
+                // actually moved. Only count and save when it has. Coming
+                // back from dormancy on its own — the channel posted again
+                // before the user answered — resolves the question too.
+                if existing.title != verdict.channelTitle
+                    || existing.detectorReasons != verdict.reasons
+                    || existing.pendingDormancyReview {
+                    existing.title = verdict.channelTitle
+                    existing.detectorReasons = verdict.reasons
+                    existing.pendingDormancyReview = false
+                    changed += 1
+                }
             case (true, nil):
                 try upsert(
                     source: .channel(id: verdict.channelId),
@@ -294,6 +322,14 @@ final class ShowManager {
                     in: modelContext
                 )
                 changed += 1
+            case (false, let existing?) where verdict.dormant:
+                // Gone quiet is the user's call: hold the row and ask, rather
+                // than drop a show they may still want.
+                if !existing.pendingDormancyReview || existing.detectorReasons != verdict.reasons {
+                    existing.detectorReasons = verdict.reasons
+                    existing.pendingDormancyReview = true
+                    changed += 1
+                }
             case (false, let existing?):
                 modelContext.delete(existing)
                 changed += 1

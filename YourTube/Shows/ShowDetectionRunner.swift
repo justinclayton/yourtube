@@ -14,6 +14,11 @@ import Observation
 /// when its uploads actually move. The fingerprints are keyed by detector
 /// version, so changing the heuristic re-examines everything exactly once.
 ///
+/// A channel already flagged as a show is the exception: it's re-examined
+/// every pass regardless of its fingerprint, because the detector's dormancy
+/// gate can flip its verdict with no upload ever moving — a channel that's
+/// gone dark looks the same to the fingerprint forever.
+///
 /// Fingerprints live in `UserDefaults` rather than the store because most
 /// channels are examined and rejected, and a rejection has no `Show` row to
 /// hang anything off.

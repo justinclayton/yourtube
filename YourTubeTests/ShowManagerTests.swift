@@ -748,6 +748,96 @@ final class ShowManagerTests: XCTestCase {
         XCTAssertEqual(try manager.record(forChannelId: "UC-news")?.detectorReasons, ["New reason"])
     }
 
+    // MARK: - Going dormant
+
+    /// Gone quiet isn't the detector's decision to make alone: the row stays,
+    /// flagged for the user to answer, rather than disappearing.
+    func testADormantVerdictHoldsTheShowForReviewInsteadOfDroppingIt() throws {
+        try automaticPass((channelId: "UC-news", isShow: true))
+
+        try manager.applyAutomaticVerdicts([ShowVerdict(
+            channelId: "UC-news", channelTitle: "Newsline", isShow: false,
+            reasons: ["Hasn't posted in 130 days"], dormant: true
+        )])
+
+        XCTAssertTrue(try manager.isShow(channelId: "UC-news"), "still in the catalogue until the user answers")
+        let record = try XCTUnwrap(manager.record(forChannelId: "UC-news"))
+        XCTAssertTrue(record.pendingDormancyReview)
+        XCTAssertEqual(record.detectorReasons, ["Hasn't posted in 130 days"])
+    }
+
+    /// A user-flagged show can't be touched by a plain "no" pass; a dormant
+    /// one is no different.
+    func testHandFlaggedShowSurvivesADormantVerdictToo() throws {
+        try manager.markAsShow(channelId: "UC-news", channelTitle: "Newsline")
+
+        try manager.applyAutomaticVerdicts([ShowVerdict(
+            channelId: "UC-news", channelTitle: "Newsline", isShow: false, dormant: true
+        )])
+
+        XCTAssertTrue(try manager.isShow(channelId: "UC-news"))
+        let record = try XCTUnwrap(manager.record(forChannelId: "UC-news"))
+        XCTAssertEqual(record.flagOrigin, .user)
+        XCTAssertFalse(record.pendingDormancyReview)
+    }
+
+    func testMarkAsShowResolvesADormancyReviewByKeepingIt() throws {
+        try automaticPass((channelId: "UC-news", isShow: true))
+        try manager.applyAutomaticVerdicts([ShowVerdict(
+            channelId: "UC-news", channelTitle: "Newsline", isShow: false, dormant: true
+        )])
+
+        try manager.markAsShow(channelId: "UC-news", channelTitle: "Newsline")
+
+        let record = try XCTUnwrap(manager.record(forChannelId: "UC-news"))
+        XCTAssertFalse(record.pendingDormancyReview)
+        XCTAssertEqual(record.flagOrigin, .user)
+        XCTAssertEqual(record.override, .forceShow)
+        XCTAssertTrue(try manager.isShow(channelId: "UC-news"))
+    }
+
+    func testMarkAsNotAShowResolvesADormancyReviewByDroppingIt() throws {
+        try automaticPass((channelId: "UC-news", isShow: true))
+        try manager.applyAutomaticVerdicts([ShowVerdict(
+            channelId: "UC-news", channelTitle: "Newsline", isShow: false, dormant: true
+        )])
+
+        try manager.markAsNotAShow(channelId: "UC-news", channelTitle: "Newsline")
+
+        let record = try XCTUnwrap(manager.record(forChannelId: "UC-news"))
+        XCTAssertFalse(record.pendingDormancyReview)
+        XCTAssertEqual(record.override, .forceNotShow)
+        XCTAssertFalse(try manager.isShow(channelId: "UC-news"))
+    }
+
+    /// The channel posting again before the user gets to it answers the
+    /// question on its own.
+    func testAChannelThatPostsAgainResolvesItsOwnDormancyReview() throws {
+        try automaticPass((channelId: "UC-news", isShow: true))
+        try manager.applyAutomaticVerdicts([ShowVerdict(
+            channelId: "UC-news", channelTitle: "Newsline", isShow: false, dormant: true
+        )])
+        XCTAssertTrue(try XCTUnwrap(manager.record(forChannelId: "UC-news")).pendingDormancyReview)
+
+        try manager.applyAutomaticVerdicts([ShowVerdict(
+            channelId: "UC-news", channelTitle: "Newsline", isShow: true,
+            reasons: ["Posts on a regular schedule (Tue, Fri)"]
+        )])
+
+        let record = try XCTUnwrap(manager.record(forChannelId: "UC-news"))
+        XCTAssertFalse(record.pendingDormancyReview)
+        XCTAssertEqual(record.flagOrigin, .heuristic)
+    }
+
+    func testShowsPendingDormancyReviewListsOnlyThoseAwaitingAnAnswer() throws {
+        try automaticPass((channelId: "UC-news", isShow: true), (channelId: "UC-vlog", isShow: true))
+        try manager.applyAutomaticVerdicts([ShowVerdict(
+            channelId: "UC-news", channelTitle: "Newsline", isShow: false, dormant: true
+        )])
+
+        XCTAssertEqual(try manager.showsPendingDormancyReview().map(\.channelId), ["UC-news"])
+    }
+
     // MARK: - Playlist-backed shows
 
     /// The picker hands `addPlaylistShow` choices; the refresher hands
