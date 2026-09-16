@@ -144,7 +144,10 @@ final class ShowDetectionRunnerTests: XCTestCase {
 
     // MARK: - Examining a channel once
 
-    func testASecondPassOverAnUnchangedStoreExaminesNothing() async throws {
+    /// A rejected channel's fingerprint really does skip it. A flagged show is
+    /// the deliberate exception — see the dormancy test below — so it's the
+    /// one re-examined here even though nothing about it moved.
+    func testASecondPassOverAnUnchangedStoreExaminesOnlyTheFlaggedShow() async throws {
         seedShowShapedChannel(id: "UC-bellwether", title: "The Bellwether")
         seedClipsChannel(id: "UC-clips", title: "Clips Archive")
 
@@ -152,14 +155,14 @@ final class ShowDetectionRunnerTests: XCTestCase {
         XCTAssertEqual(runner.lastExamined, 2)
 
         try await runner.detect()
-        XCTAssertEqual(runner.lastExamined, 0, "nothing moved, so there's nothing to re-judge")
-        XCTAssertEqual(runner.lastChanged, 0)
+        XCTAssertEqual(runner.lastExamined, 1, "the flagged show is re-checked; the rejected channel is skipped")
+        XCTAssertEqual(runner.lastChanged, 0, "its verdict didn't move, so nothing counts as changed")
         XCTAssertEqual(try shows.shows().count, 1, "and the catalogue is left as it was")
     }
 
     func testANewUploadPutsItsChannelBackInFrontOfTheDetector() async throws {
         seedClipsChannel(id: "UC-clips", title: "Clips Archive")
-        seedShowShapedChannel(id: "UC-bellwether", title: "The Bellwether")
+        seedClipsChannel(id: "UC-clips2", title: "Clips Archive Two")
         try await runner.detect()
 
         context.insert(Video(
@@ -176,6 +179,31 @@ final class ShowDetectionRunnerTests: XCTestCase {
 
         try await runner.detect()
         XCTAssertEqual(runner.lastExamined, 1, "only the channel whose uploads moved")
+    }
+
+    /// The fingerprint can't see a channel going quiet — its video count and
+    /// newest date don't change just because time passes. That's what the
+    /// unconditional re-check of flagged shows is for.
+    func testAFlaggedShowGoingDormantIsHeldForReviewOnTheNextPass() async throws {
+        seedShowShapedChannel(id: "UC-bellwether", title: "The Bellwether")
+        try await runner.detect()
+        XCTAssertTrue(try shows.isShow(channelId: "UC-bellwether"))
+
+        let videos = try context.fetch(FetchDescriptor<Video>())
+        let daysSinceOldestStillFresh = Double(ShowDetector.maximumDormantDays + 30)
+        for (offset, video) in videos.enumerated() {
+            video.publishedAt = Date(timeIntervalSinceNow: -(daysSinceOldestStillFresh + Double(offset)) * 86_400)
+        }
+        try context.save()
+
+        try await runner.detect()
+
+        // Still in the catalogue — going quiet is the user's call, not the
+        // detector's, so it's held for review rather than dropped.
+        XCTAssertTrue(try shows.isShow(channelId: "UC-bellwether"))
+        let record = try XCTUnwrap(shows.record(forChannelId: "UC-bellwether"))
+        XCTAssertTrue(record.pendingDormancyReview)
+        XCTAssertTrue(record.detectorReasons.contains { $0.hasPrefix("Hasn't posted in") }, "\(record.detectorReasons)")
     }
 
     /// Changing the heuristic has to reach channels already examined under the

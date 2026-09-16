@@ -114,6 +114,12 @@ final class Show {
     /// Why the detector flagged this channel, in its own words, so a guess can
     /// be read and trusted or corrected. Empty for a hand-made flag.
     var detectorReasons: [String] = []
+    /// Set when a heuristic show's latest pass found the channel's gone quiet.
+    /// A show going dormant is the user's call, not the detector's: the row is
+    /// held rather than dropped, and this is what asks. `markAsShow` and
+    /// `markAsNotAShow` both clear it, whichever way the user answers; so does
+    /// the detector itself, if the channel starts posting again first.
+    var pendingDormancyReview: Bool = false
     /// Season names in running order, for a show built from several
     /// playlists. Empty for a show backed by one playlist, which has nothing
     /// to pick between, and for every channel-backed show.

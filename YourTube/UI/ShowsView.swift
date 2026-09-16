@@ -24,6 +24,7 @@ struct ShowsView: View {
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 28) {
+                    DormancyReviewSection()
                     ContinueWatchingSection()
                     UpNextSection()
                     YourShowsSection()
@@ -46,6 +47,64 @@ struct ShowsView: View {
                 ShowPageView(show: show)
             }
         }
+    }
+}
+
+/// Shows the automatic pass wants to drop because the channel's gone quiet,
+/// but won't without asking first — see `ShowManager.applyAutomaticVerdicts`.
+/// One banner per show, since more than one can go dormant independently and
+/// each needs its own answer.
+private struct DormancyReviewSection: View {
+    @Query(filter: #Predicate<Show> { $0.pendingDormancyReview })
+    private var pending: [Show]
+
+    var body: some View {
+        if !pending.isEmpty {
+            VStack(spacing: 8) {
+                ForEach(pending) { show in
+                    DormancyReviewBanner(show: show)
+                }
+            }
+        }
+    }
+}
+
+/// "This channel's gone quiet — still a show?" Deliberately an inline banner
+/// rather than a blocking alert, the way `ReauthBanner` in `FeedView` is: the
+/// answer can wait, and it sits right above the show it's asking about.
+private struct DormancyReviewBanner: View {
+    @Environment(AppServices.self) private var services
+    let show: Show
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "moon.zzz")
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(show.title)
+                    .font(.subheadline.weight(.semibold))
+                Text(show.detectorReasons.first ?? "Hasn't posted in a while")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Remove") { resolve(keep: false) }
+                .font(.subheadline)
+            Button("Keep") { resolve(keep: true) }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 10)
+        .background(.secondary.opacity(0.12))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    /// Either answer resolves the review: `setIsShow` reaches `markAsShow` or
+    /// `markAsNotAShow`, both of which clear `pendingDormancyReview` as part
+    /// of recording the user's decision.
+    private func resolve(keep: Bool) {
+        try? services.shows.setIsShow(keep, channelId: show.channelId, channelTitle: show.title)
     }
 }
 

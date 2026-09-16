@@ -31,8 +31,17 @@ extension StoreWriter {
         // a playlist-backed show's forced override is the user's opinion
         // about that playlist, not about whether the channel itself is a
         // show, so it must not remove the channel from consideration.
-        let decided = Set(try modelContext.fetch(FetchDescriptor<Show>())
-            .filter { !$0.isPlaylistBacked && ($0.override != .none || $0.flagOrigin == .user) }
+        let channelShows = try modelContext.fetch(FetchDescriptor<Show>()).filter { !$0.isPlaylistBacked }
+        let decided = Set(channelShows
+            .filter { $0.override != .none || $0.flagOrigin == .user }
+            .map(\.channelId))
+        // A heuristic verdict can go stale purely because time passed — a
+        // channel that's gone dark looks identical to the fingerprint forever,
+        // since nothing about its stored videos changes. So a channel we've
+        // already flagged as a show is re-examined every pass rather than only
+        // when its uploads move, to catch it going dormant.
+        let heuristicallyFlagged = Set(channelShows
+            .filter { $0.override == .none && $0.flagOrigin == .heuristic }
             .map(\.channelId))
 
         var verdicts: [ShowVerdict] = []
@@ -44,7 +53,8 @@ extension StoreWriter {
 
             let videos = byChannel[channelId] ?? []
             let fingerprint = ShowDetectionRunner.fingerprint(of: videos)
-            guard fingerprints[channelId] != fingerprint else { continue }
+            let mustRecheck = heuristicallyFlagged.contains(channelId)
+            guard mustRecheck || fingerprints[channelId] != fingerprint else { continue }
 
             examined += 1
             fingerprints[channelId] = fingerprint
