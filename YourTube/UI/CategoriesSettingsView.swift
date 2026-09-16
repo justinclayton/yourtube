@@ -16,6 +16,10 @@ struct CategoriesSettingsView: View {
     @State private var renameText = ""
     @State private var error: String?
 
+    @State private var isExporting = false
+    @State private var exportURL: URL?
+    @State private var exportError: String?
+
     private var manager: CategoryManager { services.categories }
 
     private var channelCountByCategory: [PersistentIdentifier: Int] {
@@ -33,6 +37,7 @@ struct CategoriesSettingsView: View {
         Form {
             classifierSection
             categoriesSection
+            exportSection
         }
         .navigationTitle("Categories")
         .alert("New category", isPresented: $isAdding) {
@@ -141,6 +146,58 @@ struct CategoriesSettingsView: View {
             Text("Categories")
         } footer: {
             Text("Tap to rename. A channel can be in several categories; deleting one drops it from those channels without touching their other categories. After adding a category, use \"Re-sort all\" to let the model consider it.")
+        }
+    }
+
+    /// The classifier's evidence, as a file for the share sheet: the
+    /// measuring stick for later classifier changes, and the user's hand
+    /// corrections are its labeled data.
+    private var exportSection: some View {
+        Section {
+            Button {
+                Task { await export() }
+            } label: {
+                if isExporting {
+                    ProgressView()
+                } else {
+                    Text("Export classifier evidence")
+                }
+            }
+            .disabled(isExporting)
+
+            if let exportURL {
+                ShareLink(item: exportURL) {
+                    Label("Share export", systemImage: "square.and.arrow.up")
+                }
+            }
+            if let exportError {
+                Text(exportError).font(.caption).foregroundStyle(.red)
+            }
+        } header: {
+            Text("Export")
+        } footer: {
+            Text("""
+            One JSON record per subscription: the channel description and \
+            recent titles the classifier sees today, what it answered last \
+            time it ran, and any category you've corrected by hand. Nothing \
+            leaves the phone except through the share sheet you choose.
+            """)
+        }
+    }
+
+    private func export() async {
+        isExporting = true
+        defer { isExporting = false }
+        do {
+            let data = try await manager.exportClassifierEvidence()
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("yourtube-categories-\(Int(Date.now.timeIntervalSince1970))")
+                .appendingPathExtension("json")
+            try data.write(to: url, options: .atomic)
+            exportURL = url
+            exportError = nil
+        } catch {
+            exportError = error.localizedDescription
         }
     }
 

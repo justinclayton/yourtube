@@ -484,6 +484,10 @@ private struct CategoryPickerSheet: View {
     /// The detector's reasons, when it was the detector that flagged this
     /// channel. Empty for a hand-made flag.
     @State private var showReasons: [String] = []
+    /// The category classifier's evidence for this channel's rule, when it
+    /// was the classifier that filed it. Nil for a hand-filed channel, or one
+    /// never classified at all.
+    @State private var classifierEvidence: ChannelRule?
     @State private var error: String?
 
     private var topicCategories: [VideoCollection] { categories.filter { !$0.isPriority } }
@@ -538,6 +542,24 @@ private struct CategoryPickerSheet: View {
                 } footer: {
                     Text("Pick as many as fit. The channel shows up under each one.")
                 }
+                if let classifierEvidence {
+                    Section {
+                        VStack(alignment: .leading, spacing: 6) {
+                            if let raw = classifierEvidence.classifierRawAnswer {
+                                Text("Model answered: " + (raw.isEmpty ? "nothing usable" : raw.joined(separator: ", ")))
+                                if let dominant = classifierEvidence.classifierDominantCategoryId {
+                                    Text("YouTube files it under \(YouTubeCategory.name(forId: dominant))")
+                                }
+                            } else {
+                                Text("Not recorded")
+                            }
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    } header: {
+                        Text("Why")
+                    }
+                }
                 if let error {
                     Text(error).foregroundStyle(.red).font(.caption)
                 }
@@ -556,6 +578,9 @@ private struct CategoryPickerSheet: View {
                 isShow = (try? services.shows.isShow(channelId: subscription.channelId)) ?? false
                 let record = try? services.shows.record(forChannelId: subscription.channelId)
                 showReasons = record?.flagOrigin == .heuristic ? (record?.detectorReasons ?? []) : []
+                // A user-set rule shows no reasons: it's the user's call now,
+                // not the classifier's guess.
+                classifierEvidence = (rule?.isUserSet == false && rule?.classifiedAt != nil) ? rule : nil
             }
         }
         .presentationDetents([.medium, .large])
@@ -612,6 +637,9 @@ private struct CategoryPickerSheet: View {
                 to: topicCategories.filter { ids.contains($0.persistentModelID) }
             )
             selected = ids
+            // The filing is the user's now; the classifier's evidence stays
+            // on the rule for the export, but "Why" is for a guess.
+            classifierEvidence = nil
             error = nil
         } catch {
             self.error = error.localizedDescription

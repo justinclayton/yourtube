@@ -18,7 +18,9 @@ private struct StubCategorizer: ChannelCategorizer {
     }
 }
 
-private func guess(_ names: String...) -> CategoryGuess { CategoryGuess(categories: names) }
+private func guess(_ names: String..., raw: [String]? = nil) -> CategoryGuess {
+    CategoryGuess(categories: names, rawCategories: raw ?? names)
+}
 
 @MainActor
 final class CategoryManagerTests: XCTestCase {
@@ -47,6 +49,25 @@ final class CategoryManagerTests: XCTestCase {
         // before classification is started.
         try? context.save()
         return sub
+    }
+
+    /// Inserts a video for a channel with a given YouTube category, so the
+    /// classifier has something to read a dominant category off of.
+    @discardableResult
+    private func addVideo(channelId: String, categoryId: String?, title: String = "V") -> Video {
+        let video = Video(
+            videoId: "\(channelId)-\(UUID().uuidString)",
+            channelId: channelId,
+            channelTitle: channelId,
+            title: title,
+            videoDescription: "",
+            publishedAt: .now,
+            durationSeconds: 600,
+            youtubeCategoryId: categoryId
+        )
+        context.insert(video)
+        try? context.save()
+        return video
     }
 
     // MARK: - Seeding
@@ -345,6 +366,147 @@ final class CategoryManagerTests: XCTestCase {
             XCTFail("expected failed status, got \(manager.status)")
         }
         XCTAssertFalse(manager.canClassify)
+    }
+
+    // MARK: - Classifier evidence
+
+    func testClassifyRecordsRawAnswerAndDominantCategory() async throws {
+        let stub = StubCategorizer(answers: [
+            "Auto Focus": guess("Cars", raw: ["Cars", "cars & trucks"]),
+        ])
+        let manager = makeManager(stub)
+        let sub = subscribe("Auto Focus")
+        addVideo(channelId: sub.channelId, categoryId: "2")
+        addVideo(channelId: sub.channelId, categoryId: "2")
+        addVideo(channelId: sub.channelId, categoryId: "10")
+
+        await manager.classify(scope: .unassigned)
+
+        let rule = try XCTUnwrap(manager.rule(forChannelId: sub.channelId))
+        XCTAssertEqual(rule.classifierRawAnswer, ["Cars", "cars & trucks"])
+        XCTAssertEqual(rule.classifierResolvedCategories, ["Cars"])
+        XCTAssertEqual(rule.classifierDominantCategoryId, "2")
+        XCTAssertEqual(YouTubeCategory.name(forId: rule.classifierDominantCategoryId!), "Autos & Vehicles")
+    }
+
+    /// An unsure guess is still a recorded answer — an empty one — distinct
+    /// from a rule that's never been classified at all.
+    func testUnsureGuessRecordsEmptyEvidenceNotNil() async throws {
+        let stub = StubCategorizer(answers: ["Mystery": .unsure])
+        let manager = makeManager(stub)
+        let sub = subscribe("Mystery")
+
+        await manager.classify(scope: .unassigned)
+
+        let rule = try XCTUnwrap(manager.rule(forChannelId: sub.channelId))
+        XCTAssertEqual(rule.classifierRawAnswer, [])
+        XCTAssertEqual(rule.classifierResolvedCategories, [])
+    }
+
+    /// A channel filed by hand from the start has no automatic pass behind
+    /// it, so there's nothing to show or export.
+    func testHandFiledChannelHasNoClassifierEvidence() throws {
+        let manager = makeManager(nil)
+        let sub = subscribe("Manual")
+        let comedy = try XCTUnwrap(manager.categories().first { $0.name == "Comedy" })
+        try manager.assign(channelId: sub.channelId, channelTitle: sub.title, to: [comedy])
+
+        let rule = try XCTUnwrap(manager.rule(forChannelId: sub.channelId))
+        XCTAssertNil(rule.classifierRawAnswer)
+        XCTAssertNil(rule.classifierResolvedCategories)
+        XCTAssertNil(rule.classifierDominantCategoryId)
+        XCTAssertTrue(rule.isUserSet)
+    }
+
+    /// A correction after an automatic pass keeps the automatic evidence on
+    /// the rule — the export's whole point is comparing the two.
+    func testCorrectingAnAutomaticRuleKeepsItsEvidence() async throws {
+        let stub = StubCategorizer(answers: ["Keep": guess("Cars")])
+        let manager = makeManager(stub)
+        let sub = subscribe("Keep")
+        await manager.classify(scope: .unassigned)
+        let food = try XCTUnwrap(manager.categories().first { $0.name == "Food" })
+
+        try manager.assign(channelId: sub.channelId, channelTitle: sub.title, to: [food])
+
+        let rule = try XCTUnwrap(manager.rule(forChannelId: sub.channelId))
+        XCTAssertTrue(rule.isUserSet)
+        XCTAssertEqual(rule.collections.map(\.name), ["Food"], "the user's filing wins")
+        XCTAssertEqual(rule.classifierRawAnswer, ["Cars"], "but the automatic answer is still on record")
+        XCTAssertEqual(rule.classifierResolvedCategories, ["Cars"])
+    }
+
+    // MARK: - Export
+
+    func testExportIncludesOneRecordPerSubscriptionWithFullShape() async throws {
+        let stub = StubCategorizer(answers: [
+            "Auto Focus": guess("Cars", raw: ["Cars"]),
+        ])
+        let manager = makeManager(stub)
+        let sub = subscribe("Auto Focus")
+        addVideo(channelId: sub.channelId, categoryId: "2", title: "First video")
+        await manager.classify(scope: .unassigned)
+
+        let data = try await manager.exportClassifierEvidence()
+        let records = try JSONDecoder().decode([StoreWriter.ChannelClassifierRecord].self, from: data)
+
+        XCTAssertEqual(records.count, 1)
+        let record = try XCTUnwrap(records.first)
+        XCTAssertEqual(record.channelId, sub.channelId)
+        XCTAssertEqual(record.channelTitle, "Auto Focus")
+        XCTAssertEqual(record.about, "")
+        XCTAssertEqual(record.recentVideoTitles, ["First video"])
+        XCTAssertEqual(record.rawAnswer, ["Cars"])
+        XCTAssertEqual(record.resolvedCategories, ["Cars"])
+        XCTAssertEqual(record.dominantYouTubeCategory, "Autos & Vehicles")
+        XCTAssertFalse(record.isUserSet)
+        XCTAssertNil(record.userCategories)
+    }
+
+    /// The measuring stick for later classifier changes: a corrected channel
+    /// carries both the automatic answer and what the user chose instead.
+    func testExportRecordsBothAutomaticAnswerAndUserCorrection() async throws {
+        let stub = StubCategorizer(answers: ["Keep": guess("Cars")])
+        let manager = makeManager(stub)
+        let sub = subscribe("Keep")
+        await manager.classify(scope: .unassigned)
+        let food = try XCTUnwrap(manager.categories().first { $0.name == "Food" })
+        try manager.assign(channelId: sub.channelId, channelTitle: sub.title, to: [food])
+
+        let data = try await manager.exportClassifierEvidence()
+        let records = try JSONDecoder().decode([StoreWriter.ChannelClassifierRecord].self, from: data)
+        let record = try XCTUnwrap(records.first { $0.channelId == sub.channelId })
+
+        XCTAssertTrue(record.isUserSet)
+        XCTAssertEqual(record.userCategories, ["Food"])
+        XCTAssertEqual(record.rawAnswer, ["Cars"])
+        XCTAssertEqual(record.resolvedCategories, ["Cars"])
+    }
+
+    /// A rule classified before this change carries no evidence; the export
+    /// must say so rather than crash or invent an answer.
+    func testExportShowsNotRecordedForPreExistingRule() async throws {
+        let manager = makeManager(nil)
+        let sub = subscribe("Old")
+        let legacyRule = ChannelRule(
+            channelId: sub.channelId,
+            channelTitle: sub.title,
+            collections: [],
+            isUserSet: false,
+            classifiedAt: .now
+        )
+        context.insert(legacyRule)
+        try context.save()
+
+        let data = try await manager.exportClassifierEvidence()
+        let records = try JSONDecoder().decode([StoreWriter.ChannelClassifierRecord].self, from: data)
+        let record = try XCTUnwrap(records.first { $0.channelId == sub.channelId })
+
+        XCTAssertNil(record.rawAnswer)
+        XCTAssertNil(record.resolvedCategories)
+        XCTAssertNil(record.dominantYouTubeCategory)
+        XCTAssertFalse(record.isUserSet)
+        XCTAssertNil(record.userCategories)
     }
 
     // MARK: - Category editing
