@@ -213,14 +213,60 @@ final class CategoryManagerTests: XCTestCase {
         let both = subscribe("Both")
         let onlyPriority = subscribe("OnlyPriority")
         let comedy = try XCTUnwrap(manager.categories().first { $0.name == "Comedy" })
-        let priority = try XCTUnwrap(manager.priorityCategory())
         try manager.assign(channelId: both.channelId, channelTitle: both.title, to: [comedy])
         try manager.setPriority(true, channelId: both.channelId, channelTitle: both.title)
         try manager.setPriority(true, channelId: onlyPriority.channelId, channelTitle: onlyPriority.title)
 
-        XCTAssertEqual(Set(try manager.channelIds(in: priority)), Set([both.channelId, onlyPriority.channelId]))
-        XCTAssertEqual(try manager.channelIds(in: comedy), [both.channelId])
-        XCTAssertEqual(try manager.channelIds(in: nil), [onlyPriority.channelId])
+        XCTAssertEqual(
+            Set(try manager.channelIds(in: CategoryManager.priorityName)),
+            Set([both.channelId, onlyPriority.channelId])
+        )
+        XCTAssertEqual(try manager.channelIds(in: comedy.name), [both.channelId])
+        XCTAssertEqual(try manager.channelIds(in: CategoryManager.uncategorizedName), [onlyPriority.channelId])
+    }
+
+    /// "All" (nil, and the empty string the chip row treats the same way) is
+    /// every subscribed channel, filed or not.
+    func testChannelIdsForAllReturnsEverySubscription() throws {
+        let manager = makeManager(nil)
+        let a = subscribe("A")
+        let b = subscribe("B")
+        XCTAssertEqual(Set(try manager.channelIds(in: nil)), Set([a.channelId, b.channelId]))
+        XCTAssertEqual(Set(try manager.channelIds(in: "")), Set([a.channelId, b.channelId]))
+    }
+
+    /// A channel with two topic categories appears under each of its chips.
+    func testMultiTopicChannelAppearsUnderEachOfItsCategories() throws {
+        let manager = makeManager(nil)
+        let sub = subscribe("Multi")
+        let comedy = try XCTUnwrap(manager.categories().first { $0.name == "Comedy" })
+        let food = try XCTUnwrap(manager.categories().first { $0.name == "Food" })
+        try manager.assign(channelId: sub.channelId, channelTitle: sub.title, to: [comedy, food])
+
+        XCTAssertEqual(try manager.channelIds(in: "Comedy"), [sub.channelId])
+        XCTAssertEqual(try manager.channelIds(in: "Food"), [sub.channelId])
+    }
+
+    /// A Priority-only channel — no topic category at all — still shows up
+    /// under Uncategorized, since Priority says nothing about topic.
+    func testPriorityOnlyChannelAppearsUnderUncategorized() throws {
+        let manager = makeManager(nil)
+        let sub = subscribe("OnlyPriority")
+        try manager.setPriority(true, channelId: sub.channelId, channelTitle: sub.title)
+
+        XCTAssertEqual(try manager.channelIds(in: CategoryManager.uncategorizedName), [sub.channelId])
+    }
+
+    /// Deleting a category drops it from the chip list, which is what lets
+    /// each chip row's Binding fall back to "All" instead of pointing at a
+    /// name that no longer exists.
+    func testChipNamesDropsADeletedCategory() throws {
+        let manager = makeManager(nil)
+        let comedy = try XCTUnwrap(manager.categories().first { $0.name == "Comedy" })
+
+        try manager.delete(comedy)
+
+        XCTAssertFalse(try manager.chipNames().contains("Comedy"))
     }
 
     // MARK: - Classification
@@ -638,14 +684,11 @@ final class CategoryManagerTests: XCTestCase {
         await manager.classify(scope: .unassigned)
         let untouched = subscribe("Untouched")
 
-        let cars = try XCTUnwrap(manager.categories().first { $0.name == "Cars" })
-        let comedy = try XCTUnwrap(manager.categories().first { $0.name == "Comedy" })
-        let food = try XCTUnwrap(manager.categories().first { $0.name == "Food" })
-        XCTAssertEqual(Set(try manager.channelIds(in: cars)), Set([filed.channelId, both.channelId]))
-        XCTAssertEqual(try manager.channelIds(in: comedy), [both.channelId])
-        XCTAssertEqual(try manager.channelIds(in: food), [])
+        XCTAssertEqual(Set(try manager.channelIds(in: "Cars")), Set([filed.channelId, both.channelId]))
+        XCTAssertEqual(try manager.channelIds(in: "Comedy"), [both.channelId])
+        XCTAssertEqual(try manager.channelIds(in: "Food"), [])
         XCTAssertEqual(
-            Set(try manager.channelIds(in: nil)),
+            Set(try manager.channelIds(in: CategoryManager.uncategorizedName)),
             Set([unsure.channelId, untouched.channelId])
         )
     }
