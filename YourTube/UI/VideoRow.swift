@@ -37,13 +37,13 @@ struct VideoRow: View {
 
     private var thumbnail: some View {
         ZStack(alignment: .bottomTrailing) {
-            AsyncImage(url: video.thumbnailURL.flatMap(URL.init(string:))) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable().aspectRatio(contentMode: .fill)
-                default:
-                    Rectangle().fill(.quaternary)
-                }
+            CachedAsyncImage(
+                url: video.thumbnailURL.flatMap(URL.init(string:)),
+                size: CGSize(width: 120, height: 68)
+            ) { image in
+                image.resizable().aspectRatio(contentMode: .fill)
+            } placeholder: {
+                Rectangle().fill(.quaternary)
             }
             .frame(width: 120, height: 68)
             .clipShape(RoundedRectangle(cornerRadius: 6))
