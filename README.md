@@ -385,8 +385,9 @@ rewrites the show episodes again without a second stripping pass.
 
 ### Caching
 
-Cleaning runs in the background after launch and after each refresh, never in
-front of the feed: results are cached on `Video` (`cleanedTitle`,
+Cleaning runs in the background after launch and after each refresh, on its
+own `ModelContext` (see "Where the writes go") and never in front of the
+feed: results are cached on `Video` (`cleanedTitle`,
 `strippedTitle`, `episodeNumber`, `seasonNumber`) and a video with none yet
 shows its raw title. Each video records the `TitleCleaner.version` that
 produced its result, exactly as the Shorts heuristic does. That version is the
@@ -413,9 +414,10 @@ fixed and editable in Settings rather than free-form tags, because a small
 model invents a long tail of near-duplicate tags and that's the opposite of
 calm.
 
-- Runs once per channel in the background after launch and after each refresh;
-  ~1.5 channels/second on an M4, so a 600-channel library takes about 7 minutes
-  the first time, then only new subscriptions are classified.
+- Runs once per channel in the background after launch and after each refresh,
+  on its own `ModelContext` (see "Where the writes go"); ~1.5 channels/second
+  on an M4, so a 600-channel library takes about 7 minutes the first time,
+  then only new subscriptions are classified.
 - Each answer is matched against the list with a tolerant word-overlap
   matcher. Off-list answers are dropped individually; a channel with nothing
   left, or one the model refuses (its safety guardrail trips on some names),
@@ -476,6 +478,27 @@ YourTube/
   UI/         SwiftUI views
 YourTubeTests/
 ```
+
+### Where the writes go
+
+Anything the user does writes through the main `ModelContext`, so a tap
+reaches the screen at once. Everything that goes over the store in bulk —
+title cleaning, category classification, show detection, and storing what a
+refresh found — writes through `StoreWriter` instead, a `@ModelActor` with a
+context of its own, in chunks of 25 rows.
+
+That split is not tidiness. `@Query` observes the main context live, unsaved
+edits included, so a batch pass that wrote a row at a time through it made
+every live query in the app re-fetch a row at a time; while the launch title
+rewrite ran, the main thread spent 55% of its time evaluating the feed's body
+and dropped around eight frames a second. On its own context the same pass
+costs one merge per chunk. There is one writer, not one per pass, because the
+passes overlap at launch and two of them write the same `Video` rows.
+
+The managers keep the settings, the decision about when to run, and the
+observable status the views bind to; progress is reported to the main actor at
+most a hundred times per run, so it can't take the place of the churn it
+replaced.
 
 ## Development loop
 
@@ -595,7 +618,9 @@ Run with Cmd-U. Coverage is concentrated where the risk is:
   stubbed responses. Pagination gets attention because a loop there would burn
   the daily quota.
 - `CategoryManagerTests` — rule migration, multi-answer resolution, and the
-  "contains" feed predicate, against a stub classifier.
+  "contains" feed predicate, against a stub classifier. Along with
+  `TitleCleanerTests` and `ShowDetectionRunnerTests`, it pins that a batch pass
+  leaves nothing pending on the main context.
 - `ShowManagerTests` — the show catalogue: membership for both kinds of show
   (a channel's non-Short videos, a playlist's items — Shorts are never
   episodes either way), seasons and the picker's filter,
