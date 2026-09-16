@@ -135,6 +135,12 @@ watched — so triage is a gesture, not a trip into the player. Category
 chips, the Priority chip, the Shorts toggle, the per-channel daily cap, and
 local search all keep working over whatever's left in the inbox.
 
+The inbox is read a page at a time — the newest 300 rows, with a "Show older"
+row at the foot for the next 300 — so the day grouping and the daily cap only
+ever run over a screenful of a backlog that can be thousands long. Search is
+not paged: it is answered from the whole inbox, so a search still finds a
+video from 2019.
+
 Shows is the calmer library view of that same content, and holds **Up
 Next**: the list of videos you've earmarked by hand, from the feed, the
 player, or a show page. The app never adds to it and never treats its order
