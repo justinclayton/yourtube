@@ -418,17 +418,29 @@ two differ, so nothing the app changed is hidden.
 
 Subscribed channels are sorted into categories (Comedy, Music & Audio Gear,
 Tech & Engineering, ...) by Apple's on-device language model via the
-Foundation Models framework. Input is the channel name, its "about" text and
-its ten most recent video titles; output is constrained to one to three names
-from the current category list, most relevant first. Nothing leaves the device
-and there's no API cost.
+Foundation Models framework. Input is the channel name, its "about" text, its
+ten most recent video titles, and — when there is one — how YouTube itself
+files the channel. Nothing leaves the device and there's no API cost.
 
-A channel can carry several categories at once: a comedian's interview show
-is filed under both Comedy and Podcasts & Interviews, and shows up under every
-feed chip it carries. The chips themselves stay single-select. The taxonomy is
-fixed and editable in Settings rather than free-form tags, because a small
-model invents a long tail of near-duplicate tags and that's the opposite of
-calm.
+**The policy is one category from the model, a second only from grounded
+data.** The model answers with exactly one category, through a generation
+schema whose only choices are the current taxonomy names, so an off-list
+answer is impossible rather than dropped. Sampling is greedy, so the same
+evidence gives the same answer on a re-sort. The second category, when there
+is one, is not another guess: it comes from YouTube's own filing (below) and
+only when that disagrees with the model. There is no third.
+
+That's precision over recall on purpose: a wrong chip is visible on every
+screen the channel appears on, and a missing one isn't. An earlier version
+asked for one to three names and let a fuzzy matcher map free text back onto
+the list, which padded most channels out to two or three categories and filed
+them somewhere new on every re-sort.
+
+A channel can still carry several categories at once — a comedian's interview
+show is Comedy and Podcasts & Interviews — and shows up under every feed chip
+it carries. The chips themselves stay single-select. The taxonomy is fixed and
+editable in Settings rather than free-form tags, because a small model invents
+a long tail of near-duplicate tags and that's the opposite of calm.
 
 - Runs once per channel in the background after launch and after each refresh,
   on its own `ModelContext` (see "Where the writes go"); ~1.5 channels/second
@@ -439,10 +451,13 @@ calm.
   classifier reads being new, never just one new upload — the way the show
   detector re-examines a channel only when its fingerprint moves. A channel
   filed by hand is never re-examined this way.
-- Each answer is matched against the list with a tolerant word-overlap
-  matcher. Off-list answers are dropped individually; a channel with nothing
-  left, or one the model refuses (its safety guardrail trips on some names),
-  stays **Uncategorized** rather than being filed wrongly.
+- A channel the model refuses (its safety guardrail trips on some names) stays
+  **Uncategorized** rather than being filed wrongly — and so does one it
+  wouldn't commit on, even when YouTube's own filing has an opinion: the
+  second category is a second, never a first.
+- Every automatic answer records which category came from the model and which
+  from YouTube. The Categories sheet's "Why" section names both, and so does
+  the evidence export in Settings → Categories.
 - Filing a channel by hand (swipe or long-press in Channels) opens a
   multi-select of categories and is permanent: the classifier never
   overwrites a user-set assignment.
@@ -451,7 +466,7 @@ calm.
   model consider it.
 - Bumping `CategoryManager.classifierVersion` makes the next launch re-run the
   classifier over every non-user-set channel once, which is how channels filed
-  under a single category before multi-tagging pick up their extra tags.
+  under three guesses by an older version get re-sorted under the current one.
 
 ### YouTube's own category
 
@@ -467,9 +482,13 @@ Animation → Film & TV), suggests that category with a readable reason
 category don't vote, and YouTube's catch-all categories — People & Blogs,
 Entertainment, Education — map to nothing, since uploaders use them as
 defaults rather than a real topic. The mapping targets the taxonomy's default
-names, so a renamed or deleted target simply produces no suggestion. This is
-the signal alone, tested against its own corpus; it isn't yet wired into the
-classifier above.
+names, so a renamed or deleted target simply produces no suggestion.
+
+The classifier uses it twice. It goes into the prompt as a prior ("YouTube
+files most of its videos under Gaming, which is usually Games") so the model
+has the uploader's own judgement in front of it, and, when the category it
+maps to differs from the model's answer, it becomes the channel's second
+category — the only way a channel gets one.
 
 ### Priority
 
@@ -486,7 +505,9 @@ badge on purpose.
 Requires iOS 26 and a device that supports Apple Intelligence (iPhone 15 Pro or
 later). Elsewhere the feature degrades to manual filing only. The classifier's
 self-reported confidence turned out to be noise — it hedged on more than half
-of clear-cut channels — so the app trusts the category answers alone.
+of clear-cut channels — so the app trusts the category answer alone. The
+simulator's model is not the phone's, so the tests cover the wiring and the
+judgement is checked on the phone, against the evidence export.
 
 ## API quota
 
@@ -656,8 +677,9 @@ Run with Cmd-U. Coverage is concentrated where the risk is:
 - `YouTubeAPITests` — pagination, batching, and error classification, against
   stubbed responses. Pagination gets attention because a loop there would burn
   the daily quota.
-- `CategoryManagerTests` — rule migration, multi-answer resolution, and the
-  "contains" feed predicate, against a stub classifier. Along with
+- `CategoryManagerTests` — rule migration, the one-from-the-model/one-from-
+  YouTube decision, and the "contains" feed predicate, against a stub
+  classifier. Along with
   `TitleCleanerTests` and `ShowDetectionRunnerTests`, it pins that a batch pass
   leaves nothing pending on the main context.
 - `StoreCountsTests` — the badge and library counts, now that they're read

@@ -495,8 +495,24 @@ struct CategoryPickerSheet: View {
                     Section {
                         VStack(alignment: .leading, spacing: 6) {
                             if let raw = classifierEvidence.classifierRawAnswer {
-                                Text(raw.isEmpty ? "No usable answer" : raw.joined(separator: ", "))
-                                if let dominant = classifierEvidence.classifierDominantCategoryId {
+                                // Which half of a two-chip answer is wrong is
+                                // the first thing to know before correcting
+                                // it, so the model's category and YouTube's
+                                // are named separately.
+                                if let model = classifierEvidence.classifierModelCategory {
+                                    Text("\u{201C}\(model)\u{201D} — chosen by the on-device model")
+                                } else {
+                                    Text(raw.isEmpty ? "No usable answer" : raw.joined(separator: ", "))
+                                }
+                                if let youtube = classifierEvidence.classifierYouTubeCategory {
+                                    let reason = classifierEvidence.classifierYouTubeReason
+                                        ?? "YouTube files most of its videos there"
+                                    Text("\u{201C}\(youtube)\u{201D} — added from YouTube's own filing: \(reason)")
+                                } else if let dominant = classifierEvidence.classifierDominantCategoryId {
+                                    // No second category, so YouTube's filing
+                                    // is context rather than a source: either
+                                    // it agreed with the model or it was one
+                                    // of the catch-alls that means nothing.
                                     Text("YouTube files it under \(YouTubeCategory.name(forId: dominant))")
                                 }
                             } else {

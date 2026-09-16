@@ -3,9 +3,11 @@ import SwiftData
 import Observation
 
 /// Owns categories (`VideoCollection`) and channel assignments (`ChannelRule`),
-/// and drives the on-device classifier over subscribed channels. A channel can
-/// carry up to three topic categories at once, plus the built-in Priority tag,
-/// which only the user assigns and which survives every automatic pass.
+/// and drives the on-device classifier over subscribed channels. A channel
+/// carries at most two automatic topic categories — one from the model, one
+/// from YouTube's own filing (see `CategoryDecision`) — plus the built-in
+/// Priority tag, which only the user assigns and which survives every
+/// automatic pass.
 ///
 /// Classification is one call per channel, run sequentially in the background;
 /// a few hundred channels take a few minutes on first launch and are then
@@ -71,7 +73,11 @@ final class CategoryManager {
     ///
     /// 3: multi-tagging. Channels filed under one category get a chance to
     /// pick up a second or third.
-    static let classifierVersion = 3
+    /// 4: one grounded answer. The model is constrained to a single on-list
+    /// category and sampled greedily, and a second category can only come
+    /// from YouTube's own filing — so every channel padded out to two or
+    /// three guesses needs re-sorting once.
+    static let classifierVersion = 4
     static let classifierVersionKey = "categories.classifierVersion"
 
     /// Which scope the automatic launch-time pass should use.
