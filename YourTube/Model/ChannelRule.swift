@@ -35,6 +35,23 @@ final class ChannelRule {
     /// When the classifier last produced this rule. Nil for user-set rules.
     var classifiedAt: Date?
 
+    /// The model's answer, verbatim, before `CategoryPrompt.resolve` matched
+    /// it against the taxonomy — what the classifier was told to say. Nil
+    /// means no automatic pass has recorded evidence for this rule yet:
+    /// either it's never been classified under this version, or it's a rule
+    /// filed by hand from the start. Never set for a user-set rule. Optional
+    /// with no default so existing stores open without a migration.
+    var classifierRawAnswer: [String]?
+    /// The classifier's resolved category names at the time it last ran, as
+    /// a snapshot independent of `collections` — which the user may have
+    /// edited since. Nil alongside `classifierRawAnswer`.
+    var classifierResolvedCategories: [String]?
+    /// The channel's dominant YouTube video category (`Video.youtubeCategoryId`)
+    /// as of the last automatic pass, e.g. `"24"` for Entertainment. Look up
+    /// the display name with `YouTubeCategory.name(forId:)`. Nil alongside
+    /// `classifierRawAnswer`.
+    var classifierDominantCategoryId: String?
+
     init(
         channelId: String,
         channelTitle: String,

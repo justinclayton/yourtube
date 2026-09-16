@@ -374,4 +374,16 @@ final class CategoryManager {
         guard case .running = status else { return }
         status = .running(completed: completed, total: total)
     }
+
+    // MARK: - Export
+
+    /// One JSON document, one record per subscribed channel: what the
+    /// classifier saw and answered, and any correction the user has since
+    /// made by hand. See `StoreWriter.ChannelClassifierRecord`.
+    func exportClassifierEvidence() async throws -> Data {
+        let records = try await writer.exportClassifierEvidence(recentTitlesPerChannel: recentTitlesPerChannel)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try encoder.encode(records)
+    }
 }

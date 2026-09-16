@@ -15,6 +15,11 @@ struct CategoryGuess: Sendable, Equatable {
     /// Empty if the model wouldn't commit or answered entirely off-list;
     /// the channel then stays Uncategorised.
     var categories: [String]
+    /// What the model actually said, before `CategoryPrompt.resolve` matched
+    /// it against the taxonomy — kept so a wrong guess can be understood
+    /// rather than just overturned. Defaults to empty for callers (stubs,
+    /// `.unsure`) that don't model a raw answer.
+    var rawCategories: [String] = []
 
     static let unsure = CategoryGuess(categories: [])
 }
@@ -199,7 +204,7 @@ struct FoundationModelCategorizer: ChannelCategorizer {
         )
         let resolved = CategoryPrompt.resolve(response.content.categories, among: categories)
         Self.log.notice("\(channel.title, privacy: .public) -> \(response.content.categories.joined(separator: " | "), privacy: .public) resolved=\(resolved.joined(separator: " | "), privacy: .public)")
-        return CategoryGuess(categories: resolved)
+        return CategoryGuess(categories: resolved, rawCategories: response.content.categories)
     }
 }
 #endif
