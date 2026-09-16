@@ -21,17 +21,28 @@ final class TitleRewriterTests: XCTestCase {
     /// `TitleCasing` recognises no names there and every assertion that
     /// depends on a mid-sentence surname (`Binder`, `Daly`, `Trump`) staying
     /// capitalised fails, even though the word is decided correctly on every
-    /// developer Mac and pool simulator, which do have the assets. Checked
-    /// once per run and cached, since `requestAssets` is not free.
+    /// developer Mac and pool simulator, which do have the assets.
+    ///
+    /// Deliberately not `NLTagger.requestAssets(for:tagScheme:)`: on a
+    /// sandboxed CI runner with no network access, its completion handler
+    /// never fires, so waiting on it hangs the whole test run until
+    /// GitHub's 30-minute job cap kills it — which is exactly what happened
+    /// on the first version of this fix. Running the tagger itself on an
+    /// unambiguous name instead answers the same question, purely locally
+    /// and in milliseconds either way. Checked once per run and cached.
     private static let nameTaggingAssetsAvailable: Bool = {
-        let semaphore = DispatchSemaphore(value: 0)
-        var available = false
-        NLTagger.requestAssets(for: .english, tagScheme: .nameType) { result, _ in
-            available = result == .available
-            semaphore.signal()
+        let probe = "Barack Obama visited Springfield yesterday."
+        let tagger = NLTagger(tagSchemes: [.nameType])
+        tagger.string = probe
+        var found = false
+        tagger.enumerateTags(
+            in: probe.startIndex..<probe.endIndex, unit: .word, scheme: .nameType,
+            options: [.omitWhitespace, .omitPunctuation, .joinNames]
+        ) { tag, _ in
+            if tag == .personalName { found = true; return false }
+            return true
         }
-        semaphore.wait()
-        return available
+        return found
     }()
 
     /// Skips the rest of the calling test when name-tagging assets aren't
