@@ -26,7 +26,7 @@ extension StoreWriter {
         recentTitlesPerChannel: Int,
         onProgress: @escaping StoreWriterProgress
     ) async throws -> ClassifyOutcome {
-        let targets = try classificationTargets(scope: scope)
+        let targets = try classificationTargets(scope: scope, recentTitlesPerChannel: recentTitlesPerChannel)
         guard !targets.isEmpty else { return ClassifyOutcome() }
         let names = try topicCategories().map(\.name)
         guard !names.isEmpty else { throw StoreWriterError.noTopicCategories }
@@ -38,12 +38,16 @@ extension StoreWriter {
         do {
             for subscription in targets {
                 try Task.checkCancellation()
-                let descriptor = try descriptor(
-                    for: subscription, recentTitles: recentTitlesPerChannel
+                let videos = try recentVideos(forChannelId: subscription.channelId, limit: recentTitlesPerChannel)
+                let channelDescriptor = ChannelDescriptor(
+                    channelId: subscription.channelId,
+                    title: subscription.title,
+                    about: subscription.channelDescription ?? "",
+                    recentVideoTitles: videos.map(\.title)
                 )
                 let guess: CategoryGuess
                 do {
-                    guess = try await categorizer.categorize(descriptor, among: names)
+                    guess = try await categorizer.categorize(channelDescriptor, among: names)
                 } catch is CancellationError {
                     throw CancellationError()
                 } catch {
@@ -53,7 +57,7 @@ extension StoreWriter {
                     outcome.failures += 1
                     guess = .unsure
                 }
-                try apply(guess, to: subscription)
+                try apply(guess, recentVideoIds: videos.map(\.videoId), to: subscription)
 
                 outcome.completed += 1
                 if outcome.completed.isMultiple(of: Self.chunkSize) { try modelContext.save() }
@@ -69,7 +73,10 @@ extension StoreWriter {
         return outcome
     }
 
-    private func classificationTargets(scope: CategoryManager.Scope) throws -> [Subscription] {
+    private func classificationTargets(
+        scope: CategoryManager.Scope,
+        recentTitlesPerChannel: Int
+    ) throws -> [Subscription] {
         let subscriptions = try modelContext.fetch(FetchDescriptor<Subscription>(
             sortBy: [SortDescriptor(\.title)]
         ))
@@ -77,44 +84,63 @@ extension StoreWriter {
             try rules().map { ($0.channelId, $0) },
             uniquingKeysWith: { first, _ in first }
         )
-        return subscriptions.filter { subscription in
+        return try subscriptions.filter { subscription in
             guard let rule = ruleByChannel[subscription.channelId] else { return true }
             if rule.isUserSet { return false }
             switch scope {
             // A rule the classifier never wrote (e.g. Priority set by hand on
-            // a fresh subscription) still counts as unassigned.
-            case .unassigned: return rule.classifiedAt == nil
+            // a fresh subscription) still counts as unassigned. One it did
+            // write is unassigned again once its recent uploads have turned
+            // over enough — see `CategoryManager.hasTurnedOver`.
+            case .unassigned:
+                guard rule.classifiedAt != nil else { return true }
+                let currentIds = try recentVideos(
+                    forChannelId: subscription.channelId, limit: recentTitlesPerChannel
+                ).map(\.videoId)
+                return CategoryManager.hasTurnedOver(
+                    previousVideoIds: rule.classifierRecentVideoIds,
+                    currentVideoIds: currentIds,
+                    windowSize: recentTitlesPerChannel
+                )
             case .unassignedAndUnsure: return rule.topicCollections.isEmpty
             case .allAutomatic: return true
             }
         }
     }
 
-    private func descriptor(
-        for subscription: Subscription,
-        recentTitles: Int
-    ) throws -> ChannelDescriptor {
-        let channelId = subscription.channelId
+    /// A channel's most recent uploads, newest first — the same window the
+    /// classifier prompt and the turnover check both read from.
+    private func recentVideos(forChannelId channelId: String, limit: Int) throws -> [Video] {
         var fetch = FetchDescriptor<Video>(
             predicate: #Predicate { $0.channelId == channelId },
             sortBy: [SortDescriptor(\.publishedAt, order: .reverse)]
         )
-        fetch.fetchLimit = recentTitles
-        let titles = try modelContext.fetch(fetch).map(\.title)
+        fetch.fetchLimit = limit
+        return try modelContext.fetch(fetch)
+    }
+
+    private func descriptor(
+        for subscription: Subscription,
+        recentTitles: Int
+    ) throws -> ChannelDescriptor {
+        let videos = try recentVideos(forChannelId: subscription.channelId, limit: recentTitles)
         return ChannelDescriptor(
-            channelId: channelId,
+            channelId: subscription.channelId,
             title: subscription.title,
             about: subscription.channelDescription ?? "",
-            recentVideoTitles: titles
+            recentVideoTitles: videos.map(\.title)
         )
     }
 
     /// Writes the classifier's topics onto the channel's rule. The Priority
     /// tag isn't the classifier's to give or take, so it's carried over.
-    /// Also records the evidence behind the answer — the model's raw reply
-    /// and the channel's dominant YouTube category — so a wrong guess can be
-    /// read and the answer exported later. See `ChannelRule.classifierRawAnswer`.
-    private func apply(_ guess: CategoryGuess, to subscription: Subscription) throws {
+    /// Also records the evidence behind the answer — the model's raw reply,
+    /// the channel's dominant YouTube category, and the `videoId`s of the
+    /// recent-titles window it was shown — so a wrong guess can be read, the
+    /// answer exported later, and the routine pass can tell when this
+    /// channel's uploads have turned over enough to ask again. See
+    /// `ChannelRule.classifierRawAnswer` and `.classifierRecentVideoIds`.
+    private func apply(_ guess: CategoryGuess, recentVideoIds: [String], to subscription: Subscription) throws {
         let all = try topicCategories()
         let collections = guess.categories.compactMap { name in all.first { $0.name == name } }
         let dominantCategoryId = try dominantCategoryId(forChannelId: subscription.channelId)
@@ -127,6 +153,7 @@ extension StoreWriter {
             rule.classifierRawAnswer = guess.rawCategories
             rule.classifierResolvedCategories = guess.categories
             rule.classifierDominantCategoryId = dominantCategoryId
+            rule.classifierRecentVideoIds = recentVideoIds
         } else {
             let rule = ChannelRule(
                 channelId: subscription.channelId,
@@ -138,6 +165,7 @@ extension StoreWriter {
             rule.classifierRawAnswer = guess.rawCategories
             rule.classifierResolvedCategories = guess.categories
             rule.classifierDominantCategoryId = dominantCategoryId
+            rule.classifierRecentVideoIds = recentVideoIds
             modelContext.insert(rule)
         }
     }
