@@ -497,7 +497,9 @@ reliably resolve the name; update the `id=` there after creating the device
 (`xcrun simctl list devices | grep "YourTube Dev"`).
 
 Agents: pass `device: "YourTube Dev"` when building or launching in the
-simulator.
+simulator. The simulator tool's tap and swipe coordinates are device points
+(402×874 on an iPhone 17 Pro, as `attach` reports), not the pixels of the
+screenshot it returns (1206×2622): divide by three, or taps silently miss.
 
 ### Parallel work: the simulator pool
 
