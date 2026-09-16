@@ -7,13 +7,17 @@ name: CI
 on:
   push:
     branches: [main]
-    paths-ignore: &docs-only
+    paths-ignore:
       - "**.md"
       - "docs/**"
       - ".claude/**"
       - "scripts/**"
   pull_request:
-    paths-ignore: *docs-only
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".claude/**"
+      - "scripts/**"
 
 # Agent sessions push often; drop superseded runs rather than queueing them
 # behind each other on the (expensive) macOS runners.
