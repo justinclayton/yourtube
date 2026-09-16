@@ -130,6 +130,14 @@ private struct SubscriptionFeedList: View {
     /// that quietly only looked at the newest few hundred videos would be
     /// wrong rather than merely short.
     @State private var searchMatches: [Video] = []
+    /// `videos` grouped by day and run past the per-channel daily cap.
+    /// `groupedByDay` and `rows(for:)` used to be computed properties, so
+    /// SwiftUI re-ran the grouping and the cap pass — a dictionary build, a
+    /// sort, and a full pass per day — on every `body` evaluation, not just
+    /// when the inbox actually changed. This caches that pipeline's output
+    /// and only reruns it from `onChange`, once per real change in the
+    /// inputs it depends on. See issue #69.
+    @State private var sections: [(day: Date, rows: [FeedRow<Video>])] = []
 
     init(
         showShorts: Bool,
@@ -215,9 +223,9 @@ private struct SubscriptionFeedList: View {
                 CaughtUpView()
             } else {
                 List {
-                    ForEach(groupedByDay, id: \.day) { group in
-                        Section(group.day.formatted(.dateTime.weekday(.wide).month().day())) {
-                            ForEach(rows(for: group)) { row in
+                    ForEach(sections, id: \.day) { section in
+                        Section(section.day.formatted(.dateTime.weekday(.wide).month().day())) {
+                            ForEach(section.rows) { row in
                                 switch row {
                                 case .video(let video):
                                     FeedVideoRow(video: video)
@@ -247,6 +255,9 @@ private struct SubscriptionFeedList: View {
         .recomputingFromStore(id: filterKey + "\u{1F}" + searchQuery) {
             refreshSearchMatches()
         }
+        .onChange(of: videos, initial: true) { recomputeSections() }
+        .onChange(of: channelDailyCap) { recomputeSections() }
+        .onChange(of: expandedFolds) { recomputeSections() }
         .refreshable { await services.feed.refresh() }
     }
 
@@ -287,26 +298,30 @@ private struct SubscriptionFeedList: View {
         }
     }
 
-    /// The Shorts filter is already in the `@Query` predicate, so hidden Shorts
-    /// never count against the cap.
-    private func rows(for group: (day: Date, videos: [Video])) -> [FeedRow<Video>] {
-        ChannelDailyCap.apply(
-            group.videos,
-            cap: channelDailyCap,
-            day: group.day,
-            expanded: expandedFolds,
-            channelId: \.channelId,
-            channelTitle: \.channelTitle
-        )
-    }
-
-    private var groupedByDay: [(day: Date, videos: [Video])] {
+    /// Groups `videos` by day and runs each day past the per-channel cap,
+    /// storing the result in `sections`. Called from `onChange` rather than
+    /// a computed property so the dictionary build, sort, and cap pass run
+    /// once per real change to the inbox, the cap setting, or which folds
+    /// are open — not once per `body` evaluation. See issue #69.
+    ///
+    /// The Shorts filter is already in the `@Query` predicate, so hidden
+    /// Shorts never count against the cap.
+    private func recomputeSections() {
         let calendar = Calendar.current
         let buckets = Dictionary(grouping: videos) {
             calendar.startOfDay(for: $0.publishedAt)
         }
-        return buckets
-            .map { (day: $0.key, videos: $0.value) }
+        sections = buckets
+            .map { day, videos in
+                (day: day, rows: ChannelDailyCap.apply(
+                    videos,
+                    cap: channelDailyCap,
+                    day: day,
+                    expanded: expandedFolds,
+                    channelId: \.channelId,
+                    channelTitle: \.channelTitle
+                ))
+            }
             .sorted { $0.day > $1.day }
     }
 }
