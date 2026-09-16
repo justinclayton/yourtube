@@ -448,6 +448,24 @@ calm.
   classifier over every non-user-set channel once, which is how channels filed
   under a single category before multi-tagging pick up their extra tags.
 
+### YouTube's own category
+
+Every stored video also carries YouTube's own `snippet.categoryId`, chosen by
+the uploader. `YouTubeCategorySignal` is a second, deterministic signal built
+from it: it votes over a channel's stored videos and, when a clear majority
+land in one of eight YouTube categories with an unambiguous home in the
+taxonomy (Autos & Vehicles → Cars, Music → Music & Audio Gear, Gaming →
+Games, Comedy → Comedy, News & Politics → News & Politics, Science &
+Technology → Tech & Engineering, Howto & Style → Makers & DIY, Film &
+Animation → Film & TV), suggests that category with a readable reason
+("YouTube files most of its videos under Gaming"). Videos with no stored
+category don't vote, and YouTube's catch-all categories — People & Blogs,
+Entertainment, Education — map to nothing, since uploaders use them as
+defaults rather than a real topic. The mapping targets the taxonomy's default
+names, so a renamed or deleted target simply produces no suggestion. This is
+the signal alone, tested against its own corpus; it isn't yet wired into the
+classifier above.
+
 ### Priority
 
 One tag is built in and hand-assigned only: **Priority**, for the handful of
