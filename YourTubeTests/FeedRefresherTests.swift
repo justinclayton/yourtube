@@ -314,6 +314,63 @@ final class FeedRefresherTests: XCTestCase {
         )
     }
 
+    /// A second refresh against the same subscription list must not dirty the
+    /// `Subscription` row `syncSubscriptions` reconciles. `syncSubscriptions`
+    /// saves before `refresh()` returns, so checking `context.hasChanges`
+    /// afterwards can't tell a guarded assignment from an unguarded one — the
+    /// save flushes either way. Instead this listens for `ModelContext
+    /// .didSave` during the second refresh and checks the notification's own
+    /// `updatedIdentifiers`, which SwiftData populates from whatever it
+    /// considered dirty *before* that save, whether or not the assigned value
+    /// actually changed.
+    ///
+    /// Regression test for #67: assigning title, thumbnail and description
+    /// unconditionally used to dirty, save and re-notify every live query for
+    /// all 629 rows on every refresh, even when nothing had changed.
+    func testUnchangedSubscriptionListDirtiesNoSubscriptionRows() async throws {
+        SelectiveGateURLProtocol.reset()
+        SelectiveGateURLProtocol.stubs = [
+            ("subscriptions", Self.oneChannelSubscriptionJSON),
+            ("playlistItems", Self.playlistJSON(videoId: "video1")),
+            ("id=video1", Self.videoJSON(id: "video1")),
+        ]
+        let api = YouTubeAPI(session: SelectiveGateURLProtocol.session()) { "test-access-token" }
+        let refresher = FeedRefresher(
+            modelContext: context,
+            api: api,
+            thumbnailSession: SelectiveGateURLProtocol.session()
+        )
+
+        await refresher.refresh()
+        XCTAssertEqual(refresher.status, .idle)
+        let subscriptions = try context.fetch(FetchDescriptor<Subscription>())
+        XCTAssertEqual(subscriptions.map(\.channelId), ["UCaaa"])
+        let subscriptionId = subscriptions[0].persistentModelID
+
+        // Same subscription list, same channel, nothing changed. The video is
+        // already known, so the only thing a second refresh can touch is that
+        // one `Subscription` row.
+        nonisolated(unsafe) var updatedIdentifiers: [PersistentIdentifier] = []
+        let observer = NotificationCenter.default.addObserver(
+            forName: ModelContext.didSave, object: nil, queue: nil
+        ) { notification in
+            if let updated = notification.userInfo?[
+                ModelContext.NotificationKey.updatedIdentifiers.rawValue
+            ] as? [PersistentIdentifier] {
+                updatedIdentifiers.append(contentsOf: updated)
+            }
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        await refresher.refresh()
+
+        XCTAssertEqual(refresher.status, .idle)
+        XCTAssertFalse(
+            updatedIdentifiers.contains(subscriptionId),
+            "Unchanged subscription list saved the Subscription row as updated"
+        )
+    }
+
     // MARK: - Helpers
 
     /// Polls the store until it holds exactly `videoIds`, rather than
