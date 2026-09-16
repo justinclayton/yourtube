@@ -24,19 +24,30 @@ struct EpisodeCard: View {
     /// over the art, and duration rather than time left. See `PlaybackProgress`.
     var progress: Double?
 
-    /// The art preference is per show, and the card is used in Continue
-    /// Watching and Up Next, where a list mixes several shows with videos
-    /// that belong to no show at all. Resolving it here rather than at every
-    /// call site keeps the preference true wherever the card is used; the
-    /// catalogue is a handful of rows, so the query is cheap.
-    @Query private var shows: [Show]
+    /// The show `video` belongs to, or nil when it's in no show. Both the
+    /// caption and the art preference below come from this instead of the
+    /// channel, so a playlist-backed show (a guest's video included) reads
+    /// as itself rather than as its host channel.
+    ///
+    /// The card takes this in rather than resolving it itself: Continue
+    /// Watching and Up Next render a grid of these, and re-deriving show
+    /// membership (or a fresh `@Query`) on every card's every body
+    /// evaluation doesn't scale the way one lookup per video, done once by
+    /// the section, does. See `ShowManager.show(containing:in:)`.
+    let show: Show?
 
     /// A show whose art preference is thumbnails shows the video's own
     /// thumbnail, for the channels whose avatar carries no information.
     /// Everything else — every video that belongs to no show — keeps the
     /// channel art.
     private var prefersThumbnails: Bool {
-        shows.first { $0.channelId == video.channelId && $0.isActive }?.artPreference == .thumbnails
+        show?.artPreference == .thumbnails
+    }
+
+    /// The caption under the art: the show's title, or the channel's when
+    /// the video belongs to no show.
+    private var caption: String {
+        show?.title ?? video.channelTitle
     }
 
     /// The art, and what the monogram falls back to when there's no image:
@@ -61,7 +72,7 @@ struct EpisodeCard: View {
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: size == .large ? 10 : 8))
-            Text(video.channelTitle)
+            Text(caption)
                 .font((size == .large ? Font.caption : .caption2).weight(.semibold))
                 .foregroundStyle(.secondary)
             Text(video.displayTitle)

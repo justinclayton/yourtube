@@ -44,10 +44,21 @@ extension ShowManager {
     /// came from a channel with no show at all — a playlist may hold a guest
     /// channel's video, and that video is still an episode of this show.
     func show(containing video: Video) throws -> Show? {
-        if let channelShow = try record(forChannelId: video.channelId), channelShow.isActive {
+        Self.show(containing: video, in: try allRecords())
+    }
+
+    /// The pure version of `show(containing:)`, over a catalogue the caller
+    /// already has rather than a fresh fetch. A view that already holds a
+    /// live `@Query` of `[Show]` (the catalogue is a handful of rows) uses
+    /// this to resolve a card's show once, instead of paying for a fetch —
+    /// or re-deriving membership from scratch — on every body evaluation.
+    nonisolated static func show(containing video: Video, in shows: [Show]) -> Show? {
+        if let channelShow = shows.first(where: {
+            !$0.isPlaylistBacked && $0.channelId == video.channelId && $0.isActive
+        }) {
             return channelShow
         }
-        return try allRecords().first {
+        return shows.first {
             $0.isActive && $0.isPlaylistBacked && $0.memberVideoIds.contains(video.videoId)
         }
     }

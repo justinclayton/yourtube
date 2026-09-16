@@ -19,6 +19,7 @@ struct ContinueWatchingSection: View {
     )
     private var videos: [Video]
     @Query private var subscriptions: [Subscription]
+    @Query private var shows: [Show]
 
     private var avatars: [String: String] {
         Dictionary(subscriptions.compactMap { sub in sub.thumbnailURL.map { (sub.channelId, $0) } },
@@ -51,7 +52,8 @@ struct ContinueWatchingSection: View {
                 video: video,
                 avatarURL: avatars[video.channelId],
                 size: size,
-                progress: video.playbackFraction
+                progress: video.playbackFraction,
+                show: ShowManager.show(containing: video, in: shows)
             )
             .contentShape(Rectangle())
         }
