@@ -1,3 +1,4 @@
+import NaturalLanguage
 import XCTest
 @testable import YourTube
 
@@ -11,6 +12,37 @@ final class TitleRewriterTests: XCTestCase {
         show: String = "The Bellwether"
     ) -> TitleRewriteRequest {
         TitleRewriteRequest(strippedTitle: stripped, showTitle: show)
+    }
+
+    // MARK: - Name tagging availability (#112)
+
+    /// Whether `NLTagger`'s person-name model is installed on this device.
+    /// The `macos-26` GitHub runner has no name-tagging language assets, so
+    /// `TitleCasing` recognises no names there and every assertion that
+    /// depends on a mid-sentence surname (`Binder`, `Daly`, `Trump`) staying
+    /// capitalised fails, even though the word is decided correctly on every
+    /// developer Mac and pool simulator, which do have the assets. Checked
+    /// once per run and cached, since `requestAssets` is not free.
+    private static let nameTaggingAssetsAvailable: Bool = {
+        let semaphore = DispatchSemaphore(value: 0)
+        var available = false
+        NLTagger.requestAssets(for: .english, tagScheme: .nameType) { result, _ in
+            available = result == .available
+            semaphore.signal()
+        }
+        semaphore.wait()
+        return available
+    }()
+
+    /// Skips the rest of the calling test when name-tagging assets aren't
+    /// installed. Call it after the assertions that don't depend on name
+    /// recognition, so those still run everywhere; only the assertions that
+    /// need `NLTagger` to have found a person are skipped on CI.
+    private func skipIfNameTaggingUnavailable() throws {
+        try XCTSkipUnless(
+            Self.nameTaggingAssetsAvailable,
+            "NLTagger has no person-name assets on this runner, so TitleCasing can't recognise a name here (#112)."
+        )
     }
 
     // MARK: - Prompt assembly
@@ -66,11 +98,15 @@ final class TitleRewriterTests: XCTestCase {
     /// costs the viewer the rewrite, never the title. What it gets instead
     /// is the stripped title with its shouting taken off, which needs no
     /// model — the calm title is unchanged by it.
-    func testAnEmptyAnswerFallsBackToTheCalmedStrippedTitle() {
+    func testAnEmptyAnswerFallsBackToTheCalmedStrippedTitle() throws {
         XCTAssertEqual(TitleRewritePrompt.resolve("", strippedTitle: "The deficit, explained"),
                        "The deficit, explained")
         XCTAssertEqual(TitleRewritePrompt.resolve("   \n  ", strippedTitle: "The deficit, explained"),
                        "The deficit, explained")
+        // "Trump" is mid-sentence and needs NLTagger's person recognition
+        // to stay capitalised (#112); "U.S." is decided by the initialism
+        // rule above and needs no tagging, so it's covered either way.
+        try skipIfNameTaggingUnavailable()
         XCTAssertEqual(
             TitleRewritePrompt.resolve("", strippedTitle: "Iran STRIKES U.S. Bases As Trump Threatens To WIPE THEM OUT"),
             "Iran strikes U.S. bases as Trump threatens to wipe them out"
@@ -97,7 +133,7 @@ final class TitleRewriterTests: XCTestCase {
     /// is one the app can't vouch for, whether it's a respelt name, a
     /// corrected one, or a new claim. The answer is dropped for the calmed
     /// title, which says exactly what the original did.
-    func testAnAnswerWithWordsTheTitleDidntUseIsRejected() {
+    func testAnAnswerWithWordsTheTitleDidntUseIsRejected() throws {
         XCTAssertEqual(
             TitleRewritePrompt.resolve(
                 "Dana Ruiz discusses the housing market crash",
@@ -112,6 +148,9 @@ final class TitleRewriterTests: XCTestCase {
             ),
             "Massie moves to impeach Pete Hegseth over Iran war"
         )
+        // "Daly" is an ordinary dictionary word as well as a surname, so
+        // only NLTagger's person recognition tells the two apart (#112).
+        try skipIfNameTaggingUnavailable()
         XCTAssertEqual(
             TitleRewritePrompt.resolve(
                 "andrew daly feels _____ about being conan's friend.",
@@ -154,21 +193,26 @@ final class TitleRewriterTests: XCTestCase {
     /// The answer that kept a name and dropped the sentence around it (#87):
     /// fewer than half the title's words is a different title, not a calmer
     /// one.
-    func testAnAnswerThatDropsMostOfTheTitleIsRejected() {
-        XCTAssertEqual(
-            TitleRewritePrompt.resolve(
-                "Mike Binder: Academy politics",
-                strippedTitle: "Mike Binder: The Academy Kept Me Out Because of Politics"
-            ),
-            "Mike Binder: The academy kept me out because of politics"
-        )
-        // Dropping the hype alone is what the rewrite is for.
+    func testAnAnswerThatDropsMostOfTheTitleIsRejected() throws {
+        // Dropping the hype alone is what the rewrite is for. "Bessent"
+        // isn't an ordinary word, so this needs no name tagging and runs
+        // everywhere.
         XCTAssertEqual(
             TitleRewritePrompt.resolve(
                 "global bond market chaos as bessent flails",
                 strippedTitle: "Global Bond Market IN CHAOS As Bessent DESPERATELY FLAILS"
             ),
             "Global bond market chaos as Bessent flails"
+        )
+        // "Binder" is also an ordinary word (a ring binder), so telling it
+        // apart from the surname needs NLTagger's person recognition (#112).
+        try skipIfNameTaggingUnavailable()
+        XCTAssertEqual(
+            TitleRewritePrompt.resolve(
+                "Mike Binder: Academy politics",
+                strippedTitle: "Mike Binder: The Academy Kept Me Out Because of Politics"
+            ),
+            "Mike Binder: The academy kept me out because of politics"
         )
     }
 
@@ -356,20 +400,24 @@ final class TitleRewriterTests: XCTestCase {
     /// `U.S.` and `A.I.` are initialisms however long they are — nobody
     /// shouts with full stops between the letters — and their last full stop
     /// doesn't start a new sentence (#87).
-    func testDottedInitialismsKeepTheirCapitals() {
-        XCTAssertEqual(
-            TitleRewritePrompt.resolve(
-                "iran strikes u.s. bases as trump threatens to wipe them out",
-                strippedTitle: "Iran STRIKES U.S. Bases As Trump Threatens To WIPE THEM OUT"
-            ),
-            "Iran strikes U.S. bases as Trump threatens to wipe them out"
-        )
+    func testDottedInitialismsKeepTheirCapitals() throws {
         XCTAssertEqual(
             TitleRewritePrompt.resolve(
                 "dr. dre is using a.i. and i hate it",
                 strippedTitle: "Dr. Dre Is Using A.I. and I Hate It"
             ),
             "Dr. Dre is using A.I. and I hate it"
+        )
+        // "Trump" is mid-sentence and ordinary as a word ("to trump"), so
+        // only NLTagger's person recognition tells it apart from the
+        // surname here; `U.S.` above needs no tagging (#112).
+        try skipIfNameTaggingUnavailable()
+        XCTAssertEqual(
+            TitleRewritePrompt.resolve(
+                "iran strikes u.s. bases as trump threatens to wipe them out",
+                strippedTitle: "Iran STRIKES U.S. Bases As Trump Threatens To WIPE THEM OUT"
+            ),
+            "Iran strikes U.S. bases as Trump threatens to wipe them out"
         )
     }
 
