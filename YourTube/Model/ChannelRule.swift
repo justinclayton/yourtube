@@ -51,6 +51,15 @@ final class ChannelRule {
     /// the display name with `YouTubeCategory.name(forId:)`. Nil alongside
     /// `classifierRawAnswer`.
     var classifierDominantCategoryId: String?
+    /// The `videoId`s of the recent uploads the classifier read from at the
+    /// last automatic pass — the same window `recentVideoTitles` draws from.
+    /// The routine pass compares this against the channel's current window
+    /// to decide whether uploads have turned over enough to be worth asking
+    /// about again; see `CategoryManager.hasTurnedOver`. Nil means no
+    /// automatic pass has recorded a fingerprint yet, which the routine pass
+    /// treats as due for one. Never set for a user-set rule. Optional with no
+    /// default so existing stores open without a migration.
+    var classifierRecentVideoIds: [String]?
 
     init(
         channelId: String,

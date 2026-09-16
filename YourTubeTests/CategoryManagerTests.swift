@@ -54,20 +54,33 @@ final class CategoryManagerTests: XCTestCase {
     /// Inserts a video for a channel with a given YouTube category, so the
     /// classifier has something to read a dominant category off of.
     @discardableResult
-    private func addVideo(channelId: String, categoryId: String?, title: String = "V") -> Video {
+    private func addVideo(
+        channelId: String,
+        categoryId: String?,
+        title: String = "V",
+        publishedAt: Date = .now
+    ) -> Video {
         let video = Video(
             videoId: "\(channelId)-\(UUID().uuidString)",
             channelId: channelId,
             channelTitle: channelId,
             title: title,
             videoDescription: "",
-            publishedAt: .now,
+            publishedAt: publishedAt,
             durationSeconds: 600,
             youtubeCategoryId: categoryId
         )
         context.insert(video)
         try? context.save()
         return video
+    }
+
+    /// `count` uploads a second apart starting at `base`, standing in for a
+    /// channel's recent-titles window.
+    private func addVideos(channelId: String, count: Int, startingAt base: Date, titlePrefix: String = "V") {
+        for i in 0..<count {
+            addVideo(channelId: channelId, categoryId: nil, title: "\(titlePrefix)\(i)", publishedAt: base.addingTimeInterval(TimeInterval(i)))
+        }
     }
 
     // MARK: - Seeding
@@ -636,6 +649,106 @@ final class CategoryManagerTests: XCTestCase {
             Set([unsure.channelId, untouched.channelId])
         )
     }
+
+    // MARK: - Re-filing on upload turnover (#95)
+
+    /// One new upload out of a ten-title window isn't enough to re-ask —
+    /// otherwise a weekly show would be re-filed every week.
+    func testOneNewUploadDoesNotReclassifyInUnassignedScope() async throws {
+        var stub = StubCategorizer(answers: ["Turnover": guess("Cars")])
+        let manager = makeManager(stub)
+        let sub = subscribe("Turnover")
+        let base = Date(timeIntervalSince1970: 1_000_000)
+        addVideos(channelId: sub.channelId, count: 10, startingAt: base)
+        await manager.classify(scope: .unassigned)
+        XCTAssertEqual(try manager.rule(forChannelId: sub.channelId)?.collections.map(\.name), ["Cars"])
+
+        addVideo(channelId: sub.channelId, categoryId: nil, title: "New", publishedAt: base.addingTimeInterval(10_000))
+        stub.answers["Turnover"] = guess("Food")
+        let manager2 = CategoryManager(modelContext: context, categorizer: stub)
+        await manager2.classify(scope: .unassigned)
+        XCTAssertEqual(try manager2.rule(forChannelId: sub.channelId)?.collections.map(\.name), ["Cars"])
+    }
+
+    /// More than half the classifier's ten-title window replaced counts as
+    /// substantial turnover, so the routine pass asks again.
+    func testSubstantialTurnoverReclassifiesInUnassignedScope() async throws {
+        var stub = StubCategorizer(answers: ["Turnover": guess("Cars")])
+        let manager = makeManager(stub)
+        let sub = subscribe("Turnover")
+        let base = Date(timeIntervalSince1970: 1_000_000)
+        addVideos(channelId: sub.channelId, count: 10, startingAt: base)
+        await manager.classify(scope: .unassigned)
+        XCTAssertEqual(try manager.rule(forChannelId: sub.channelId)?.collections.map(\.name), ["Cars"])
+
+        addVideos(channelId: sub.channelId, count: 6, startingAt: base.addingTimeInterval(10_000), titlePrefix: "New")
+        stub.answers["Turnover"] = guess("Food")
+        let manager2 = CategoryManager(modelContext: context, categorizer: stub)
+        await manager2.classify(scope: .unassigned)
+        XCTAssertEqual(try manager2.rule(forChannelId: sub.channelId)?.collections.map(\.name), ["Food"])
+    }
+
+    /// A channel whose uploads haven't moved at all is skipped, so the
+    /// routine pass after a refresh stays near-free.
+    func testUnchangedUploadsAreNotReclassified() async throws {
+        var stub = StubCategorizer(answers: ["Stable": guess("Cars")])
+        let manager = makeManager(stub)
+        let sub = subscribe("Stable")
+        addVideos(channelId: sub.channelId, count: 10, startingAt: Date(timeIntervalSince1970: 1_000_000))
+        await manager.classify(scope: .unassigned)
+
+        stub.answers["Stable"] = guess("Food")
+        let manager2 = CategoryManager(modelContext: context, categorizer: stub)
+        await manager2.classify(scope: .unassigned)
+        XCTAssertEqual(try manager2.rule(forChannelId: sub.channelId)?.collections.map(\.name), ["Cars"])
+    }
+
+    /// User-set rules are never touched, no matter how much a channel's
+    /// uploads have turned over.
+    func testUserSetRuleIsNeverReclassifiedDespiteTurnover() async throws {
+        let stub = StubCategorizer(answers: ["Hand": guess("Games")])
+        let manager = makeManager(stub)
+        let sub = subscribe("Hand")
+        let comedy = try XCTUnwrap(manager.categories().first { $0.name == "Comedy" })
+        try manager.assign(channelId: sub.channelId, channelTitle: sub.title, to: [comedy])
+        addVideos(channelId: sub.channelId, count: 20, startingAt: Date(timeIntervalSince1970: 1_000_000))
+
+        await manager.classify(scope: .unassigned)
+        XCTAssertEqual(try manager.rule(forChannelId: sub.channelId)?.collections.map(\.name), ["Comedy"])
+        XCTAssertTrue(try XCTUnwrap(manager.rule(forChannelId: sub.channelId)).isUserSet)
+    }
+
+    /// Classifying records the window's `videoId`s as the fingerprint for
+    /// the next turnover check.
+    func testClassificationRecordsRecentVideoIdsFingerprint() async throws {
+        let stub = StubCategorizer(answers: ["Fingerprint": guess("Cars")])
+        let manager = makeManager(stub)
+        let sub = subscribe("Fingerprint")
+        addVideos(channelId: sub.channelId, count: 3, startingAt: Date(timeIntervalSince1970: 1_000_000))
+        await manager.classify(scope: .unassigned)
+
+        let rule = try XCTUnwrap(manager.rule(forChannelId: sub.channelId))
+        XCTAssertEqual(rule.classifierRecentVideoIds?.count, 3)
+    }
+
+    func testHasTurnedOverRequiresMajorityNewWithFloorOfTwo() {
+        // 1 of 3 new: below the floor-adjusted threshold.
+        XCTAssertFalse(CategoryManager.hasTurnedOver(
+            previousVideoIds: ["a", "b", "c"], currentVideoIds: ["a", "b", "d"], windowSize: 3
+        ))
+        // Small window: floor of two still applies even though half of two is one.
+        XCTAssertTrue(CategoryManager.hasTurnedOver(
+            previousVideoIds: ["a", "b"], currentVideoIds: ["c", "d"], windowSize: 2
+        ))
+        // No recorded fingerprint: due, so a baseline gets captured.
+        XCTAssertTrue(CategoryManager.hasTurnedOver(
+            previousVideoIds: nil, currentVideoIds: ["a"], windowSize: 10
+        ))
+        // Identical window: never due.
+        XCTAssertFalse(CategoryManager.hasTurnedOver(
+            previousVideoIds: ["a", "b", "c"], currentVideoIds: ["a", "b", "c"], windowSize: 3
+        ))
+    }
 }
 
 // MARK: - Prompt
@@ -729,4 +842,5 @@ final class CategoryPromptTests: XCTestCase {
         XCTAssertEqual(CategoryManager.automaticScope(storedVersion: CategoryManager.classifierVersion - 1), .allAutomatic)
         XCTAssertEqual(CategoryManager.automaticScope(storedVersion: CategoryManager.classifierVersion), .unassigned)
     }
+
 }

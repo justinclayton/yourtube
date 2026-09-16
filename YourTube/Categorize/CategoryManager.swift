@@ -79,6 +79,30 @@ final class CategoryManager {
         storedVersion < classifierVersion ? .allAutomatic : .unassigned
     }
 
+    /// Whether an automatically-filed channel's recent uploads have turned
+    /// over enough to be worth asking the classifier about again. Compares
+    /// the `videoId`s in the current recent-titles window against the ones
+    /// recorded at the last automatic pass (`ChannelRule.classifierRecentVideoIds`),
+    /// the way `ShowDetectionRunner.fingerprint` tracks a channel's shape for
+    /// the show detector.
+    ///
+    /// A single new upload isn't enough — a weekly show would get re-filed
+    /// every week — so the bar is a majority of the window being new, with a
+    /// floor of two regardless of how small the window is. A rule with no
+    /// recorded fingerprint (classified before this existed, or classified
+    /// with the window empty) is treated as due, so it picks up a baseline on
+    /// the next pass rather than never being looked at again.
+    nonisolated static func hasTurnedOver(
+        previousVideoIds: [String]?,
+        currentVideoIds: [String],
+        windowSize: Int
+    ) -> Bool {
+        guard let previousVideoIds else { return true }
+        let threshold = max(2, windowSize / 2)
+        let newCount = Set(currentVideoIds).subtracting(previousVideoIds).count
+        return newCount >= threshold
+    }
+
     private(set) var status: Status = .idle
     private(set) var lastRunAt: Date?
     /// Channels the model refused or errored on during the last run. They're
