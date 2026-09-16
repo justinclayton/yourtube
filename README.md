@@ -308,6 +308,16 @@ player — a store write reruns every live query in the app, so writing on
 every poll made the whole UI redo work for as long as a video played. Resume
 still lands within about fifteen seconds of where you stopped.
 
+The other half of that problem was the queries themselves. `TabView` keeps
+every tab alive, and a `@Query` is invalidated by any save anywhere, so the
+counting queries on the Shows and Channels tabs re-fetched thousands of
+videos whichever tab you were actually looking at. Counts are now read from
+the store on demand — a `fetchCount`, or one narrow fetch — by
+`View.recomputingFromStore(id:_:)`, which runs when a view appears and after
+each save *while it is on screen*, and does nothing at all once it isn't. A
+tab is also built only when it's first opened (`LazyTab`), so a tab you have
+never visited holds nothing.
+
 ## Titles
 
 YouTube titles carry two things at once: what the video is, and which channel
@@ -596,6 +606,11 @@ Run with Cmd-U. Coverage is concentrated where the risk is:
   the daily quota.
 - `CategoryManagerTests` — rule migration, multi-answer resolution, and the
   "contains" feed predicate, against a stub classifier.
+- `StoreCountsTests` — the badge and library counts, now that they're read
+  from the store on demand rather than counted out of a live query. Pins that
+  the cheap answer is the same answer: the Channels badges still follow the
+  Shorts setting, and the Your Shows badges still respect segments and the
+  retention window.
 - `ShowManagerTests` — the show catalogue: membership for both kinds of show
   (a channel's non-Short videos, a playlist's items — Shorts are never
   episodes either way), seasons and the picker's filter,
