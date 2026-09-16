@@ -4,8 +4,9 @@ import SwiftData
 /// Channels as a browsing surface rather than a management one: a grid of
 /// square channel avatars with the full name wrapped beneath, grouped by
 /// category exactly like `ChannelList`'s rows — same sections, same
-/// collapse state, same Priority-first ordering — so switching the toolbar
-/// toggle changes only the shape of the tiles, never what's in them.
+/// collapse state, same Priority-first ordering, same shows-then-the-rest
+/// split within each group — so switching the toolbar toggle changes only
+/// the shape of the tiles, never what's in them.
 ///
 /// Tapping a tile opens the same channel page as the list row; long-press
 /// offers the same menu (`ChannelRowMenu`). See `ChannelTile` for how a
@@ -50,33 +51,18 @@ struct ChannelsGridView: View {
                             }
                         }
                         if !collapsed.contains(group.id) {
-                            LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
-                                // A channel can appear in several groups, so
-                                // the tile identity has to include the
-                                // group, same as the list row.
-                                ForEach(group.channels, id: \.channelId) { subscription in
-                                    NavigationLink {
-                                        ChannelView(subscription: subscription, showShorts: showShorts)
-                                    } label: {
-                                        ChannelTile(
-                                            subscription: subscription,
-                                            unwatchedCount: unwatchedByChannel[subscription.channelId] ?? 0,
-                                            isShow: showChannelIds.contains(subscription.channelId)
-                                        )
-                                    }
-                                    .buttonStyle(.plain)
-                                    .contextMenu {
-                                        ChannelRowMenu(
-                                            subscription: subscription,
-                                            isPriority: priorityChannelIds.contains(subscription.channelId),
-                                            isShow: showChannelIds.contains(subscription.channelId),
-                                            services: services,
-                                            onFile: { onFile(subscription) },
-                                            onAddPlaylist: { onAddPlaylist(subscription) },
-                                            onError: onError
-                                        ).contextMenuContent
-                                    }
-                                }
+                            // Two grids rather than one, so the boundary
+                            // between the group's shows and its other
+                            // channels gets a full-width rule instead of
+                            // being lost mid-row.
+                            if !group.shows.isEmpty {
+                                tiles(group.shows)
+                            }
+                            if group.isSplit {
+                                ChannelSplitRule()
+                            }
+                            if !group.others.isEmpty {
+                                tiles(group.others)
                             }
                         }
                     }
@@ -84,6 +70,37 @@ struct ChannelsGridView: View {
                 }
             }
             .padding(.vertical, 12)
+        }
+    }
+
+    /// One half of a group's tiles, shows or the rest.
+    private func tiles(_ channels: [Subscription]) -> some View {
+        LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
+            // A channel can appear in several groups, so the tile identity
+            // has to include the group, same as the list row.
+            ForEach(channels, id: \.channelId) { subscription in
+                NavigationLink {
+                    ChannelView(subscription: subscription, showShorts: showShorts)
+                } label: {
+                    ChannelTile(
+                        subscription: subscription,
+                        unwatchedCount: unwatchedByChannel[subscription.channelId] ?? 0,
+                        isShow: showChannelIds.contains(subscription.channelId)
+                    )
+                }
+                .buttonStyle(.plain)
+                .contextMenu {
+                    ChannelRowMenu(
+                        subscription: subscription,
+                        isPriority: priorityChannelIds.contains(subscription.channelId),
+                        isShow: showChannelIds.contains(subscription.channelId),
+                        services: services,
+                        onFile: { onFile(subscription) },
+                        onAddPlaylist: { onAddPlaylist(subscription) },
+                        onError: onError
+                    ).contextMenuContent
+                }
+            }
         }
     }
 }

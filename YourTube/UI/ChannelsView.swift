@@ -9,10 +9,12 @@ enum ChannelsPresentation: String {
 
 /// Browse the feed one subscribed channel at a time, grouped by category. A
 /// channel with several categories is listed under each of them; Priority is
-/// the first group. A toolbar toggle switches between this grouped list and
-/// an avatar grid (`ChannelsGridView`); both read the same grouping and
-/// share the same long-press menu (`ChannelRowMenu`), so they can't drift
-/// out of sync.
+/// the first group. Inside every group the channels flagged as shows come
+/// first, separated from the rest by a labelled rule, so the split the app
+/// has made is visible without reading every row's glyph. A toolbar toggle
+/// switches between this grouped list and an avatar grid
+/// (`ChannelsGridView`); both read the same grouping and share the same
+/// long-press menu (`ChannelRowMenu`), so they can't drift out of sync.
 struct ChannelsView: View {
     @AppStorage(SettingsKeys.showShorts) private var showShorts = false
     @AppStorage(SettingsKeys.channelsPresentation) private var presentation = ChannelsPresentation.list
@@ -112,9 +114,10 @@ private struct ChannelList: View {
             subs.reduce(0) { $0 + (unwatchedByChannel[$1.channelId] ?? 0) }
         }
 
+        let shows = showChannelIds
         var result: [ChannelGroup] = categories.compactMap { c in
             guard let subs = byCollection[c.persistentModelID], !subs.isEmpty else { return nil }
-            return ChannelGroup(id: c.name, title: c.name, collection: c, channels: subs, unwatched: count(subs))
+            return ChannelGroup(id: c.name, title: c.name, collection: c, channels: subs, shows: shows, unwatched: count(subs))
         }
         if !uncategorized.isEmpty {
             result.append(ChannelGroup(
@@ -122,6 +125,7 @@ private struct ChannelList: View {
                 title: CategoryManager.uncategorizedName,
                 collection: nil,
                 channels: uncategorized,
+                shows: shows,
                 unwatched: count(uncategorized)
             ))
         }
@@ -194,33 +198,16 @@ private struct ChannelList: View {
                     if !collapsed.contains(group.id) {
                         // A channel can appear in several groups, so the
                         // row identity has to include the group.
-                        ForEach(group.channels, id: \.channelId) { subscription in
-                            let menu = ChannelRowMenu(
-                                subscription: subscription,
-                                isPriority: priorityChannelIds.contains(subscription.channelId),
-                                isShow: showChannelIds.contains(subscription.channelId),
-                                services: services,
-                                onFile: { filing = subscription },
-                                onAddPlaylist: { pickingPlaylist = subscription },
-                                onError: { channelError = $0 }
-                            )
-                            NavigationLink {
-                                ChannelView(subscription: subscription, showShorts: showShorts)
-                            } label: {
-                                ChannelRow(
-                                    subscription: subscription,
-                                    unwatchedCount: unwatchedByChannel[subscription.channelId] ?? 0,
-                                    isShow: showChannelIds.contains(subscription.channelId)
-                                )
-                            }
-                            .swipeActions(edge: .leading) {
-                                menu.categoriesButton.tint(.indigo)
-                                menu.priorityButton.tint(.orange)
-                                menu.showButton.tint(.purple)
-                            }
-                            .contextMenu {
-                                menu.contextMenuContent
-                            }
+                        ForEach(group.shows, id: \.channelId) { subscription in
+                            row(for: subscription, unwatchedByChannel: unwatchedByChannel)
+                        }
+                        if group.isSplit {
+                            ChannelSplitRule()
+                                .listRowSeparator(.hidden)
+                                .padding(.top, 6)
+                        }
+                        ForEach(group.others, id: \.channelId) { subscription in
+                            row(for: subscription, unwatchedByChannel: unwatchedByChannel)
                         }
                     }
                 } header: {
@@ -243,17 +230,87 @@ private struct ChannelList: View {
         }
         .listStyle(.plain)
     }
+
+    /// One channel's row, used on both sides of the split.
+    private func row(for subscription: Subscription, unwatchedByChannel: [String: Int]) -> some View {
+        let menu = ChannelRowMenu(
+            subscription: subscription,
+            isPriority: priorityChannelIds.contains(subscription.channelId),
+            isShow: showChannelIds.contains(subscription.channelId),
+            services: services,
+            onFile: { filing = subscription },
+            onAddPlaylist: { pickingPlaylist = subscription },
+            onError: { channelError = $0 }
+        )
+        return NavigationLink {
+            ChannelView(subscription: subscription, showShorts: showShorts)
+        } label: {
+            ChannelRow(
+                subscription: subscription,
+                unwatchedCount: unwatchedByChannel[subscription.channelId] ?? 0,
+                isShow: showChannelIds.contains(subscription.channelId)
+            )
+        }
+        .swipeActions(edge: .leading) {
+            menu.categoriesButton.tint(.indigo)
+            menu.priorityButton.tint(.orange)
+            menu.showButton.tint(.purple)
+        }
+        .contextMenu {
+            menu.contextMenuContent
+        }
+    }
 }
 
 /// One category section from `ChannelList.groups`: shared file-scope so
 /// `ChannelsGridView` groups its tiles exactly the way the list groups its
 /// rows.
+///
+/// Within a group the channels are split once, here, so both presentations
+/// draw the same boundary: the ones flagged as shows first, then the rest,
+/// each half keeping the title order the query gave it.
 struct ChannelGroup: Identifiable {
     let id: String
     let title: String
     let collection: VideoCollection?
-    let channels: [Subscription]
+    /// The group's channels that are shows, listed first.
+    let shows: [Subscription]
+    /// Everything else in the group, in the same order it arrived.
+    let others: [Subscription]
     let unwatched: Int
+
+    init(id: String, title: String, collection: VideoCollection?, channels: [Subscription], shows showIds: Set<String>, unwatched: Int) {
+        self.id = id
+        self.title = title
+        self.collection = collection
+        self.shows = channels.filter { showIds.contains($0.channelId) }
+        self.others = channels.filter { !showIds.contains($0.channelId) }
+        self.unwatched = unwatched
+    }
+
+    /// Every channel in the group, shows first.
+    var channels: [Subscription] { shows + others }
+    /// Whether there is a boundary to draw. A group that is all shows or no
+    /// shows has nothing to split, and stays as quiet as it was before.
+    var isSplit: Bool { !shows.isEmpty && !others.isEmpty }
+}
+
+/// The line between a group's shows and its other channels. Labelled rather
+/// than a bare rule, because an unlabelled divider only says "something
+/// changed here" — naming the half below it makes the half above it read as
+/// the shows without a second caption under every category header.
+struct ChannelSplitRule: View {
+    var body: some View {
+        HStack(spacing: 8) {
+            Text("Other channels")
+                .font(.caption2.weight(.semibold))
+                .textCase(.uppercase)
+                .foregroundStyle(.secondary)
+            VStack { Divider() }
+        }
+        .accessibilityElement()
+        .accessibilityLabel("Other channels")
+    }
 }
 
 /// The categories sheet, Priority toggle, and show flag toggle for one
