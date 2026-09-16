@@ -29,6 +29,10 @@ final class FeedRefresher {
     private let uploadsPerChannel = 10
 
     private let modelContext: ModelContext
+    /// Rows go in through here rather than the main context, so a refresh
+    /// storing a few hundred videos doesn't make every live query in the app
+    /// re-fetch a few hundred times. See `StoreWriter`.
+    private let writer: StoreWriter
     /// Internal so `FeedRefresher+PlaylistShows` can reach the same client.
     let api: YouTubeAPI
     private let thumbnailSession: URLSession
@@ -36,9 +40,11 @@ final class FeedRefresher {
     init(
         modelContext: ModelContext,
         api: YouTubeAPI,
-        thumbnailSession: URLSession = .shared
+        thumbnailSession: URLSession = .shared,
+        writer: StoreWriter? = nil
     ) {
         self.modelContext = modelContext
+        self.writer = writer ?? StoreWriter(modelContainer: modelContext.container)
         self.api = api
         self.thumbnailSession = thumbnailSession
     }
@@ -87,7 +93,7 @@ final class FeedRefresher {
     /// Costs 1 unit for the playlist page plus 1 per 50 videos hydrated.
     func loadOlderUploads(channelId: String, pageSize: Int = 50) async throws -> Int {
         let playlistId = Subscription.uploadsPlaylistId(forChannelId: channelId)
-        let known = try knownVideoIds()
+        let known = try await knownVideoIds()
         let items = try await api.recentUploads(playlistId: playlistId, limit: pageSize)
         let newIds = items.compactMap(\.videoId).filter { !known.contains($0) }
         guard !newIds.isEmpty else { return 0 }
@@ -155,7 +161,7 @@ final class FeedRefresher {
     private func collectNewVideoIds(
         from subscriptions: [ChannelFeedTarget]
     ) async throws -> Set<String> {
-        let known = try knownVideoIds()
+        let known = try await knownVideoIds()
         var candidates: Set<String> = []
         var completed = 0
 
@@ -196,61 +202,30 @@ final class FeedRefresher {
 
     /// Every video ID already stored. Internal so a playlist-backed show's
     /// refresh can ask the same question before hydrating anything.
-    func knownVideoIds() throws -> Set<String> {
-        Set(try modelContext.fetch(FetchDescriptor<Video>()).map(\.videoId))
+    func knownVideoIds() async throws -> Set<String> {
+        try await writer.knownVideoIds()
     }
 
     /// Stores hydrated videos, Shorts verdict first. Internal because it is
     /// the one way videos enter the store: `FeedRefresher+PlaylistShows`
     /// brings a playlist's items in through it rather than inserting its own.
+    ///
+    /// Classify before inserting. The feed's `@Query` watches the store, and
+    /// classification suspends on thumbnail downloads, so a video inserted
+    /// first would show up in the feed with the default `isLikelyShort =
+    /// false` and then vanish once its verdict landed. Holding the insert
+    /// until the verdict is known means a Short is hidden from its first
+    /// appearance. That the rows are written on another context doesn't change
+    /// it: what's deferred is the insert, not the save.
     func upsert(videos: [YT.VideoItem]) async throws {
-        var pending: [(video: Video, signals: VideoSignals)] = []
+        var drafts = videos.compactMap(VideoDraft.init(item:))
+        guard !drafts.isEmpty else { return }
 
-        for item in videos {
-            guard let snippet = item.snippet else { continue }
-
-            // Live streams and premieres have no duration yet. Skip rather than
-            // storing a 0-second video that the Shorts heuristic can't judge.
-            guard let durationString = item.contentDetails?.duration,
-                  let duration = ISO8601Duration.seconds(from: durationString),
-                  duration > 0 else { continue }
-
-            let thumbnail = snippet.thumbnails?.best
-            let signals = VideoSignals(
-                durationSeconds: duration,
-                title: snippet.title ?? "",
-                description: snippet.description ?? "",
-                thumbnailWidth: thumbnail?.width,
-                thumbnailHeight: thumbnail?.height
-            )
-
-            let video = Video(
-                videoId: item.id,
-                channelId: snippet.channelId ?? "",
-                channelTitle: snippet.channelTitle ?? "",
-                title: snippet.title ?? "Untitled",
-                videoDescription: snippet.description ?? "",
-                publishedAt: snippet.publishedAt ?? .now,
-                durationSeconds: duration,
-                thumbnailURL: thumbnail?.url,
-                thumbnailWidth: thumbnail?.width,
-                thumbnailHeight: thumbnail?.height,
-                youtubeCategoryId: snippet.categoryId
-            )
-            pending.append((video, signals))
+        let verdicts = await shortsVerdicts(for: drafts.map { ($0.videoId, $0.signals) })
+        for index in drafts.indices {
+            drafts[index].isLikelyShort = verdicts[drafts[index].videoId] ?? false
         }
-
-        // Classify before inserting. The feed's `@Query` watches the main
-        // context live, and classification suspends on thumbnail downloads,
-        // so a video inserted first would show up in the feed with the
-        // default `isLikelyShort = false` and then vanish once its verdict
-        // landed. Holding the insert until the verdict is known means a Short
-        // is hidden from its first appearance.
-        await classify(pending)
-        for (video, _) in pending {
-            modelContext.insert(video)
-        }
-        try modelContext.save()
+        try await writer.insert(drafts, classifierVersion: ShortsHeuristic.version)
     }
 
     // MARK: - Shorts classification
@@ -262,43 +237,38 @@ final class FeedRefresher {
     /// without waiting for new uploads.
     func reclassifyStaleVideos() async throws {
         let current = ShortsHeuristic.version
-        let stale = try modelContext.fetch(FetchDescriptor<Video>(
-            predicate: #Predicate { $0.classifierVersion < current }
-        ))
+        let stale = try await writer.staleShortsSignals(version: current)
         guard !stale.isEmpty else { return }
 
-        let pending = stale.map { video in
-            (video, VideoSignals(
-                durationSeconds: video.durationSeconds,
-                title: video.title,
-                description: video.videoDescription,
-                thumbnailWidth: video.thumbnailWidth,
-                thumbnailHeight: video.thumbnailHeight
-            ))
-        }
-        await classify(pending)
-        try modelContext.save()
+        let verdicts = await shortsVerdicts(for: stale.map { ($0.key, $0.value) })
+        try await writer.applyShortsVerdicts(verdicts, version: current)
     }
 
-    /// Applies the Shorts heuristic, fetching and analysing the thumbnail for
-    /// videos where it could change the answer: inside the duration gate and
-    /// not already caught by a cheaper signal.
-    private func classify(_ pending: [(video: Video, signals: VideoSignals)]) async {
+    /// Applies the Shorts heuristic to signals, fetching and analysing the
+    /// thumbnail for videos where it could change the answer: inside the
+    /// duration gate and not already caught by a cheaper signal.
+    ///
+    /// Works on plain signals rather than on rows because the rows belong to
+    /// the writer's context, and the thumbnail session belongs here.
+    private func shortsVerdicts(
+        for pending: [(videoId: String, signals: VideoSignals)]
+    ) async -> [String: Bool] {
         var needsThumbnail: [String] = []
-        for (video, signals) in pending
+        for (videoId, signals) in pending
         where ShortsHeuristic.isWithinDurationGate(signals)
             && !ShortsHeuristic.isLikelyShort(signals) {
-            needsThumbnail.append(video.videoId)
+            needsThumbnail.append(videoId)
         }
 
         let pillarboxed = await analyzeThumbnails(videoIds: needsThumbnail)
 
-        for (video, signals) in pending {
+        var verdicts: [String: Bool] = [:]
+        for (videoId, signals) in pending {
             var signals = signals
-            signals.hasPillarboxedThumbnail = pillarboxed[video.videoId] ?? nil
-            video.isLikelyShort = ShortsHeuristic.isLikelyShort(signals)
-            video.classifierVersion = ShortsHeuristic.version
+            signals.hasPillarboxedThumbnail = pillarboxed[videoId] ?? nil
+            verdicts[videoId] = ShortsHeuristic.isLikelyShort(signals)
         }
+        return verdicts
     }
 
     /// Downloads `hqdefault.jpg` for each ID and runs `ThumbnailAnalyzer`.

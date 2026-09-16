@@ -27,6 +27,38 @@ private struct StubRewriter: TitleRewriter {
     }
 }
 
+/// Stops a rewrite batch in the middle of itself, so the store can be
+/// inspected while a run is in flight.
+private final class GatedRewriter: TitleRewriter, @unchecked Sendable {
+    /// Fulfilled when the call named by `stopAt` arrives.
+    let reached: XCTestExpectation
+    private let stopAt: Int
+    private let gate = DispatchSemaphore(value: 0)
+    private let lock = NSLock()
+    private var calls = 0
+
+    init(stopAt: Int, reached: XCTestExpectation) {
+        self.stopAt = stopAt
+        self.reached = reached
+    }
+
+    func rewrite(_ request: TitleRewriteRequest) async throws -> String {
+        lock.lock()
+        calls += 1
+        let call = calls
+        lock.unlock()
+        if call == stopAt {
+            reached.fulfill()
+            // Runs on the writer's own thread, so blocking here holds only the
+            // batch; the main actor stays free for the test to look around.
+            gate.wait()
+        }
+        return request.strippedTitle.lowercased()
+    }
+
+    func resume() { gate.signal() }
+}
+
 /// The cleaner's own job is the bookkeeping around `TitleStripper`: which
 /// videos are stale, which titles it judges them against, and that a version
 /// bump re-does the lot. Driven against an in-memory container, the way
@@ -467,6 +499,40 @@ final class TitleCleanerTests: XCTestCase {
         await cleaner.cleanStale()
 
         XCTAssertEqual(try stored()[0].displayTitle, "How to ruin university challenge")
+    }
+
+    // MARK: - Where the writes go
+
+    /// What the cleaner was moved off the main context for: `@Query` observes
+    /// that context live, unsaved edits included, so a pass that wrote a title
+    /// at a time through it made every live query in the app re-fetch a title
+    /// at a time. Freeze the rewrite once it has written one title and check
+    /// the main context has nothing pending.
+    func testARunInFlightLeavesNoUnsavedEditsOnTheMainContext() async throws {
+        makeShow(channelId: "UC-qi", title: "QI")
+        seed(qi)
+        let reached = expectation(description: "the rewrite is under way")
+        let rewriter = GatedRewriter(stopAt: 2, reached: reached)
+        let cleaner = makeCleaner(rewriter)
+
+        let run = Task { await cleaner.cleanStale() }
+        await fulfillment(of: [reached], timeout: 5)
+
+        XCTAssertFalse(
+            context.hasChanges,
+            "a batch pass writes on its own context, never the main one"
+        )
+
+        rewriter.resume()
+        await run.value
+        // And the work is in the store, not merely pending somewhere: a
+        // context that has never seen any of it can read it back.
+        let fresh = ModelContext(container)
+        let videos = try fresh.fetch(FetchDescriptor<Video>(
+            sortBy: [SortDescriptor(\.publishedAt, order: .reverse)]
+        ))
+        XCTAssertEqual(videos.first?.displayTitle, "How to ruin university challenge")
+        XCTAssertTrue(videos.allSatisfy { $0.titleCleanerVersion == TitleCleaner.version })
     }
 
     /// The version bump with tier two in play: both tiers run again, so a

@@ -78,6 +78,10 @@ final class AppServices {
     let showDetector: ShowDetectionRunner
 
     init(config: AppConfig.Values, modelContext: ModelContext, defaults: UserDefaults = .standard) {
+        // One writer for every background pass, so the passes that overlap at
+        // launch share a context instead of colliding over a row. See
+        // `StoreWriter`.
+        let writer = StoreWriter(modelContainer: modelContext.container)
         let auth = AuthController(config: config)
         let quota = QuotaTracker(defaults: defaults)
         let api = YouTubeAPI(quota: quota) { [auth] in
@@ -86,23 +90,25 @@ final class AppServices {
         self.auth = auth
         self.quota = quota
         self.api = api
-        self.feed = FeedRefresher(modelContext: modelContext, api: api)
+        self.feed = FeedRefresher(modelContext: modelContext, api: api, writer: writer)
         self.categories = CategoryManager(
             modelContext: modelContext,
             categorizer: ChannelCategorizerFactory.makeSystemCategorizer(),
-            defaults: defaults
+            defaults: defaults,
+            writer: writer
         )
         let upNext = UpNextQueue(modelContext: modelContext)
         self.upNext = upNext
-        let shows = ShowManager(modelContext: modelContext)
-        self.shows = shows
+        self.shows = ShowManager(modelContext: modelContext)
         self.titles = TitleCleaner(
             modelContext: modelContext,
             rewriter: TitleRewriterFactory.makeSystemRewriter(),
-            shows: shows,
-            defaults: defaults
+            defaults: defaults,
+            writer: writer
         )
         self.playback = PlaybackProgress(modelContext: modelContext, upNext: upNext)
-        self.showDetector = ShowDetectionRunner(modelContext: modelContext, shows: shows, defaults: defaults)
+        self.showDetector = ShowDetectionRunner(
+            modelContext: modelContext, defaults: defaults, writer: writer
+        )
     }
 }
