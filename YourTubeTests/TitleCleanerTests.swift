@@ -561,4 +561,137 @@ final class TitleCleanerTests: XCTestCase {
         XCTAssertTrue(videos.allSatisfy { $0.isTitleRewritten })
         XCTAssertTrue(videos.allSatisfy { $0.titleCleanerVersion == TitleCleaner.version })
     }
+
+    // MARK: - Lazy, bounded rewriting (#65)
+
+    private func freshDefaults() -> UserDefaults {
+        UserDefaults(suiteName: "TitleCleanerTests-\(UUID().uuidString)")!
+    }
+
+    /// A cold launch with far more pending rewrites than any reasonable
+    /// per-launch budget must stop at the budget and go idle, leaving the
+    /// rest pending — not run the model once per title until the store is
+    /// exhausted, which is what #65 measured (261 calls, 4.5 minutes).
+    func testAutomaticPassStopsAtItsPerLaunchBudget() async throws {
+        makeShow(channelId: "UC-qi", title: "QI")
+        let titles = (0..<20).map { "Episode \($0) | QI" }
+        seed(titles)
+        let rewriter = StubRewriter()
+        let cleaner = TitleCleaner(
+            modelContext: context, rewriter: rewriter, defaults: freshDefaults(),
+            rewriteBudgetPerLaunch: 3
+        )
+
+        await cleaner.cleanStale()
+
+        XCTAssertEqual(rewriter.log.requests.count, 3)
+        XCTAssertEqual(try stored().filter(\.isTitleRewritten).count, 3)
+        // What's left is still stale, not stuck: nothing marks the unreached
+        // episodes as seen, so a later pass (or opening the show) picks them
+        // up rather than skipping them forever.
+        XCTAssertEqual(try stored().filter { !$0.isTitleRewritten }.count, 17)
+    }
+
+    /// Titles are only read on the show page and the Shows tab, so the
+    /// automatic pass only needs a show's retention window settled at
+    /// launch — the rest is lazy, picked up when the show is opened.
+    func testAutomaticPassOnlyRewritesTheShowsRetentionWindowByDefault() async throws {
+        makeShow(channelId: "UC-qi", title: "QI")
+        let titles = (0..<15).map { "Episode \($0) | QI" }
+        seed(titles)
+        let rewriter = StubRewriter()
+        let cleaner = TitleCleaner(
+            modelContext: context, rewriter: rewriter, defaults: freshDefaults(),
+            rewriteBudgetPerLaunch: 1000
+        )
+
+        await cleaner.cleanStale()
+
+        let videos = try stored()
+        XCTAssertEqual(rewriter.log.requests.count, TitleCleaner.defaultRewriteWindow)
+        XCTAssertTrue(videos.prefix(TitleCleaner.defaultRewriteWindow).allSatisfy(\.isTitleRewritten))
+        XCTAssertTrue(videos.suffix(from: TitleCleaner.defaultRewriteWindow).allSatisfy { !$0.isTitleRewritten })
+    }
+
+    /// Opening a show page asks for that show's episodes in full, ahead of
+    /// whatever the lazy window left behind — the ordering rule Done-when
+    /// names explicitly.
+    func testOpeningAShowRewritesItsRemainingEpisodesFirst() async throws {
+        makeShow(channelId: "UC-qi", title: "QI")
+        let titles = (0..<15).map { "Episode \($0) | QI" }
+        seed(titles)
+        let rewriter = StubRewriter()
+        let cleaner = TitleCleaner(
+            modelContext: context, rewriter: rewriter, defaults: freshDefaults(),
+            rewriteBudgetPerLaunch: 1000
+        )
+        await cleaner.cleanStale()
+        XCTAssertEqual(rewriter.log.requests.count, TitleCleaner.defaultRewriteWindow)
+
+        await cleaner.rewriteEpisodes(ofShowId: ShowSource.channel(id: "UC-qi").showId)
+
+        let videos = try stored()
+        XCTAssertTrue(videos.allSatisfy(\.isTitleRewritten))
+        XCTAssertEqual(rewriter.log.requests.count, 15)
+    }
+
+    /// A show open costs from the same per-launch budget as the automatic
+    /// pass, so opening show after show can't turn into an unbounded run.
+    func testOpeningAShowStillRespectsTheRemainingBudget() async throws {
+        makeShow(channelId: "UC-qi", title: "QI")
+        let titles = (0..<15).map { "Episode \($0) | QI" }
+        seed(titles)
+        let rewriter = StubRewriter()
+        let cleaner = TitleCleaner(
+            modelContext: context, rewriter: rewriter, defaults: freshDefaults(),
+            rewriteBudgetPerLaunch: TitleCleaner.defaultRewriteWindow + 2
+        )
+        await cleaner.cleanStale()
+        XCTAssertEqual(rewriter.log.requests.count, TitleCleaner.defaultRewriteWindow)
+
+        await cleaner.rewriteEpisodes(ofShowId: ShowSource.channel(id: "UC-qi").showId)
+
+        XCTAssertEqual(rewriter.log.requests.count, TitleCleaner.defaultRewriteWindow + 2)
+        XCTAssertEqual(try stored().filter(\.isTitleRewritten).count, TitleCleaner.defaultRewriteWindow + 2)
+    }
+
+    /// The one moment the pass must never compete for the main thread: a
+    /// refresh in flight. It's skipped rather than queued, so it costs
+    /// nothing extra once the refresh finishes — the next trigger tries again.
+    func testTheRewritePassIsSkippedWhileARefreshIsRunning() async throws {
+        makeShow(channelId: "UC-qi", title: "QI")
+        seed(qi)
+        let rewriter = StubRewriter()
+        let cleaner = TitleCleaner(
+            modelContext: context, rewriter: rewriter, defaults: freshDefaults(),
+            isRefreshingProvider: { true }
+        )
+
+        let didWork = await cleaner.reconcileRewrites()
+
+        XCTAssertFalse(didWork)
+        XCTAssertTrue(rewriter.log.requests.isEmpty)
+        XCTAssertTrue(try stored().allSatisfy { !$0.isTitleRewritten })
+    }
+
+    /// The automatic entry point waits out its start delay before its first
+    /// model call, so launch's first frame and the user's first tap never
+    /// compete with it. Direct calls to `cleanStale()` (every other test in
+    /// this file) skip the wait entirely.
+    func testTheAutomaticPassWaitsBeforeItsFirstModelCall() async throws {
+        makeShow(channelId: "UC-qi", title: "QI")
+        seed(qi)
+        let rewriter = StubRewriter()
+        let cleaner = TitleCleaner(
+            modelContext: context, rewriter: rewriter, defaults: freshDefaults(),
+            startDelay: .milliseconds(150)
+        )
+
+        cleaner.cleanStaleInBackground()
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertTrue(rewriter.log.requests.isEmpty, "must not call the model before the start delay elapses")
+
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertFalse(rewriter.log.requests.isEmpty, "should have run once the delay elapsed")
+    }
 }

@@ -197,6 +197,10 @@ struct ShowPageView: View {
             }
         }
         .task { await refreshMembershipIfNeeded() }
+        // Titles are read here and on the Shows tab, so the show being
+        // looked at settles first — ahead of the launch pass's own lazy,
+        // budgeted sweep over every show. See `TitleCleaner.rewriteEpisodes`.
+        .task { await services.titles.rewriteEpisodes(ofShowId: show.id) }
     }
 
     /// A playlist-backed show's membership is only as fresh as the last time

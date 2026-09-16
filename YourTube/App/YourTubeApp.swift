@@ -93,7 +93,8 @@ final class AppServices {
         self.auth = auth
         self.quota = quota
         self.api = api
-        self.feed = FeedRefresher(modelContext: modelContext, api: api, writer: writer)
+        let feed = FeedRefresher(modelContext: modelContext, api: api, writer: writer)
+        self.feed = feed
         self.categories = CategoryManager(
             modelContext: modelContext,
             categorizer: ChannelCategorizerFactory.makeSystemCategorizer(),
@@ -107,7 +108,8 @@ final class AppServices {
             modelContext: modelContext,
             rewriter: TitleRewriterFactory.makeSystemRewriter(),
             defaults: defaults,
-            writer: writer
+            writer: writer,
+            isRefreshingProvider: { [weak feed] in feed?.isRefreshing ?? false }
         )
         self.playback = PlaybackProgress(modelContext: modelContext, upNext: upNext)
         self.showDetector = ShowDetectionRunner(
