@@ -322,20 +322,46 @@ final class CategoryManager {
         try assign(channelId: channelId, channelTitle: channelTitle, to: current)
     }
 
-    /// Channel IDs whose tag set contains a category, or (for nil) has no
-    /// topic category. Used to build feed predicates. Priority is a tag like
-    /// any other here, so a channel that is Priority and Comedy is in both.
-    func channelIds(in collection: VideoCollection?) throws -> [String] {
+    /// The chip row's names, in display order: every category (Priority
+    /// first, by sort order) plus Uncategorized. The one place the Feed,
+    /// Your Shows and Channels all read the chip list from, so adding,
+    /// renaming or deleting a category can't drift out of sync between them.
+    func chipNames() throws -> [String] {
+        try categories().map(\.name) + [Self.uncategorizedName]
+    }
+
+    /// Channel IDs a chip leaves, in the chip's own vocabulary: nil or empty
+    /// is "All" (every subscribed channel), `uncategorizedName` is channels
+    /// with no topic category, and any other name is channels whose rule
+    /// carries a category of that name. A channel appears under every chip
+    /// it carries, Priority included, so a channel that is Priority and
+    /// Comedy is under both. The one derivation the Feed, Your Shows and
+    /// Channels all filter through.
+    func channelIds(in categoryName: String?) throws -> [String] {
         let subscriptions = try modelContext.fetch(FetchDescriptor<Subscription>())
+        guard let categoryName, !categoryName.isEmpty else {
+            return subscriptions.map(\.channelId)
+        }
         let ruleByChannel = Dictionary(
             try rules().map { ($0.channelId, $0) },
             uniquingKeysWith: { first, _ in first }
         )
         return subscriptions.map(\.channelId).filter { id in
-            guard let rule = ruleByChannel[id] else { return collection == nil }
-            if let collection { return rule.contains(collection) }
-            return rule.topicCollections.isEmpty
+            guard let rule = ruleByChannel[id] else {
+                return categoryName == Self.uncategorizedName
+            }
+            if categoryName == Self.uncategorizedName {
+                return rule.topicCollections.isEmpty
+            }
+            return rule.collections.contains { $0.name == categoryName }
         }
+    }
+
+    /// Channel ids carrying the Priority tag. Used to pin Priority channels
+    /// first within a chip's filtered list — Your Shows and Channels both
+    /// do this; the Feed doesn't, since it's ordered by publish date instead.
+    func priorityChannelIds() throws -> Set<String> {
+        Set(try rules().filter(\.isPriority).map(\.channelId))
     }
 
     // MARK: - Classification
