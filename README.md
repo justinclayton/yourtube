@@ -10,6 +10,26 @@ Not intended for the App Store.
 The YouTube app optimises for engagement. This one optimises for "show me what
 the channels I chose have posted, newest first, and nothing else."
 
+### Ethos
+
+YourTube is a personal client for keeping up with the channels you chose, not
+for watching more. Every design decision in this file follows from that:
+
+- The feed is an inbox to reach the end of, not a stream to stay in. "Caught
+  up" is the goal state, and the daily cap exists so one channel can't flood it.
+- Shows are followed episode by episode. Up Next is the list of things you
+  decided to watch, in the order you decided.
+- Titles are calmed rather than sold. The cleaner strips the shouting and the
+  rewrite says what an episode is about, and YouTube's own title stays visible
+  underneath so nothing is hidden.
+- Nothing moves you to another video on its own: no autoplay, no next-episode
+  button, no recommendations, no infinite feed. Reaching the end of a video
+  and stopping is the intended experience.
+
+When a change would make the app better at keeping you watching, it is the
+wrong change, however small. The same short paragraph lives in `CLAUDE.md` so
+every agent session reads it.
+
 ## What works, and what can't
 
 Some limits here are Google's, not implementation gaps. They're worth knowing

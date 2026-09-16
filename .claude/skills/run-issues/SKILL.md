@@ -55,7 +55,9 @@ then `gh issue view <n> --comments`. The issue's Done-when is your completion
 criterion; every line of it is satisfied before you open the PR.
 
 Conventions: docs/agents/issue-tracker.md (branch, PR, media). CLAUDE.md and
-README.md describe the domain and the build. After adding or removing source
+README.md describe the domain and the build; read the Ethos section in
+CLAUDE.md before designing anything a person will see, and treat a change
+that makes the app better at keeping someone watching as out of scope. After adding or removing source
 files run `xcodegen generate`.
 
 Simulators: tests and -seedFixtures drives run on a pool device:
