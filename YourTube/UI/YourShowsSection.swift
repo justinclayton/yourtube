@@ -60,6 +60,7 @@ struct YourShowsSection: View {
         .recomputingFromStore(id: showsCategory) {
             grid = (try? ShowsGrid.load(
                 catalogue: services.shows,
+                categories: services.categories,
                 context: modelContext,
                 category: showsCategory
             )) ?? grid
@@ -100,7 +101,7 @@ struct YourShowsSection: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("No shows yet")
                 .font(.subheadline.weight(.semibold))
-            Text("Mark a channel as a show in Channels — swipe it, long-press it, or use its Categories sheet — and it appears here with a count of what you haven't watched.")
+            Text("Mark a channel as a show in Channels.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -144,25 +145,18 @@ struct ShowsGrid {
     @MainActor
     static func load(
         catalogue: ShowManager,
+        categories: CategoryManager,
         context: ModelContext,
         category: String
     ) throws -> ShowsGrid {
         var grid = ShowsGrid()
         grid.isLoaded = true
-        let categories = try context.fetch(FetchDescriptor<VideoCollection>(sortBy: [
-            SortDescriptor(\VideoCollection.sortOrder), SortDescriptor(\VideoCollection.name)
-        ]))
-        grid.chipNames = categories.map(\.name) + [CategoryManager.uncategorizedName]
+        grid.chipNames = try categories.chipNames()
 
         let shows = try catalogue.shows()
         grid.hasShows = !shows.isEmpty
         guard !shows.isEmpty else { return grid }
 
-        let rules = try context.fetch(FetchDescriptor<ChannelRule>())
-        let ruleByChannel = Dictionary(
-            rules.map { ($0.channelId, $0) },
-            uniquingKeysWith: { first, _ in first }
-        )
         let subscriptions = try context.fetch(FetchDescriptor<Subscription>())
         let avatars = Dictionary(
             subscriptions.compactMap { sub in sub.thumbnailURL.map { (sub.channelId, $0) } },
@@ -170,21 +164,16 @@ struct ShowsGrid {
         )
         let counts = try catalogue.unwatchedCounts(for: shows)
 
-        // The chips filter; Priority sorts what's left to the front, so the
-        // tag means the same thing here as it does on the feed.
+        // The chip filter, one shared derivation with the Feed and Channels;
+        // Priority sorts what's left to the front, so the tag means the same
+        // thing here as it does on the feed.
         let selected = grid.chipNames.contains(category) ? category : ""
-        let visible = shows.filter { show in
-            guard !selected.isEmpty else { return true }
-            let rule = ruleByChannel[show.channelId]
-            if selected == CategoryManager.uncategorizedName {
-                return rule?.topicCollections.isEmpty ?? true
-            }
-            return rule?.collections.contains { $0.name == selected } ?? false
-        }
+        let allowed = Set(try categories.channelIds(in: selected))
+        let priority = try categories.priorityChannelIds()
+        let visible = shows.filter { allowed.contains($0.channelId) }
         grid.posters = visible.enumerated()
             .sorted { a, b in
-                let (pa, pb) = (ruleByChannel[a.element.channelId]?.isPriority ?? false,
-                                ruleByChannel[b.element.channelId]?.isPriority ?? false)
+                let (pa, pb) = (priority.contains(a.element.channelId), priority.contains(b.element.channelId))
                 return pa == pb ? a.offset < b.offset : pa
             }
             .map { _, show in

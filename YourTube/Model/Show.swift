@@ -110,6 +110,11 @@ final class Show {
     /// episode, before it counts as a segment cut from one. A half by
     /// default; see `ShowManager+Segments`.
     var segmentThreshold: Double = Show.defaultSegmentThreshold
+    /// Whether this show hides cut-downs behind the segment toggle at all.
+    /// On by default; a show can turn it off in settings when the app still
+    /// gets the classification wrong for its catalogue, at which point every
+    /// source video is listed as an episode. See `ShowManager+Segments`.
+    var hideSegments: Bool = true
     var artPreferenceRaw: String
     /// Why the detector flagged this channel, in its own words, so a guess can
     /// be read and trusted or corrected. Empty for a hand-made flag.
@@ -145,6 +150,7 @@ final class Show {
         playOrder: PlayOrder = .newestFirst,
         retentionCount: Int? = nil,
         segmentThreshold: Double = Show.defaultSegmentThreshold,
+        hideSegments: Bool = true,
         artPreference: ShowArtPreference = .channelArt
     ) {
         self.id = source.showId
@@ -163,6 +169,7 @@ final class Show {
         self.playOrderRaw = playOrder.rawValue
         self.retentionCount = retentionCount
         self.segmentThreshold = segmentThreshold
+        self.hideSegments = hideSegments
         self.artPreferenceRaw = artPreference.rawValue
         self.createdAt = .now
     }

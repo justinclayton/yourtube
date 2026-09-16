@@ -75,7 +75,7 @@ struct PlaylistShowPicker: View {
                 Label("Couldn't list playlists", systemImage: "list.bullet.rectangle")
             } description: {
                 Text(services.auth.needsReauth
-                     ? "Sign in on the Feed tab to browse \(subscription.title)'s playlists. A playlist-backed show is the only thing in the app that has to ask YouTube for a list, and it can't ask signed out."
+                     ? "Sign in on the Feed tab to browse \(subscription.title)'s playlists."
                      : loadError)
             }
         } else if playlists.isEmpty {

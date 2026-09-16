@@ -269,6 +269,21 @@ final class ShowManagerTests: XCTestCase {
         XCTAssertTrue(try manager.segments(of: show).isEmpty, "and back again")
     }
 
+    /// The per-show override for when the app still gets classification
+    /// wrong: turning "Hide segments" off lists everything as an episode,
+    /// whatever the threshold would otherwise do.
+    func testHideSegmentsOffListsEverythingAsAnEpisode() throws {
+        let show = try newsShow()
+        XCTAssertTrue(show.hideSegments, "on by default")
+        XCTAssertEqual(try manager.segments(of: show).count, 15, "hiding is on by default")
+
+        show.hideSegments = false
+
+        XCTAssertTrue(try manager.segments(of: show).isEmpty)
+        XCTAssertEqual(try manager.episodes(of: show).count, 20, "every source video, episodes and clips alike")
+        XCTAssertNil(try manager.listing(of: show).typicalEpisodeDuration)
+    }
+
     /// The reason "typical" isn't the longest episode: a show that runs one
     /// election special mustn't spend the rest of the year calling its
     /// ordinary episodes clips.
@@ -292,6 +307,61 @@ final class ShowManagerTests: XCTestCase {
 
         XCTAssertTrue(try manager.segments(of: show).isEmpty)
         XCTAssertEqual(try manager.listing(of: show).typicalEpisodeDuration, 5_700)
+    }
+
+    /// Breaking Points posts only clips — its full episodes go to a paid feed
+    /// — so its uploads run a continuous range of lengths with no real gap
+    /// anywhere in them. The old rule still drew a line through the middle
+    /// of that range and called the shorter half segments; the gap check is
+    /// what stops it, per issue #90.
+    func testAChannelOfClipsOnlyWithNoGapHidesNothing() throws {
+        let show = try manager.markAsShow(channelId: "UC-bp", channelTitle: "Breaking Points")
+        let seconds = [2799, 843, 1041, 1445, 850, 1331, 1530, 766, 627, 696, 1218, 780, 2127, 588,
+                        720, 915, 2340, 1740, 1689, 1198, 1233, 1846, 693, 1475, 895, 640, 1860, 1613,
+                        1515, 2298]
+        for (index, length) in seconds.enumerated() {
+            video("bp-\(index)", channelId: "UC-bp", daysAgo: Double(index + 1), seconds: length)
+        }
+        try context.save()
+
+        XCTAssertTrue(try manager.segments(of: show).isEmpty,
+                      "no gap between any group of lengths, so nothing is a segment of anything else")
+        XCTAssertEqual(try manager.episodes(of: show).count, 30)
+        XCTAssertNil(try manager.listing(of: show).typicalEpisodeDuration)
+    }
+
+    /// Neal Brennan really does mix full episodes with clips cut from them —
+    /// four hour-plus episodes against twenty-six short ones — and the gap
+    /// between the two groups is real, so the gap check must still find it.
+    func testAChannelWithARealGapStillSplitsEpisodesFromClips() throws {
+        let show = try manager.markAsShow(channelId: "UC-nb", channelTitle: "Neal Brennan")
+        let seconds = [343, 551, 930, 369, 595, 4_926, 536, 501, 1_007, 440, 473, 408, 5_301, 335,
+                        610, 602, 398, 500, 307, 5_075, 223, 1_192, 741, 275, 738, 663, 5_690, 497,
+                        495, 509]
+        for (index, length) in seconds.enumerated() {
+            video("nb-\(index)", channelId: "UC-nb", daysAgo: Double(index + 1), seconds: length)
+        }
+        try context.save()
+
+        XCTAssertEqual(try manager.episodes(of: show).count, 4, "the four hour-plus episodes")
+        XCTAssertEqual(try manager.segments(of: show).count, 26, "everything cut from them")
+    }
+
+    /// Team Coco splits twelve hour-long shows from eighteen shorter clips —
+    /// a smaller but still real gap, which the check must not be too strict
+    /// to find.
+    func testAChannelWithASmallerRealGapStillSplitsEpisodesFromClips() throws {
+        let show = try manager.markAsShow(channelId: "UC-coco", channelTitle: "Team Coco")
+        let seconds = [4_237, 467, 482, 3_964, 371, 4_022, 295, 1_337, 602, 3_586, 615, 462, 4_488,
+                        659, 3_553, 1_246, 4_269, 463, 592, 4_097, 394, 3_431, 1_440, 4_088, 725, 606,
+                        4_331, 511, 3_051, 1_200]
+        for (index, length) in seconds.enumerated() {
+            video("coco-\(index)", channelId: "UC-coco", daysAgo: Double(index + 1), seconds: length)
+        }
+        try context.save()
+
+        XCTAssertEqual(try manager.episodes(of: show).count, 12, "the twelve hour-long shows")
+        XCTAssertEqual(try manager.segments(of: show).count, 18, "everything shorter")
     }
 
     /// An unmeasured video is listed rather than hidden: the app would rather
@@ -329,19 +399,18 @@ final class ShowManagerTests: XCTestCase {
                        "revealing segments doesn't drag back the era the window hides")
     }
 
-    /// The footer under the list: how many are hidden, why, and that they're
-    /// still there.
+    /// The footer under the list: how many are hidden, and that they're not deleted.
     func testTheFooterSaysWhatIsHiddenAndWhy() throws {
         let show = try newsShow(nights: 8)
         show.retentionCount = 3
         let listing = try manager.listing(of: show)
 
         let hidden = try XCTUnwrap(listing.hiddenSummary(revealingSegments: false))
-        XCTAssertTrue(hidden.hasPrefix("9 segments and 5 older episodes hidden."), hidden)
-        XCTAssertTrue(hidden.contains("still in the feed"), hidden)
+        XCTAssertTrue(hidden.hasPrefix("9 segments and 5 older episodes hidden,"), hidden)
+        XCTAssertTrue(hidden.contains("not deleted"), hidden)
 
         let revealed = try XCTUnwrap(listing.hiddenSummary(revealingSegments: true))
-        XCTAssertTrue(revealed.hasPrefix("5 older episodes hidden."), revealed)
+        XCTAssertTrue(revealed.hasPrefix("5 older episodes hidden,"), revealed)
 
         show.retentionCount = nil
         XCTAssertNil(try manager.listing(of: show).hiddenSummary(revealingSegments: true),

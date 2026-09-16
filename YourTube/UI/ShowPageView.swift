@@ -20,6 +20,8 @@ struct ShowPageView: View {
     let show: Show
 
     @Query private var subscriptions: [Subscription]
+    @Query(sort: [SortDescriptor(\VideoCollection.sortOrder), SortDescriptor(\VideoCollection.name)])
+    private var categories: [VideoCollection]
     /// The videos the show's episodes are drawn from, newest first: its
     /// channel's for a channel-backed show, and every stored video for a
     /// playlist-backed one, since a playlist may hold a guest channel's video
@@ -28,6 +30,10 @@ struct ShowPageView: View {
     /// lists exactly what the catalogue counts.
     @Query private var channelVideos: [Video]
     @State private var isShowingSettings = false
+    /// Opens the same Categories sheet Channels uses, filed under the show's
+    /// host channel — the channel itself for a channel-backed show, the
+    /// channel a playlist-backed show's playlist lives in for the other kind.
+    @State private var isShowingCategories = false
     /// Segments start hidden every time the page opens: the full episodes are
     /// what a show is, and the cut-downs are there when they're asked for.
     /// Not stored on the show — it's a way of looking at the page, not a
@@ -137,21 +143,20 @@ struct ShowPageView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 // A playlist-backed show has no channel-level "not a show"
                 // decision to record — that flag lives on the channel, and
-                // this page is one playlist within it — so it keeps the
-                // plain settings button. A channel-backed show gets the menu.
-                if show.isPlaylistBacked {
+                // this page is one playlist within it — so it's left out of
+                // its menu. Both kinds get Show settings and Categories.
+                Menu {
                     settingsButton
-                } else {
-                    Menu {
-                        settingsButton
+                    categoriesButton
+                    if !show.isPlaylistBacked {
                         Button {
                             markAsNotAShow()
                         } label: {
                             Label("Not a show", systemImage: "tv.slash")
                         }
-                    } label: {
-                        Label("Show settings", systemImage: "slider.horizontal.3")
                     }
+                } label: {
+                    Label("Show settings", systemImage: "slider.horizontal.3")
                 }
             }
         }
@@ -160,6 +165,15 @@ struct ShowPageView: View {
         }
         .sheet(isPresented: $isShowingSettings) {
             ShowSettingsSheet(show: show, videos: channelVideos)
+        }
+        .sheet(isPresented: $isShowingCategories) {
+            if let subscription {
+                CategoryPickerSheet(
+                    subscription: subscription,
+                    categories: categories,
+                    playlistShowTitle: show.isPlaylistBacked ? show.title : nil
+                )
+            }
         }
         .task { await refreshMembershipIfNeeded() }
     }
@@ -183,6 +197,14 @@ struct ShowPageView: View {
             isShowingSettings = true
         } label: {
             Label("Show settings", systemImage: "slider.horizontal.3")
+        }
+    }
+
+    private var categoriesButton: some View {
+        Button {
+            isShowingCategories = true
+        } label: {
+            Label("Categories…", systemImage: "folder")
         }
     }
 
@@ -232,7 +254,12 @@ struct ShowPageView: View {
                     }
                 }
             }
-            DetectorReasons(show: show)
+            // A playlist-backed show has no channel-level decision to
+            // record, so it gets the reasons without the button.
+            DetectorReasons(
+                show: show,
+                markAsNotAShow: show.isPlaylistBacked ? nil : markAsNotAShow
+            )
             seasonPicker
             buttons(unwatched: unwatched)
         }
@@ -461,7 +488,7 @@ private struct ShowSettingsSheet: View {
                 } header: {
                     Text("Play order")
                 } footer: {
-                    Text("Newest first suits a daily news show. Oldest first walks a backlog forwards, which is how a podcast is meant to be heard. Either way, an episode you're partway through is offered first.")
+                    Text("An episode already in progress is offered first either way.")
                 }
                 segmentsSection
                 retentionSection
@@ -473,7 +500,7 @@ private struct ShowSettingsSheet: View {
                 } header: {
                     Text("Art")
                 } footer: {
-                    Text("Channel art keeps the show recognisable and leaves YouTube's thumbnails out of it. Switch to thumbnails for a channel whose avatar carries no information. This applies to the show's episodes here and its cards in Continue Watching and Up Next.")
+                    Text("Applies to episodes here and cards in Continue Watching and Up Next.")
                 }
             }
             .navigationTitle(show.title)
@@ -497,35 +524,43 @@ private struct ShowSettingsSheet: View {
     @ViewBuilder
     private var segmentsSection: some View {
         Section {
-            Slider(
-                value: $show.segmentThreshold,
-                in: Show.segmentThresholdRange,
-                step: 0.05
-            ) {
-                Text("Segment threshold")
-            } minimumValueLabel: {
-                Text("10%")
-                    .font(.caption2)
-            } maximumValueLabel: {
-                Text("90%")
-                    .font(.caption2)
+            Toggle("Hide segments", isOn: $show.hideSegments)
+            if show.hideSegments {
+                Slider(
+                    value: $show.segmentThreshold,
+                    in: Show.segmentThresholdRange,
+                    step: 0.05
+                ) {
+                    Text("Segment threshold")
+                } minimumValueLabel: {
+                    Text("10%")
+                        .font(.caption2)
+                } maximumValueLabel: {
+                    Text("90%")
+                        .font(.caption2)
+                }
+                LabeledContent("Segments are shorter than", value: thresholdDescription)
+                    .font(.subheadline)
             }
-            LabeledContent("Segments are shorter than", value: thresholdDescription)
-                .font(.subheadline)
         } header: {
             Text("Segments")
         } footer: {
-            Text("A news hour posts its full episode and then cuts clips out of it. A video shorter than this much of a typical episode is taken to be one of those clips: hidden on this page unless you ask for it, and left out of the show's unwatched count. It stays in the feed either way.")
+            Text("Shorter videos are hidden here and left out of the unwatched count, still in the feed. Turn off if this show has no real clips.")
         }
     }
 
     /// The length the slider currently draws the line at, and what that does
-    /// to the videos the show already has.
+    /// to the videos the show already has — or why nothing is being hidden,
+    /// when the catalogue has no real gap between episode length and clip
+    /// length to draw that line in.
     private var thresholdDescription: String {
         let percent = Int((show.segmentThreshold * 100).rounded())
+        guard listing.hasDurationData else {
+            return "\(percent)% of an episode"
+        }
         guard let typical = listing.typicalEpisodeDuration,
               let length = ShowManager.approximateLength(typical * show.segmentThreshold) else {
-            return "\(percent)% of an episode"
+            return "No segments: this show's videos are all about the same length."
         }
         return "\(length) · \(listing.segmentCount) of \(listing.sourceCount)"
     }
@@ -542,7 +577,7 @@ private struct ShowSettingsSheet: View {
         } header: {
             Text("Retention")
         } footer: {
-            Text("Keeping the last few episodes stops a daily show piling up a backlog you feel obliged to clear. The older ones are hidden from this page and its counts, never deleted, and they stay in the feed.")
+            Text("Older episodes are hidden here, not deleted.")
         }
     }
 }
@@ -557,24 +592,78 @@ private extension Video {
 /// Why the detector thought this channel was a show. Shown only for a guess:
 /// a flag the user made by hand needs no justifying, and a guess that can't be
 /// read can't be trusted or corrected.
+///
+/// Collapsed to one line by default — most of the time the guess is right and
+/// the reasons are noise above the episodes. Tapping the line reveals them,
+/// together with the one correction that matters: "Not a show", which records
+/// the standing decision the detector can never overrule.
 struct DetectorReasons: View {
     let show: Show
+    /// Records "not a show" and leaves the page. Nil when the page has no
+    /// channel-level decision to record (a playlist-backed show), in which
+    /// case only the reasons are offered.
+    var markAsNotAShow: (() -> Void)?
+
+    @State private var isExpanded = false
 
     var body: some View {
         if show.flagOrigin == .heuristic, !show.detectorReasons.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                Label("Flagged as a show automatically", systemImage: "wand.and.stars")
-                    .font(.subheadline.weight(.semibold))
-                ForEach(show.detectorReasons, id: \.self) { reason in
-                    Text("· \(reason)")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 10) {
+                Button {
+                    withAnimation(.snappy) { isExpanded.toggle() }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text("Flagged as a show automatically")
+                            .font(.subheadline.weight(.semibold))
+                        Spacer(minLength: 0)
+                        // The hint goes once the answer is showing, so the
+                        // title keeps its line; the chevron says the rest.
+                        if !isExpanded {
+                            Text("Why?")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    }
+                    .contentShape(Rectangle())
                 }
-                Text("Mark it \u{201C}Not a show\u{201D} above, or in Channels, if this is wrong; that decision sticks.")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
+                // Plain, so the tap lands on this button alone rather than
+                // on every button in the enclosing list row.
+                .buttonStyle(.plain)
+                .accessibilityLabel("Flagged as a show automatically")
+                .accessibilityHint(isExpanded ? "Hides why" : "Shows why")
+
+                if isExpanded {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(show.detectorReasons, id: \.self) { reason in
+                            Text("· \(reason)")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    if let markAsNotAShow {
+                        HStack(alignment: .firstTextBaseline, spacing: 12) {
+                            Button(role: .destructive) {
+                                markAsNotAShow()
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "tv.slash")
+                                    Text("Not a show")
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .font(.subheadline)
+                            Text("That decision sticks.")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12)
