@@ -22,6 +22,23 @@ final class DebugFixturesTests: XCTestCase {
         XCTAssertTrue(priority.first?.rules.isEmpty == false, "a fixture channel is marked Priority")
     }
 
+    /// One fixture channel stands for an automatically-filed one, so the
+    /// Categories sheet's "Why" section has something to show on a device
+    /// where the on-device model can't run — and its two categories come from
+    /// two sources, which is what that section exists to explain.
+    func testFixturesIncludeAnAutomaticallyFiledChannelWithSplitEvidence() throws {
+        let container = try DebugFixtures.makeContainer()
+        let context = container.mainContext
+        let rules = try context.fetch(FetchDescriptor<ChannelRule>())
+        let automatic = try XCTUnwrap(rules.first { !$0.isUserSet && $0.classifiedAt != nil })
+        XCTAssertEqual(automatic.channelTitle, "NASA")
+        XCTAssertEqual(automatic.classifierModelCategory, "Science & Explainers")
+        XCTAssertEqual(automatic.classifierYouTubeCategory, "Tech & Engineering")
+        XCTAssertEqual(automatic.classifierYouTubeReason, "YouTube files most of its videos under Science & Technology")
+        XCTAssertEqual(automatic.classifierDominantCategoryId, "28")
+        XCTAssertEqual(Set(automatic.topicCollections.map(\.name)), ["Science & Explainers", "Tech & Engineering"])
+    }
+
     func testSearchOverFixturesFindsChannelAndVideosByDiacriticFreeQuery() throws {
         let container = try DebugFixtures.makeContainer()
         let context = container.mainContext
