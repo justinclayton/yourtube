@@ -17,6 +17,10 @@ import Observation
 /// Fingerprints live in `UserDefaults` rather than the store because most
 /// channels are examined and rejected, and a rejection has no `Show` row to
 /// hang anything off.
+///
+/// The pass itself runs on `StoreWriter`, off the main context. It reads every
+/// video in the store to judge a channel's shape, which on the main context
+/// meant materialising thousands of objects behind the feed's own queries.
 @Observable
 @MainActor
 final class ShowDetectionRunner {
@@ -31,18 +35,16 @@ final class ShowDetectionRunner {
     private(set) var lastChanged = 0
     private(set) var isRunning = false
 
-    private let modelContext: ModelContext
-    private let shows: ShowManager
+    private let writer: StoreWriter
     private let defaults: UserDefaults
     private var runningTask: Task<Void, Never>?
 
-    /// Channels per slice before yielding, so a first pass over several
-    /// hundred subscriptions can't hold the main thread through a frame.
-    private let yieldInterval = 25
-
-    init(modelContext: ModelContext, shows: ShowManager, defaults: UserDefaults = .standard) {
-        self.modelContext = modelContext
-        self.shows = shows
+    init(
+        modelContext: ModelContext,
+        defaults: UserDefaults = .standard,
+        writer: StoreWriter? = nil
+    ) {
+        self.writer = writer ?? StoreWriter(modelContainer: modelContext.container)
         self.defaults = defaults
     }
 
@@ -63,49 +65,12 @@ final class ShowDetectionRunner {
         defer { isRunning = false }
 
         forgetFingerprintsIfDetectorChanged()
-        var fingerprints = storedFingerprints()
-
-        let subscriptions = try modelContext.fetch(FetchDescriptor<Subscription>())
-        // Shorts are never episodes, so they're no evidence either.
-        let byChannel = Dictionary(
-            grouping: try modelContext.fetch(FetchDescriptor<Video>()).filter { !$0.isLikelyShort },
-            by: \.channelId
-        )
-        // Only a channel-backed record speaks for the channel's own override:
-        // a playlist-backed show's forced override is the user's opinion
-        // about that playlist, not about whether the channel itself is a
-        // show, so it must not remove the channel from consideration.
-        let decided = Set(try shows.allRecords()
-            .filter { !$0.isPlaylistBacked && ($0.override != .none || $0.flagOrigin == .user) }
-            .map(\.channelId))
-
-        var verdicts: [ShowVerdict] = []
-        var examined = 0
-
-        for (index, subscription) in subscriptions.enumerated() {
-            if index > 0 && index.isMultiple(of: yieldInterval) { await Task.yield() }
-            let channelId = subscription.channelId
-            guard !decided.contains(channelId) else { continue }
-
-            let videos = byChannel[channelId] ?? []
-            let fingerprint = Self.fingerprint(of: videos)
-            guard fingerprints[channelId] != fingerprint else { continue }
-
-            examined += 1
-            fingerprints[channelId] = fingerprint
-            verdicts.append(ShowDetector.verdict(for: ChannelEvidence(
-                channelId: channelId,
-                channelTitle: subscription.title,
-                videos: videos.map(Self.signals(for:))
-            )))
-        }
-
-        let changed = try shows.applyAutomaticVerdicts(verdicts)
-        defaults.set(fingerprints, forKey: Self.fingerprintsKey)
-        lastExamined = examined
-        lastChanged = changed
+        let outcome = try await writer.detectShows(fingerprints: storedFingerprints())
+        defaults.set(outcome.fingerprints, forKey: Self.fingerprintsKey)
+        lastExamined = outcome.examined
+        lastChanged = outcome.changed
         lastRunAt = .now
-        return changed
+        return outcome.changed
     }
 
     /// What "materially changed" means: a different number of videos, or a

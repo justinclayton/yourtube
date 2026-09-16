@@ -22,7 +22,7 @@ final class ShowDetectionRunnerTests: XCTestCase {
         )
         shows = ShowManager(modelContext: context)
         defaults = UserDefaults(suiteName: "ShowDetectionRunnerTests-\(UUID().uuidString)")
-        runner = ShowDetectionRunner(modelContext: context, shows: shows, defaults: defaults)
+        runner = ShowDetectionRunner(modelContext: context, defaults: defaults)
     }
 
     /// A twice-weekly hour-long news show: the shape the detector is meant to
@@ -50,6 +50,9 @@ final class ShowDetectionRunnerTests: XCTestCase {
                 youtubeCategoryId: "25"
             ))
         }
+        // The pass reads its own context, so seeding has to be saved before it
+        // runs — as a real refresh's does.
+        try? context.save()
         return subscription
     }
 
@@ -68,6 +71,7 @@ final class ShowDetectionRunnerTests: XCTestCase {
                 youtubeCategoryId: "24"
             ))
         }
+        try? context.save()
     }
 
     func testAPassFlagsAShowShapedChannelWithItsReasonsAndLeavesTheRestAlone() async throws {
@@ -124,6 +128,18 @@ final class ShowDetectionRunnerTests: XCTestCase {
         XCTAssertTrue(try shows.isShow(channelId: "UC-bellwether"))
         // The playlist show is untouched.
         XCTAssertEqual(try shows.playlistShows(forChannelId: "UC-bellwether").count, 1)
+    }
+
+    /// The pass runs on its own context: its rows reach the store, and the
+    /// main context — the one every live `@Query` watches — is left untouched.
+    func testVerdictsAreSavedToTheStoreAndNotPendingOnTheMainContext() async throws {
+        seedShowShapedChannel(id: "UC-bellwether", title: "The Bellwether")
+
+        try await runner.detect()
+
+        XCTAssertFalse(context.hasChanges)
+        let fresh = ModelContext(container)
+        XCTAssertEqual(try fresh.fetch(FetchDescriptor<Show>()).map(\.channelId), ["UC-bellwether"])
     }
 
     // MARK: - Examining a channel once
@@ -190,6 +206,7 @@ final class ShowDetectionRunnerTests: XCTestCase {
                 isLikelyShort: true
             ))
         }
+        try context.save()
 
         try await runner.detect()
 

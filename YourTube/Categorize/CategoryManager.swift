@@ -12,6 +12,11 @@ import Observation
 /// cached forever as rules. Only channels with no rule are classified
 /// automatically. Re-running over everything is an explicit Settings action
 /// and still never touches rules the user set by hand.
+///
+/// The run itself is on `StoreWriter`, off the main context, so several
+/// minutes of classification cost a scrolling feed nothing. What the user
+/// edits by hand — the taxonomy, a channel's filing, the Priority tag — stays
+/// here on the main context, where a tap should reach the screen at once.
 @Observable
 @MainActor
 final class CategoryManager {
@@ -21,7 +26,7 @@ final class CategoryManager {
         case failed(String)
     }
 
-    enum Scope: Equatable {
+    enum Scope: Equatable, Sendable {
         /// Channels with no rule at all.
         case unassigned
         /// Unassigned plus channels the classifier previously left uncategorised.
@@ -82,20 +87,21 @@ final class CategoryManager {
     private(set) var lastRunFailures = 0
 
     private let modelContext: ModelContext
+    private let writer: StoreWriter
     private let categorizer: (any ChannelCategorizer)?
     private let defaults: UserDefaults
     private var runningTask: Task<Void, Never>?
 
-    /// Save every N channels so a kill mid-run doesn't lose everything.
-    private let saveInterval = 10
     private let recentTitlesPerChannel = 10
 
     init(
         modelContext: ModelContext,
         categorizer: (any ChannelCategorizer)?,
-        defaults: UserDefaults = .standard
+        defaults: UserDefaults = .standard,
+        writer: StoreWriter? = nil
     ) {
         self.modelContext = modelContext
+        self.writer = writer ?? StoreWriter(modelContainer: modelContext.container)
         self.categorizer = categorizer
         self.defaults = defaults
     }
@@ -341,112 +347,31 @@ final class CategoryManager {
         }
         guard !isRunning else { return }
 
+        status = .running(completed: 0, total: 0)
+        lastRunFailures = 0
         do {
-            let targets = try targets(for: scope)
-            guard !targets.isEmpty else {
-                status = .idle
-                return
-            }
-            let names = try topicCategories().map(\.name)
-            guard !names.isEmpty else {
-                status = .failed("Add at least one category first.")
-                return
-            }
-
-            status = .running(completed: 0, total: targets.count)
-            var completed = 0
-            lastRunFailures = 0
-
-            for subscription in targets {
-                try Task.checkCancellation()
-                let descriptor = try descriptor(for: subscription)
-                let guess: CategoryGuess
-                do {
-                    guess = try await categorizer.categorize(descriptor, among: names)
-                } catch is CancellationError {
-                    throw CancellationError()
-                } catch {
-                    // Typically the model's safety guardrail objecting to a
-                    // channel name or title. One bad channel must not abort
-                    // the other six hundred; record it as unsure and carry on.
-                    lastRunFailures += 1
-                    guess = .unsure
+            let outcome = try await writer.classifyChannels(
+                scope: scope,
+                using: categorizer,
+                recentTitlesPerChannel: recentTitlesPerChannel,
+                onProgress: { [weak self] completed, total in
+                    Task { @MainActor in self?.reportProgress(completed, total) }
                 }
-                try apply(guess, to: subscription)
-
-                completed += 1
-                status = .running(completed: completed, total: targets.count)
-                if completed % saveInterval == 0 { try modelContext.save() }
-            }
-
-            try modelContext.save()
-            lastRunAt = .now
+            )
+            lastRunFailures = outcome.failures
+            if outcome.total > 0 { lastRunAt = .now }
             status = .idle
         } catch is CancellationError {
-            try? modelContext.save()
             status = .idle
         } catch {
-            try? modelContext.save()
             status = .failed(error.localizedDescription)
         }
     }
 
-    private func targets(for scope: Scope) throws -> [Subscription] {
-        let subscriptions = try modelContext.fetch(FetchDescriptor<Subscription>(
-            sortBy: [SortDescriptor(\.title)]
-        ))
-        let ruleByChannel = Dictionary(
-            try rules().map { ($0.channelId, $0) },
-            uniquingKeysWith: { first, _ in first }
-        )
-        return subscriptions.filter { subscription in
-            guard let rule = ruleByChannel[subscription.channelId] else { return true }
-            if rule.isUserSet { return false }
-            switch scope {
-            // A rule the classifier never wrote (e.g. Priority set by hand on
-            // a fresh subscription) still counts as unassigned.
-            case .unassigned: return rule.classifiedAt == nil
-            case .unassignedAndUnsure: return rule.topicCollections.isEmpty
-            case .allAutomatic: return true
-            }
-        }
-    }
-
-    private func descriptor(for subscription: Subscription) throws -> ChannelDescriptor {
-        let channelId = subscription.channelId
-        var fetch = FetchDescriptor<Video>(
-            predicate: #Predicate { $0.channelId == channelId },
-            sortBy: [SortDescriptor(\.publishedAt, order: .reverse)]
-        )
-        fetch.fetchLimit = recentTitlesPerChannel
-        let titles = try modelContext.fetch(fetch).map(\.title)
-        return ChannelDescriptor(
-            channelId: channelId,
-            title: subscription.title,
-            about: subscription.channelDescription ?? "",
-            recentVideoTitles: titles
-        )
-    }
-
-    /// Writes the classifier's topics onto the channel's rule. The Priority
-    /// tag isn't the classifier's to give or take, so it's carried over.
-    private func apply(_ guess: CategoryGuess, to subscription: Subscription) throws {
-        let all = try topicCategories()
-        let collections = guess.categories.compactMap { name in all.first { $0.name == name } }
-
-        if let rule = try rule(forChannelId: subscription.channelId) {
-            guard !rule.isUserSet else { return }
-            rule.collections = rule.collections.filter(\.isPriority) + collections
-            rule.channelTitle = subscription.title
-            rule.classifiedAt = .now
-        } else {
-            modelContext.insert(ChannelRule(
-                channelId: subscription.channelId,
-                channelTitle: subscription.title,
-                collections: collections,
-                isUserSet: false,
-                classifiedAt: .now
-            ))
-        }
+    /// Progress is a hop to the main actor, so it can land after the run it
+    /// belongs to has already finished. A finished run's status stands.
+    private func reportProgress(_ completed: Int, _ total: Int) {
+        guard case .running = status else { return }
+        status = .running(completed: completed, total: total)
     }
 }

@@ -52,7 +52,7 @@ extension FeedRefresher {
             seen.append(contentsOf: videoIds)
         }
 
-        let known = try knownVideoIds()
+        let known = try await knownVideoIds()
         // A playlist can list the same video twice, and two seasons of a show
         // can overlap; hydrating either twice would be a wasted unit.
         var unknown: [String] = []

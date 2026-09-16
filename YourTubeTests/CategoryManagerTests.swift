@@ -42,6 +42,10 @@ final class CategoryManagerTests: XCTestCase {
     private func subscribe(_ title: String, id: String? = nil) -> Subscription {
         let sub = Subscription(channelId: id ?? "UC-\(title)", title: title)
         context.insert(sub)
+        // The classifier runs on its own context, so a subscription has to be
+        // saved before it can be seen — as `FeedRefresher` saves the real ones
+        // before classification is started.
+        try? context.save()
         return sub
     }
 
@@ -315,6 +319,22 @@ final class CategoryManagerTests: XCTestCase {
         XCTAssertTrue(blockedRule.collections.isEmpty)
         XCTAssertNotNil(blockedRule.classifiedAt)
         XCTAssertEqual(try manager.rule(forChannelId: fine.channelId)?.collections.map(\.name), ["Cars"])
+    }
+
+    /// The classifier runs on its own context, so what it files is in the
+    /// store rather than pending on the main context, where every live
+    /// `@Query` would have seen each rule land.
+    func testClassificationIsSavedToTheStoreAndNotPendingOnTheMainContext() async throws {
+        let manager = makeManager(StubCategorizer(answers: ["Auto Focus": guess("Cars")]))
+        let sub = subscribe("Auto Focus")
+
+        await manager.classify(scope: .unassigned)
+
+        XCTAssertFalse(context.hasChanges)
+        let fresh = ModelContext(container)
+        let rules = try fresh.fetch(FetchDescriptor<ChannelRule>())
+        XCTAssertEqual(rules.map(\.channelId), [sub.channelId])
+        XCTAssertEqual(rules.first?.collections.map(\.name), ["Cars"])
     }
 
     func testNoCategorizerFailsCleanly() async throws {

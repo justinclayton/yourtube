@@ -9,6 +9,9 @@ import Observation
 /// is: it's per-channel work over the whole store, and the feed must render
 /// before it finishes. A video with no cached result shows its raw title, so
 /// the worst a slow run costs is a title that tidies itself a moment later.
+/// The passes themselves run on `StoreWriter`, off the main context, so a run
+/// is invisible to a feed being scrolled; what's left here is when to run,
+/// what the setting says, and what the viewer is told.
 ///
 /// **Tier one**, `TitleStripper`, is deterministic, runs for every channel and
 /// writes both `strippedTitle` and `cleanedTitle`.
@@ -26,12 +29,6 @@ import Observation
 /// together, so bumping either one re-runs both — tier one's output is tier
 /// two's input, and a rewrite judged against a stale stripping isn't worth
 /// keeping.
-///
-/// Work in tier one is grouped by channel because the stripper needs a
-/// channel's titles together to find the repeated affix. When any video of a
-/// channel is stale the whole channel is re-cleaned, so a channel's titles are
-/// never a mix of verdicts from different evidence — new uploads can change
-/// what counts as boilerplate.
 @Observable
 @MainActor
 final class TitleCleaner {
@@ -58,24 +55,19 @@ final class TitleCleaner {
     /// the way `CategoryManager` treats a channel the guardrail objects to.
     private(set) var lastRewriteFailures = 0
 
-    private let modelContext: ModelContext
+    private let writer: StoreWriter
     private let rewriter: (any TitleRewriter)?
-    private let shows: ShowManager
     private let defaults: UserDefaults
     private var runningTask: Task<Void, Never>?
-
-    /// Save every N channels (or titles) so a kill mid-run doesn't lose the work.
-    private let saveInterval = 20
 
     init(
         modelContext: ModelContext,
         rewriter: (any TitleRewriter)? = nil,
-        shows: ShowManager? = nil,
-        defaults: UserDefaults = .standard
+        defaults: UserDefaults = .standard,
+        writer: StoreWriter? = nil
     ) {
-        self.modelContext = modelContext
+        self.writer = writer ?? StoreWriter(modelContainer: modelContext.container)
         self.rewriter = rewriter
-        self.shows = shows ?? ShowManager(modelContext: modelContext)
         self.defaults = defaults
     }
 
@@ -122,11 +114,9 @@ final class TitleCleaner {
         do {
             didWork = try await strip()
         } catch is CancellationError {
-            try? modelContext.save()
             status = .idle
             return
         } catch {
-            try? modelContext.save()
             status = .failed(error.localizedDescription)
             return
         }
@@ -140,58 +130,17 @@ final class TitleCleaner {
     /// Returns whether there was anything stale to re-strip.
     @discardableResult
     private func strip() async throws -> Bool {
-        let channelIds = try staleChannelIds()
-        guard !channelIds.isEmpty else {
+        status = .running(completed: 0, total: 0)
+        do {
+            let didWork = try await writer.stripStaleTitles(
+                version: Self.version,
+                onProgress: progress { [weak self] in self?.reportStrip($0, $1) }
+            )
             status = .idle
-            return false
-        }
-
-        status = .running(completed: 0, total: channelIds.count)
-        var completed = 0
-        for channelId in channelIds {
-            try Task.checkCancellation()
-            clean(channelId: channelId)
-            completed += 1
-            status = .running(completed: completed, total: channelIds.count)
-            if completed % saveInterval == 0 { try modelContext.save() }
-            // Hand the main actor back between channels so the feed keeps
-            // scrolling while a first run works through the store.
-            await Task.yield()
-        }
-
-        try modelContext.save()
-        status = .idle
-        return true
-    }
-
-    /// Channels holding at least one video cleaned by an older version (or
-    /// never cleaned), sorted so a run is reproducible.
-    private func staleChannelIds() throws -> [String] {
-        let current = Self.version
-        let stale = try modelContext.fetch(FetchDescriptor<Video>(
-            predicate: #Predicate { $0.titleCleanerVersion < current }
-        ))
-        return Set(stale.map(\.channelId)).sorted()
-    }
-
-    /// Re-cleans every video of one channel from its full title list. Any
-    /// rewrite the channel's videos carried is dropped: it was judged against
-    /// a stripping that no longer holds, and tier two will run again behind
-    /// this.
-    private func clean(channelId: String) {
-        let videos = (try? modelContext.fetch(FetchDescriptor<Video>(
-            predicate: #Predicate { $0.channelId == channelId },
-            sortBy: [SortDescriptor(\.publishedAt, order: .reverse)]
-        ))) ?? []
-        guard !videos.isEmpty else { return }
-
-        for (video, cleaned) in zip(videos, TitleStripper.clean(titles: videos.map(\.title))) {
-            video.strippedTitle = cleaned.title
-            video.cleanedTitle = cleaned.title
-            video.isTitleRewritten = false
-            video.seasonNumber = cleaned.seasonNumber
-            video.episodeNumber = cleaned.episodeNumber
-            video.titleCleanerVersion = Self.version
+            return didWork
+        } catch {
+            status = .idle
+            throw error
         }
     }
 
@@ -202,127 +151,51 @@ final class TitleCleaner {
     @discardableResult
     func reconcileRewrites() async -> Bool {
         guard canRewrite, isRewriteEnabled else {
-            let reverted = revertRewrites()
+            let reverted = (try? await writer.revertRewrites()) ?? false
             rewriteStatus = .idle
             return reverted
         }
         return await rewritePending()
     }
 
-    /// Puts every rewritten title back to tier one's output. Cheap because the
-    /// stripped title was kept alongside the rewrite rather than recomputed.
-    @discardableResult
-    private func revertRewrites() -> Bool {
-        let rewritten = (try? modelContext.fetch(FetchDescriptor<Video>(
-            predicate: #Predicate { $0.isTitleRewritten }
-        ))) ?? []
-        guard !rewritten.isEmpty else { return false }
-        for video in rewritten {
-            if let stripped = video.strippedTitle { video.cleanedTitle = stripped }
-            video.isTitleRewritten = false
-        }
-        try? modelContext.save()
-        return true
-    }
-
-    /// One model call per show episode that tier two hasn't seen, newest
-    /// first so the titles the viewer is about to scroll past settle first.
-    @discardableResult
     private func rewritePending() async -> Bool {
         guard let rewriter else { return false }
-        let pending: [(video: Video, showTitle: String)]
+        rewriteStatus = .running(completed: 0, total: 0)
+        lastRewriteFailures = 0
         do {
-            pending = try pendingRewrites()
+            let outcome = try await writer.rewritePendingTitles(
+                version: Self.version,
+                using: rewriter,
+                onProgress: progress { [weak self] in self?.reportRewrite($0, $1) }
+            )
+            lastRewriteFailures = outcome.failures
+            rewriteStatus = .idle
+            return outcome.didWork
         } catch {
             rewriteStatus = .failed(error.localizedDescription)
             return false
         }
-        guard !pending.isEmpty else {
-            rewriteStatus = .idle
-            return false
-        }
-
-        rewriteStatus = .running(completed: 0, total: pending.count)
-        lastRewriteFailures = 0
-        var completed = 0
-
-        for (video, showTitle) in pending {
-            if Task.isCancelled { break }
-            guard let stripped = video.strippedTitle else { continue }
-            let request = TitleRewriteRequest(
-                strippedTitle: stripped,
-                showTitle: showTitle
-            )
-            do {
-                let answer = try await rewriter.rewrite(request)
-                video.cleanedTitle = TitleRewritePrompt.resolve(answer, strippedTitle: stripped)
-            } catch is CancellationError {
-                break
-            } catch {
-                // Typically the model's safety guardrail objecting to a news
-                // headline. One title must not abort the rest; it keeps the
-                // stripped version and isn't retried until a version bump.
-                lastRewriteFailures += 1
-                video.cleanedTitle = stripped
-            }
-            video.isTitleRewritten = true
-
-            completed += 1
-            rewriteStatus = .running(completed: completed, total: pending.count)
-            if completed % saveInterval == 0 { try? modelContext.save() }
-            // Hand the main actor back between titles so the feed keeps
-            // scrolling while a first run works through a backlog.
-            await Task.yield()
-        }
-
-        try? modelContext.save()
-        rewriteStatus = .idle
-        return true
     }
 
-    /// Show episodes that tier one has cleaned and tier two hasn't seen, each
-    /// paired with the title of the show to name it under.
-    ///
-    /// Membership is the one `ShowManager` resolves, inverted into lookups
-    /// because this is a pass over the store rather than over one show: a
-    /// channel-backed show's episodes are every non-Short video from its
-    /// channel, a playlist-backed show's are only the videos the playlist
-    /// holds. The host channel of a playlist-backed show is *not* a show, so
-    /// its other uploads keep their tier-one title.
-    ///
-    /// Precedence follows `show(containing:)`: a channel-backed show wins over
-    /// a playlist-backed one on the same channel, and a playlist's member that
-    /// came from a guest channel is still named under the playlist's show.
-    private func pendingRewrites() throws -> [(video: Video, showTitle: String)] {
-        let shows = try shows.shows()
-        guard !shows.isEmpty else { return [] }
-        var titleByChannel: [String: String] = [:]
-        var titleByMemberVideo: [String: String] = [:]
-        // `shows()` is alphabetical, so first-wins is a stable choice when two
-        // playlists claim the same video.
-        for show in shows {
-            switch show.source {
-            case .channel(let channelId):
-                if titleByChannel[channelId] == nil { titleByChannel[channelId] = show.title }
-            case .playlist:
-                for videoId in show.memberVideoIds where titleByMemberVideo[videoId] == nil {
-                    titleByMemberVideo[videoId] = show.title
-                }
-            }
-        }
-        guard !titleByChannel.isEmpty || !titleByMemberVideo.isEmpty else { return [] }
+    // MARK: - Progress
 
-        let current = Self.version
-        let candidates = try modelContext.fetch(FetchDescriptor<Video>(
-            predicate: #Predicate {
-                !$0.isTitleRewritten && !$0.isLikelyShort && $0.titleCleanerVersion == current
-            },
-            sortBy: [SortDescriptor(\.publishedAt, order: .reverse)]
-        ))
-        return candidates.compactMap { video in
-            guard let title = titleByChannel[video.channelId] ?? titleByMemberVideo[video.videoId]
-            else { return nil }
-            return (video, title)
-        }
+    /// Wraps a main-actor handler as something the writer can call from its
+    /// own context.
+    private nonisolated func progress(
+        _ handler: @escaping @Sendable @MainActor (Int, Int) -> Void
+    ) -> StoreWriterProgress {
+        { completed, total in Task { @MainActor in handler(completed, total) } }
+    }
+
+    /// Progress is a hop to the main actor, so it can land after the run it
+    /// belongs to has already finished. A finished run's status stands.
+    private func reportStrip(_ completed: Int, _ total: Int) {
+        guard case .running = status else { return }
+        status = .running(completed: completed, total: total)
+    }
+
+    private func reportRewrite(_ completed: Int, _ total: Int) {
+        guard case .running = rewriteStatus else { return }
+        rewriteStatus = .running(completed: completed, total: total)
     }
 }

@@ -41,7 +41,14 @@ final class ShowManager {
 
     /// The catalogue, alphabetical. Tombstones for "not a show" are left out.
     func shows() throws -> [Show] {
-        try allRecords()
+        Self.active(try allRecords())
+    }
+
+    /// The same catalogue from records the caller already holds. A static so a
+    /// background pass over its own context answers exactly what `shows()`
+    /// does, rather than keeping a second idea of what counts as a show.
+    nonisolated static func active(_ records: [Show]) -> [Show] {
+        records
             .filter(\.isActive)
             .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
     }
@@ -53,7 +60,11 @@ final class ShowManager {
     }
 
     func record(id: String) throws -> Show? {
-        try modelContext.fetch(FetchDescriptor<Show>(
+        try Self.record(id: id, in: modelContext)
+    }
+
+    nonisolated static func record(id: String, in context: ModelContext) throws -> Show? {
+        try context.fetch(FetchDescriptor<Show>(
             predicate: #Predicate { $0.id == id }
         )).first
     }
@@ -119,7 +130,26 @@ final class ShowManager {
         override: ShowOverride,
         reasons: [String] = []
     ) throws -> Show {
-        if let existing = try record(id: source.showId) {
+        try Self.upsert(
+            source: source,
+            title: title,
+            flagOrigin: flagOrigin,
+            override: override,
+            reasons: reasons,
+            in: modelContext
+        )
+    }
+
+    @discardableResult
+    nonisolated static func upsert(
+        source: ShowSource,
+        title: String,
+        flagOrigin: ShowFlagOrigin,
+        override: ShowOverride,
+        reasons: [String] = [],
+        in modelContext: ModelContext
+    ) throws -> Show {
+        if let existing = try record(id: source.showId, in: modelContext) {
             existing.title = title
             existing.flagOrigin = flagOrigin
             existing.override = override
@@ -233,9 +263,19 @@ final class ShowManager {
     /// heuristic show and nothing else. Returns how many rows changed.
     @discardableResult
     func applyAutomaticVerdicts(_ verdicts: [ShowVerdict]) throws -> Int {
+        try Self.applyAutomaticVerdicts(verdicts, in: modelContext)
+    }
+
+    /// The same rules on any context, so the detector can apply its verdicts
+    /// on the background one it read the evidence from.
+    @discardableResult
+    nonisolated static func applyAutomaticVerdicts(
+        _ verdicts: [ShowVerdict],
+        in modelContext: ModelContext
+    ) throws -> Int {
         var changed = 0
         for verdict in verdicts {
-            let existing = try record(forChannelId: verdict.channelId)
+            let existing = try record(id: ShowSource.channel(id: verdict.channelId).showId, in: modelContext)
             if let existing, existing.override != .none || existing.flagOrigin == .user {
                 continue
             }
@@ -250,7 +290,8 @@ final class ShowManager {
                     title: verdict.channelTitle,
                     flagOrigin: .heuristic,
                     override: .none,
-                    reasons: verdict.reasons
+                    reasons: verdict.reasons,
+                    in: modelContext
                 )
                 changed += 1
             case (false, let existing?):
