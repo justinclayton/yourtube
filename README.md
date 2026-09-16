@@ -198,6 +198,16 @@ than the two longest — and take the median of everything at least half as long
 as what's left. On a show that cuts nothing up, nothing is set aside and the
 answer is the ordinary median, so nothing is classified.
 
+That still isn't enough for a channel that posts only clips — no full episode
+ever lands in its catalogue, so the median is just a longer clip, and the rule
+would hide the shorter half of a range that's really one kind of video. Before
+anything is hidden, the app checks for a real gap: the shortest thing it would
+call an episode has to run at least half again as long as the longest thing it
+would call a segment. No gap, no split — every video is listed and the
+settings caption says why. If the app still gets it wrong for a particular
+show, "Hide segments" in that show's settings turns classification off
+entirely for it.
+
 **Retention** is the other way the page keeps quiet: *keep the last N
 episodes*, and the older ones drop off the page and out of the counts with a
 footer saying how many went and why. Neither kind of hiding deletes anything
@@ -206,11 +216,14 @@ still searchable, still there when the setting is cleared. It's the same
 policy as Shorts hiding.
 
 Four per-show settings live behind the button in the top corner. **Play order**
-is the newest-first/oldest-first choice above. **Segments** is a slider from a
-tenth to nine tenths of a typical episode, captioned with the length it draws
-the line at and how many of the show's videos fall below it, so the effect is
-visible while it's being set rather than after. **Retention** is the keep-the-
-last-N choice. **Card art** decides whether the show's episodes use the
+is the newest-first/oldest-first choice above. **Segments** is a "Hide
+segments" toggle, on by default, over a slider from a tenth to nine tenths of
+a typical episode, captioned with the length it draws the line at and how many
+of the show's videos fall below it, so the effect is visible while it's being
+set rather than after — or, when the show's videos have no real gap between
+episode length and clip length, a caption saying so instead. Turning the
+toggle off drops the slider and caption and lists every video as an episode.
+**Retention** is the keep-the-last-N choice. **Card art** decides whether the show's episodes use the
 channel's art or the videos' own thumbnails — for a channel whose avatar
 carries no information — and applies to the show's cards in Continue Watching
 and Up Next as well as to the page. Other shows are unaffected; a show's

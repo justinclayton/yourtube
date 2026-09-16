@@ -27,6 +27,11 @@ struct ShowListing {
     /// included — which `segments` is not, so the show's settings can say
     /// what the threshold is doing to the whole catalogue.
     var segmentCount: Int = 0
+    /// Whether any source video has a known duration yet. Lets the settings
+    /// caption tell "still loading, nothing measured yet" apart from "loaded,
+    /// and there's no gap in the lengths to hide anything behind" — both of
+    /// which leave `typicalEpisodeDuration` nil.
+    var hasDurationData: Bool = false
 
     /// Episodes and segments together in air order: what the page lists once
     /// the toggle is on.
@@ -97,6 +102,22 @@ extension ShowManager {
     /// episodes rather than five of last night's clips.
     nonisolated static func listing(from videos: [Video], of show: Show) -> ShowListing {
         let source = sourceVideos(from: videos, of: show)
+        guard show.hideSegments else {
+            // The toggle is off: every source video is an episode, full
+            // stop. No classification, so no typical duration either — the
+            // settings caption reads that as "no gap", which is wrong here,
+            // but the caption is only shown while the toggle is on.
+            let retained = retained(source, count: show.retentionCount)
+            return ShowListing(
+                episodes: retained,
+                segments: [],
+                hiddenByRetention: source.count - retained.count,
+                typicalEpisodeDuration: nil,
+                sourceCount: source.count,
+                segmentCount: 0,
+                hasDurationData: source.contains { $0.durationSeconds > 0 }
+            )
+        }
         let threshold = show.segmentThreshold
         let typical = typicalEpisodeDuration(of: source, threshold: threshold)
         let split = split(source, threshold: threshold, typicalDuration: typical)
@@ -117,7 +138,8 @@ extension ShowManager {
             hiddenByRetention: split.episodes.count - retained.count,
             typicalEpisodeDuration: typical,
             sourceCount: source.count,
-            segmentCount: split.segments.count
+            segmentCount: split.segments.count,
+            hasDurationData: source.contains { $0.durationSeconds > 0 }
         )
     }
 
@@ -163,8 +185,20 @@ extension ShowManager {
             .segments.contains { $0.videoId == video.videoId }
     }
 
+    /// How much longer the shortest thing kept as an episode must run than
+    /// the longest thing cut as a segment before the two are believed to be
+    /// different kinds of video, rather than the same kind split arbitrarily
+    /// by the threshold. A clips-only channel's clips run a continuous range
+    /// of lengths with nothing under this ratio anywhere in it; a channel
+    /// that really mixes full episodes and cut-downs has a real jump, well
+    /// past it, between the two.
+    private nonisolated static let minimumGapRatio = 1.5
+
     /// How long a full episode of this show runs, with the cut-downs kept out
-    /// of the reckoning. Nil when nothing has a duration yet.
+    /// of the reckoning. Nil when nothing has a duration yet, or when the
+    /// catalogue has no real gap to draw the line in (see `minimumGapRatio`):
+    /// a channel that posts only clips shouldn't have the shortest of them
+    /// hidden just because the median looks like an "episode".
     ///
     /// Skip the long tail, measure against what's left, take the median of
     /// whatever still measures up (see the type comment).
@@ -176,7 +210,22 @@ extension ShowManager {
         let shortest = TimeInterval(yardstick) * clamped(threshold)
         // Never empty: the yardstick itself always measures up to a fraction
         // of itself, whatever the threshold.
-        return median(of: longestFirst.filter { TimeInterval($0) >= shortest })
+        let typical = median(of: longestFirst.filter { TimeInterval($0) >= shortest })
+        let splitAtTypical = TimeInterval(typical) * clamped(threshold)
+        let episodeDurations = longestFirst.filter { TimeInterval($0) >= splitAtTypical }
+        let segmentDurations = longestFirst.filter { TimeInterval($0) < splitAtTypical }
+        // Nothing would be hidden anyway, so there's no gap to check.
+        guard let shortestEpisode = episodeDurations.min(),
+              let longestSegment = segmentDurations.max() else {
+            return typical
+        }
+        guard TimeInterval(shortestEpisode) >= TimeInterval(longestSegment) * minimumGapRatio else {
+            // No real jump between the two groups: the split was the
+            // threshold drawing an arbitrary line through one continuous
+            // cluster of lengths, not finding two different kinds of video.
+            return nil
+        }
+        return typical
     }
 
     /// The middle of a list ordered longest first. Even counts take the

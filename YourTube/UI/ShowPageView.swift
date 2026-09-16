@@ -519,35 +519,43 @@ private struct ShowSettingsSheet: View {
     @ViewBuilder
     private var segmentsSection: some View {
         Section {
-            Slider(
-                value: $show.segmentThreshold,
-                in: Show.segmentThresholdRange,
-                step: 0.05
-            ) {
-                Text("Segment threshold")
-            } minimumValueLabel: {
-                Text("10%")
-                    .font(.caption2)
-            } maximumValueLabel: {
-                Text("90%")
-                    .font(.caption2)
+            Toggle("Hide segments", isOn: $show.hideSegments)
+            if show.hideSegments {
+                Slider(
+                    value: $show.segmentThreshold,
+                    in: Show.segmentThresholdRange,
+                    step: 0.05
+                ) {
+                    Text("Segment threshold")
+                } minimumValueLabel: {
+                    Text("10%")
+                        .font(.caption2)
+                } maximumValueLabel: {
+                    Text("90%")
+                        .font(.caption2)
+                }
+                LabeledContent("Segments are shorter than", value: thresholdDescription)
+                    .font(.subheadline)
             }
-            LabeledContent("Segments are shorter than", value: thresholdDescription)
-                .font(.subheadline)
         } header: {
             Text("Segments")
         } footer: {
-            Text("Shorter videos are hidden here and left out of the unwatched count. Still in the feed.")
+            Text("Shorter videos are hidden here and left out of the unwatched count, still in the feed. Turn off if this show has no real clips.")
         }
     }
 
     /// The length the slider currently draws the line at, and what that does
-    /// to the videos the show already has.
+    /// to the videos the show already has — or why nothing is being hidden,
+    /// when the catalogue has no real gap between episode length and clip
+    /// length to draw that line in.
     private var thresholdDescription: String {
         let percent = Int((show.segmentThreshold * 100).rounded())
+        guard listing.hasDurationData else {
+            return "\(percent)% of an episode"
+        }
         guard let typical = listing.typicalEpisodeDuration,
               let length = ShowManager.approximateLength(typical * show.segmentThreshold) else {
-            return "\(percent)% of an episode"
+            return "No segments: this show's videos are all about the same length."
         }
         return "\(length) · \(listing.segmentCount) of \(listing.sourceCount)"
     }
