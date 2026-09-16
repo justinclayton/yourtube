@@ -493,6 +493,28 @@ reliably resolve the name; update the `id=` there after creating the device
 Agents: pass `device: "YourTube Dev"` when building or launching in the
 simulator.
 
+### Parallel work: the simulator pool
+
+`YourTube Dev` is the only simulator that holds the signed-in store, and the
+only reason to keep to one device is that store. Unit tests and
+`-seedFixtures` drives never open it, so they can run on throwaway
+simulators in parallel. Create a pool of three matching devices once:
+
+```sh
+for i in 1 2 3; do
+  xcrun simctl boot "$(xcrun simctl create "YourTube Test $i" \
+    com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro \
+    com.apple.CoreSimulator.SimRuntime.iOS-26-2)"
+done
+```
+
+`scripts/simpool.sh acquire <name>` prints the UDID of a free booted
+`YourTube Test N` (waiting if all are busy), `release <name>` hands it back,
+and `status` lists the pool. Run tests and fixture drives on the UDID it
+gives you; screenshots come out identical to the Dev device. Keep
+`YourTube Dev` for drives that need the real data, and never uninstall or
+erase it.
+
 ### What keeps the data, and what wipes it
 
 The signed-in store (`Library/Application Support/default.store` inside the
