@@ -32,10 +32,11 @@ Media lives on the orphan branch `pr-media`, one directory per issue, and is ref
 ```
 # from any checkout, without disturbing the working tree
 git fetch origin pr-media
-git worktree add /tmp/pr-media pr-media
-mkdir -p /tmp/pr-media/issue-<n> && cp <screenshots> /tmp/pr-media/issue-<n>/
-git -C /tmp/pr-media add -A && git -C /tmp/pr-media commit -m "Add media for issue #<n>" && git -C /tmp/pr-media push origin pr-media
-git worktree remove /tmp/pr-media
+git worktree add --detach /tmp/pr-media-<n> origin/pr-media   # detached, so parallel sessions don't fight over the branch
+mkdir -p /tmp/pr-media-<n>/issue-<n> && cp <screenshots> /tmp/pr-media-<n>/issue-<n>/
+git -C /tmp/pr-media-<n> add -A && git -C /tmp/pr-media-<n> commit -m "Add media for issue #<n>"
+git -C /tmp/pr-media-<n> push origin HEAD:pr-media   # rejected? pull --rebase origin pr-media, then push again
+git worktree remove /tmp/pr-media-<n>
 ```
 
 Reference each file as `![caption](https://raw.githubusercontent.com/justinclayton/yourtube/pr-media/issue-<n>/<file>)`, with a one-line caption saying what to look at. Keep files small: downscale screenshots to about 600px wide (`sips --resampleWidth 600 in.png --out out.png`), and keep GIFs under a few megabytes.
