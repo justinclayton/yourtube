@@ -100,9 +100,8 @@ struct CategoriesSettingsView: View {
             Text("Automatic sorting")
         } footer: {
             Text("""
-            Channels are sorted on-device by Apple's language model from the \
-            channel name, description and recent video titles, into up to \
-            three categories each. Nothing leaves the phone. Channels you \
+            Channels are sorted on-device from their name, description and \
+            recent titles, into up to three categories each. Channels you \
             file by hand are never re-sorted.
             """)
         }
@@ -145,7 +144,7 @@ struct CategoriesSettingsView: View {
         } header: {
             Text("Categories")
         } footer: {
-            Text("Tap to rename. A channel can be in several categories; deleting one drops it from those channels without touching their other categories. After adding a category, use \"Re-sort all\" to let the model consider it.")
+            Text("Tap to rename. A channel can be in several categories.")
         }
     }
 
@@ -177,10 +176,9 @@ struct CategoriesSettingsView: View {
             Text("Export")
         } footer: {
             Text("""
-            One JSON record per subscription: the channel description and \
-            recent titles the classifier sees today, what it answered last \
-            time it ran, and any category you've corrected by hand. Nothing \
-            leaves the phone except through the share sheet you choose.
+            One JSON record per subscription: the description and recent \
+            titles it was classified from, its last answer, and any \
+            correction you've made by hand.
             """)
         }
     }

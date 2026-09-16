@@ -459,7 +459,7 @@ struct CategoryPickerSheet: View {
                         if !showReasons.isEmpty {
                             Text("Flagged automatically: " + showReasons.joined(separator: "; ") + ".")
                         }
-                        Text("Shows get a poster in Your Shows on the Shows tab, with a count of what you haven't watched. Turning it off records \u{201C}not a show\u{201D}, which automatic sorting can never undo.")
+                        Text("Shows get a poster in Your Shows, with an unwatched count. Turning this off marks \u{201C}not a show\u{201D} permanently.")
                     }
                 }
                 Section {
@@ -495,7 +495,7 @@ struct CategoryPickerSheet: View {
                     Section {
                         VStack(alignment: .leading, spacing: 6) {
                             if let raw = classifierEvidence.classifierRawAnswer {
-                                Text("Model answered: " + (raw.isEmpty ? "nothing usable" : raw.joined(separator: ", ")))
+                                Text(raw.isEmpty ? "No usable answer" : raw.joined(separator: ", "))
                                 if let dominant = classifierEvidence.classifierDominantCategoryId {
                                     Text("YouTube files it under \(YouTubeCategory.name(forId: dominant))")
                                 }

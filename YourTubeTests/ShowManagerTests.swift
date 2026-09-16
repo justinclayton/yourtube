@@ -329,19 +329,18 @@ final class ShowManagerTests: XCTestCase {
                        "revealing segments doesn't drag back the era the window hides")
     }
 
-    /// The footer under the list: how many are hidden, why, and that they're
-    /// still there.
+    /// The footer under the list: how many are hidden, and that they're not deleted.
     func testTheFooterSaysWhatIsHiddenAndWhy() throws {
         let show = try newsShow(nights: 8)
         show.retentionCount = 3
         let listing = try manager.listing(of: show)
 
         let hidden = try XCTUnwrap(listing.hiddenSummary(revealingSegments: false))
-        XCTAssertTrue(hidden.hasPrefix("9 segments and 5 older episodes hidden."), hidden)
-        XCTAssertTrue(hidden.contains("still in the feed"), hidden)
+        XCTAssertTrue(hidden.hasPrefix("9 segments and 5 older episodes hidden,"), hidden)
+        XCTAssertTrue(hidden.contains("not deleted"), hidden)
 
         let revealed = try XCTUnwrap(listing.hiddenSummary(revealingSegments: true))
-        XCTAssertTrue(revealed.hasPrefix("5 older episodes hidden."), revealed)
+        XCTAssertTrue(revealed.hasPrefix("5 older episodes hidden,"), revealed)
 
         show.retentionCount = nil
         XCTAssertNil(try manager.listing(of: show).hiddenSummary(revealingSegments: true),

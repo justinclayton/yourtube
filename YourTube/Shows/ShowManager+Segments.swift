@@ -35,8 +35,7 @@ struct ShowListing {
     }
 
     /// The footer under the episode list, or nil when the page is showing
-    /// everything it has. Says how many are hidden, why, and that they're
-    /// still there.
+    /// everything it has. Says how many are hidden.
     func hiddenSummary(revealingSegments: Bool) -> String? {
         var parts: [String] = []
         if !revealingSegments, !segments.isEmpty {
@@ -46,7 +45,7 @@ struct ShowListing {
             parts.append(ShowListing.count(hiddenByRetention, "older episode"))
         }
         guard !parts.isEmpty else { return nil }
-        return "\(parts.joined(separator: " and ")) hidden. Nothing is deleted — they're all still in the feed."
+        return "\(parts.joined(separator: " and ")) hidden, not deleted."
     }
 
     private static func count(_ n: Int, _ noun: String) -> String {
