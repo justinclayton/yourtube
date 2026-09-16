@@ -434,6 +434,11 @@ calm.
   on its own `ModelContext` (see "Where the writes go"); ~1.5 channels/second
   on an M4, so a 600-channel library takes about 7 minutes the first time,
   then only new subscriptions are classified.
+- An automatically-filed channel is looked at again once its uploads have
+  substantially turned over — more than half of the ten-title window the
+  classifier reads being new, never just one new upload — the way the show
+  detector re-examines a channel only when its fingerprint moves. A channel
+  filed by hand is never re-examined this way.
 - Each answer is matched against the list with a tolerant word-overlap
   matcher. Off-list answers are dropped individually; a channel with nothing
   left, or one the model refuses (its safety guardrail trips on some names),
