@@ -13,12 +13,10 @@ import YouTubePlayerKit
 /// (YouTube enforces this server-side, nothing on the client can defeat it),
 /// and Picture-in-Picture only engages from native fullscreen.
 struct PlayerView: View {
-    /// `@State`, not `@Bindable`: "Next episode" replaces this with a
-    /// different `Video` outright rather than editing the one we opened
-    /// with, and only `@State`'s storage survives that reassignment across
-    /// view updates. Nothing here hands out a `Binding` into it, so losing
-    /// `@Bindable` costs nothing.
-    @State private var video: Video
+    /// The one video this player plays. It never changes hands: the player
+    /// has no next-episode action, so a `let` is enough, and the model's
+    /// observation keeps the title and buttons live.
+    let video: Video
     @Environment(\.modelContext) private var modelContext
     @Environment(AppServices.self) private var services
 
@@ -35,7 +33,6 @@ struct PlayerView: View {
     /// The episode after this one in its show, if any. Nil hides the Next
     /// episode button: either this video isn't part of a show, or it's
     /// already the newest episode. Recomputed whenever `video` changes.
-    @State private var nextEpisode: Video?
 
     /// How often playback reports where it's got to. Two seconds keeps the
     /// resume point close to where you actually stopped without polling the
@@ -43,7 +40,7 @@ struct PlayerView: View {
     private static let reportInterval: Duration = .seconds(2)
 
     init(video: Video) {
-        _video = State(initialValue: video)
+        self.video = video
         _player = State(
             initialValue: YouTubePlayer(
                 source: .video(id: video.videoId),
@@ -106,39 +103,10 @@ struct PlayerView: View {
         // that. Watched is set automatically once playback passes 90% of the
         // duration instead — see `PlaybackProgress`.
         .task { await reportProgress() }
-        .task(id: video.videoId) { refreshNextEpisode() }
         .onDisappear {
             if let position = lastReportedPosition {
                 services.playback.record(video, position: position)
             }
-        }
-    }
-
-    /// Looks up whether the show this video belongs to has a next episode.
-    /// Cheap enough to run on every video change without debouncing: it's an
-    /// in-memory SwiftData fetch, not a network call.
-    private func refreshNextEpisode() {
-        nextEpisode = try? services.shows.nextEpisode(after: video)
-    }
-
-    /// Swaps the player to the next episode in place: same view, same
-    /// actions, new source. Never crosses to another show — `nextEpisode`
-    /// only ever names an episode of `video`'s own show.
-    private func advanceToNextEpisode() {
-        guard let next = nextEpisode else { return }
-        // The episode we're leaving won't hit `onDisappear`, so bank its
-        // progress here the same way leaving the player would.
-        if let position = lastReportedPosition {
-            services.playback.record(video, position: position)
-        }
-        lastReportedPosition = nil
-        lastWrittenPosition = nil
-        wasPaused = false
-        let startTime = PlaybackProgress.resumePosition(for: next)
-            .map { Measurement(value: $0, unit: UnitDuration.seconds) }
-        video = next
-        Task {
-            try? await player.load(source: .video(id: next.videoId), startTime: startTime)
         }
     }
 
@@ -153,7 +121,7 @@ struct PlayerView: View {
     /// every write is a store change that reruns every live query in the app
     /// for as long as playback lasts (#71). `PlaybackProgress.shouldWrite`
     /// throttles to roughly every 15 s of movement; pausing and leaving the
-    /// player (`onDisappear`, `advanceToNextEpisode`) always write so the
+    /// player (`onDisappear`) always write so the
     /// resume point reflects where playback actually stopped.
     @MainActor
     private func reportProgress() async {
@@ -193,17 +161,36 @@ struct PlayerView: View {
         }
     }
 
+    /// Apple TV-style "normal" action button: white pill, black content.
+    /// `lineLimit(1)` keeps a label on one line so two buttons never wrap
+    /// their text into tall pills that collide with the row above.
+    private struct PlayerActionButtonStyle: ButtonStyle {
+        func makeBody(configuration: Configuration) -> some View {
+            configuration.label
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+                .foregroundStyle(.black)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(.white, in: Capsule())
+                .opacity(configuration.isPressed ? 0.7 : 1)
+        }
+    }
+
+    /// Two actions, and only two: earmarking and watched. There is no
+    /// "next episode" here on purpose — the app doesn't binge, and the show
+    /// page one level back is where the rest of the show lives. The Up Next
+    /// button is the bookmark alone so both pills fit a phone's width
+    /// without scrolling; its label lives in accessibility.
     private var actions: some View {
         HStack(spacing: 12) {
             Button {
                 try? services.upNext.toggle(video)
             } label: {
-                Label(
-                    video.isInUpNext ? "Remove from Up Next" : "Add To Up Next",
-                    systemImage: video.isInUpNext ? "bookmark.fill" : "bookmark"
-                )
+                Image(systemName: video.isInUpNext ? "bookmark.fill" : "bookmark")
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(PlayerActionButtonStyle())
+            .accessibilityLabel(video.isInUpNext ? "Remove from Up Next" : "Add to Up Next")
 
             Button {
                 toggleWatched()
@@ -213,16 +200,7 @@ struct PlayerView: View {
                     systemImage: video.isWatched ? "checkmark.circle.fill" : "checkmark.circle"
                 )
             }
-            .buttonStyle(.bordered)
-
-            if nextEpisode != nil {
-                Button {
-                    advanceToNextEpisode()
-                } label: {
-                    Label("Next episode", systemImage: "forward.end.fill")
-                }
-                .buttonStyle(.bordered)
-            }
+            .buttonStyle(PlayerActionButtonStyle())
 
             Spacer()
         }

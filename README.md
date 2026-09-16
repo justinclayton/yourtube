@@ -206,8 +206,8 @@ handful of clips out of it, and on a channel like that three uploads in four
 are cut-downs. A video shorter than half a typical episode is taken to be one
 of those clips: left off the page, left out of the unwatched count, and
 offered behind a *Show N segments* button beside the count that explains it.
-Play next and the player's Next episode land on full episodes only — following
-a clip with another clip is the app repeating itself.
+Play next lands on full episodes only — following a clip with another clip is
+the app repeating itself.
 
 The rule is by length rather than by title, because titles are the one thing a
 channel changes without warning. "Typical" can't be the plain median (on a
@@ -283,7 +283,7 @@ looking at. The source line reads "Playlist on Team Coco" rather than
 A playlist-backed show inherits its channel's categories and Priority tag, so
 there is nothing to file twice and no second rule to keep in step. It sits in
 Your Shows under the same chips as its channel, and the grid, the page,
-Play next, Next episode, Mark all watched, segment hiding and the retention
+Play next, Mark all watched, segment hiding and the retention
 window all behave as they do for a channel-backed show. Picking a season
 narrows all of it: the segments and the retention window are measured over
 the season you're looking at, so an older series still lists its episodes on
@@ -318,10 +318,10 @@ is not a decision about its channel, though — a channel that only hosts a
 playlist show still gets its own verdict from the detector. Channels are
 examined once and then only again when their uploads actually move.
 
-The player offers a Next episode button whenever the video it's playing
-belongs to a show and a later episode exists — it swaps the player to that
-episode in place, never leaving the show. It's absent on a non-show video and
-on a show's newest episode. There's no autoplay of any kind.
+The player offers two actions under the video, Up Next and Watched, and
+nothing that moves you to another video: no next-episode button and no
+autoplay of any kind. The show page one level back is where the rest of a
+show lives.
 
 Channels itself has two presentations, toggled from the toolbar: the
 grouped list, and an avatar grid of square channel art with the full name
