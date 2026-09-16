@@ -966,6 +966,55 @@ final class ShowManagerTests: XCTestCase {
         XCTAssertEqual(try manager.episodes(of: show).map(\.videoId), ["ep"])
     }
 
+    /// `ShowPageView`'s `channelVideos` query used to fetch every non-Short
+    /// video in the store for a playlist-backed show, filtering to members in
+    /// memory (issue #86). It now builds its predicate from the show's own
+    /// `memberVideoIds`, the same narrowing `ShowManager+Badges.swift` got in
+    /// #66 — checked here with a `fetchCount` of that exact predicate against
+    /// a channel that also has uploads the playlist never picked up.
+    func testShowPageViewsQueryFetchesOnlyThePlaylistsMembersNotTheWholeChannel() throws {
+        video("friend-1", channelId: "UC-coco", daysAgo: 1)
+        video("friend-2", channelId: "UC-coco", daysAgo: 8)
+        video("non-member-upload", channelId: "UC-coco", daysAgo: 2)
+        video("another-non-member-upload", channelId: "UC-coco", daysAgo: 3)
+        video("guest-channel-cut", channelId: "UC-elsewhere", daysAgo: 4)
+        try context.save()
+
+        let show = try playlistShow(
+            "Conan O'Brien Needs a Friend",
+            channelId: "UC-coco",
+            seasons: [(playlist: "PL-friend", name: "Conan O'Brien Needs a Friend",
+                       videoIds: ["friend-1", "friend-2", "guest-channel-cut"])]
+        )
+
+        let predicate = ShowPageView.channelVideosPredicate(for: show)
+        let fetchCount = try context.fetchCount(FetchDescriptor<Video>(predicate: predicate))
+
+        XCTAssertEqual(fetchCount, 3,
+                        "only the playlist's three members, not the channel's other two uploads")
+        XCTAssertEqual(
+            try context.fetch(FetchDescriptor<Video>(predicate: predicate)).map(\.videoId).sorted(),
+            ["friend-1", "friend-2", "guest-channel-cut"]
+        )
+    }
+
+    /// A channel-backed show's page still asks for its whole channel — the
+    /// narrowing in #86 is for playlist-backed shows only.
+    func testShowPageViewsQueryStillFetchesTheWholeChannelForAChannelBackedShow() throws {
+        video("upload-1", channelId: "UC-coco", daysAgo: 1)
+        video("upload-2", channelId: "UC-coco", daysAgo: 2)
+        video("a-short", channelId: "UC-coco", daysAgo: 3, seconds: 30, short: true)
+        video("other-channel", channelId: "UC-elsewhere", daysAgo: 1)
+        try context.save()
+
+        let show = try manager.markAsShow(channelId: "UC-coco", channelTitle: "Team Coco")
+
+        let predicate = ShowPageView.channelVideosPredicate(for: show)
+        let fetchCount = try context.fetchCount(FetchDescriptor<Video>(predicate: predicate))
+
+        XCTAssertEqual(fetchCount, 2, "the channel's non-Short uploads, not the other channel's or the Short")
+    }
+
     /// A network channel can be a show and host one too; they are two rows,
     /// and the channel's show still sees everything the channel puts out.
     func testAChannelShowAndAPlaylistShowOnTheSameChannelAreDifferentShows() throws {
