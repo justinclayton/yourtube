@@ -624,14 +624,14 @@ struct ChannelAvatar: View {
     let size: CGFloat
 
     var body: some View {
-        AsyncImage(url: url.flatMap(URL.init(string:))) { phase in
-            switch phase {
-            case .success(let image):
-                image.resizable().aspectRatio(contentMode: .fill)
-            default:
-                Circle().fill(.quaternary)
-                    .overlay(Image(systemName: "person.fill").foregroundStyle(.secondary))
-            }
+        CachedAsyncImage(
+            url: url.flatMap(URL.init(string:)),
+            size: CGSize(width: size, height: size)
+        ) { image in
+            image.resizable().aspectRatio(contentMode: .fill)
+        } placeholder: {
+            Circle().fill(.quaternary)
+                .overlay(Image(systemName: "person.fill").foregroundStyle(.secondary))
         }
         .frame(width: size, height: size)
         .clipShape(Circle())

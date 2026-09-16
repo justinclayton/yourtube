@@ -316,6 +316,11 @@ final class FeedRefresher {
                         guard let (data, response) = try? await session.data(from: url),
                               (response as? HTTPURLResponse)?.statusCode == 200
                         else { return (id, nil) }
+                        // The video's own thumbnail is often this same
+                        // hqdefault URL (the API's "high" quality); seeding
+                        // it here means the feed row shows it without a
+                        // second download. See `ImageCache`.
+                        ImageCache.shared.seed(data: data, for: url)
                         return (id, ThumbnailAnalyzer.looksPillarboxed(imageData: data))
                     }
                 }
