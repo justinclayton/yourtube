@@ -1189,15 +1189,20 @@ final class ShowManagerTests: XCTestCase {
     }
 
     /// Unlike a channel, a playlist has no standing "not a show" decision to
-    /// record: removing it leaves nothing behind.
+    /// record: removing it leaves nothing behind. The channel's own show
+    /// flag is a separate record, untouched by removing a playlist show
+    /// filed under it.
     func testRemovingAPlaylistShowLeavesNoTombstone() throws {
+        try manager.markAsShow(channelId: "UC-quiz", channelTitle: "Quizmaster Channel")
         let show = try playlistShow("Quizmaster", channelId: "UC-quiz",
                                     seasons: [(playlist: "PL-s", name: "Quizmaster", videoIds: [])])
         XCTAssertEqual(try manager.playlistShows(forChannelId: "UC-quiz").map(\.id), [show.id])
 
         try manager.removePlaylistShow(show)
-        XCTAssertTrue(try manager.allRecords().isEmpty)
+        XCTAssertNil(try manager.record(id: show.id), "the playlist show itself is gone, no tombstone")
         XCTAssertTrue(try manager.playlistShows(forChannelId: "UC-quiz").isEmpty)
+        XCTAssertTrue(try manager.isShow(channelId: "UC-quiz"),
+                      "the channel's own show flag is a separate record and survives")
     }
 
     /// A hand-made playlist show is the user's decision, so an automatic pass
