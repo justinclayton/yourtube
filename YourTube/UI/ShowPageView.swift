@@ -23,9 +23,10 @@ struct ShowPageView: View {
     @Query(sort: [SortDescriptor(\VideoCollection.sortOrder), SortDescriptor(\VideoCollection.name)])
     private var categories: [VideoCollection]
     /// The videos the show's episodes are drawn from, newest first: its
-    /// channel's for a channel-backed show, and every stored video for a
-    /// playlist-backed one, since a playlist may hold a guest channel's video
-    /// and `ShowManager` is the thing that knows which are members. The
+    /// channel's for a channel-backed show, and its members' for a
+    /// playlist-backed one, scoped by `memberVideoIds` rather than fetched
+    /// whole, since a playlist may hold a guest channel's video and
+    /// `ShowManager` is the thing that knows which are members. The
     /// retention window is applied by `ShowManager` on top of it, so the page
     /// lists exactly what the catalogue counts.
     @Query private var channelVideos: [Video]
@@ -53,13 +54,25 @@ struct ShowPageView: View {
 
     init(show: Show) {
         self.show = show
-        let channelId = show.channelId
         _channelVideos = Query(
-            filter: show.isPlaylistBacked
-                ? #Predicate<Video> { !$0.isLikelyShort }
-                : #Predicate<Video> { $0.channelId == channelId && !$0.isLikelyShort },
+            filter: Self.channelVideosPredicate(for: show),
             sort: [SortDescriptor(\Video.publishedAt, order: .reverse)]
         )
+    }
+
+    /// The fetch scope for `channelVideos`: a channel-backed show still asks
+    /// for its whole channel, but a playlist-backed one is narrowed to its
+    /// own members rather than every non-Short video in the store (issue
+    /// #86) — the same treatment the Your Shows badge fetch got in
+    /// `ShowManager+Badges.swift` (issue #66).
+    static func channelVideosPredicate(for show: Show) -> Predicate<Video> {
+        let channelId = show.channelId
+        if show.isPlaylistBacked {
+            let memberIds = show.memberVideoIds
+            return #Predicate<Video> { memberIds.contains($0.videoId) && !$0.isLikelyShort }
+        } else {
+            return #Predicate<Video> { $0.channelId == channelId && !$0.isLikelyShort }
+        }
     }
 
     /// The raw material the page classifies: the show's members — its
