@@ -8,6 +8,8 @@ works, what can't, and why.
 ### Issue tracker
 
 Issues are tracked in GitHub Issues on `justinclayton/yourtube`. See `docs/agents/issue-tracker.md`.
+Entry points: `/take-issue` for one issue (Sonnet session), `/run-issues` for a batch
+(Fable coordinator, Sonnet subagents).
 
 ### Domain docs
 

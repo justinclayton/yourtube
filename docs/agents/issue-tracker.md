@@ -23,6 +23,18 @@ Name the working branch `claude/issue-<n>` after the issue number. Open the PR w
 
 Infer the repo from `git remote -v`; `gh` does this automatically when run inside a clone.
 
+## Running issues with subagents
+
+A coordinator session can work a batch of `ready-for-agent` issues by launching one subagent per issue, each in its own worktree (`.claude/worktrees/issue-<n>`, branch `claude/issue-<n>`), in dependency order. `/run-issues` (in `.claude/skills`) is that process; `/take-issue` is the single-issue path for a Sonnet session in the main checkout. Defaults, from measuring the September 2026 runs:
+
+- **Model: Sonnet by default.** Sonnet finished the same issues in the same number of turns as Opus, every PR merged, and it costs about 2.4× less per turn. Use Opus only for architecture or refactor issues that rewrite files other issues also touch (the SwiftData writer move in #64 is the shape). Keep Fable for the coordinator itself; it draws from a separate, tighter weekly budget.
+- **Concurrency: 2–3 agents at once.** Waves of 4–5 hit the plan's 5-hour limit twice and killed five agents mid-task; a killed agent does not resume, and its replacement re-derives state. Check the plan usage (`get_usage`) before launching each wave.
+- **Startup cost is not the lever.** An agent's first turn writes about 50K tokens of system prompt, tool schemas, and brief; the whole run re-reads that on every turn, and so does a single long session. Write briefs as long as they need to be.
+- **Context growth is the lever.** Cost per agent scales with turns × context size. Have agents verify text and state with the simulator's `inspect` action and take a `screenshot` only for layout or colour: a screenshot adds ~1.3K tokens to every later turn, and screenshots were a quarter of context growth. Xcodebuild output was negligible.
+- **Simulators.** Tests and `-seedFixtures` drives go to the pool via `scripts/simpool.sh`. "YourTube Dev" holds the only signed-in store and has no lock, so a wave carries at most one issue that drives it. Install and test upgrade in place; `xcrun simctl uninstall` or `erase` on YourTube Dev wipes the store, so agents never run them.
+- **The brief** lives in `/run-issues`; edit it there rather than in an agent prompt, so every wave gets the same one.
+- **Recovery.** On resuming a run after a limit or a sleep: `xcrun simctl list devices | grep YourTube`, boot what is down, `scripts/simpool.sh status` and release locks held by dead agents, then launch a fresh agent with an explicit "state you inherit" section (commits, PR, scratchpad artifacts, how `main` moved).
+
 ## Screenshots and video on pull requests
 
 A PR for anything a person can see (a new screen, control, layout, or a visible bug fix) carries pictures of it, so the review can happen from the PR page rather than by building the branch. Screenshots for a static change; a short GIF for an interaction (a tap, a swipe, a transition). Skip it for pure model, refactor, or tooling changes.
