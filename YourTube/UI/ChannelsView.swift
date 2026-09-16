@@ -447,7 +447,7 @@ private struct ChannelRow: View {
             ChannelAvatar(url: subscription.thumbnailURL, size: 44)
             Text(subscription.title)
                 .font(.body)
-                .lineLimit(1)
+                .fixedSize(horizontal: false, vertical: true)
             if isShow {
                 Image(systemName: "tv")
                     .font(.caption)
@@ -691,7 +691,9 @@ struct ChannelView: View {
             ToolbarItem(placement: .principal) {
                 HStack(spacing: 8) {
                     ChannelAvatar(url: subscription.thumbnailURL, size: 28)
-                    Text(subscription.title).font(.headline).lineLimit(1)
+                    Text(subscription.title)
+                        .font(.headline)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             // The other half of "Add playlist as show": on the channel page

@@ -11,12 +11,12 @@ struct VideoRow: View {
                 // title is a tap away in the player. See `TitleCleaner`.
                 Text(video.displayTitle)
                     .font(.subheadline.weight(.medium))
-                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
                     .foregroundStyle(video.isWatched ? .secondary : .primary)
                 Text(video.channelTitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 6) {
                     EpisodeBadge(video: video)
                     Text(video.publishedAt, format: .relative(presentation: .named))
