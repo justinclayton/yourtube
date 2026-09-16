@@ -135,6 +135,12 @@ watched — so triage is a gesture, not a trip into the player. Category
 chips, the Priority chip, the Shorts toggle, the per-channel daily cap, and
 local search all keep working over whatever's left in the inbox.
 
+The inbox is read a page at a time — the newest 300 rows, with a "Show older"
+row at the foot for the next 300 — so the day grouping and the daily cap only
+ever run over a screenful of a backlog that can be thousands long. Search is
+not paged: it is answered from the whole inbox, so a search still finds a
+video from 2019.
+
 Shows is the calmer library view of that same content, and holds **Up
 Next**: the list of videos you've earmarked by hand, from the feed, the
 player, or a show page. The app never adds to it and never treats its order
@@ -307,6 +313,16 @@ when it's moved fifteen seconds or more, on pause, and on leaving the
 player — a store write reruns every live query in the app, so writing on
 every poll made the whole UI redo work for as long as a video played. Resume
 still lands within about fifteen seconds of where you stopped.
+
+The other half of that problem was the queries themselves. `TabView` keeps
+every tab alive, and a `@Query` is invalidated by any save anywhere, so the
+counting queries on the Shows and Channels tabs re-fetched thousands of
+videos whichever tab you were actually looking at. Counts are now read from
+the store on demand — a `fetchCount`, or one narrow fetch — by
+`View.recomputingFromStore(id:_:)`, which runs when a view appears and after
+each save *while it is on screen*, and does nothing at all once it isn't. A
+tab is also built only when it's first opened (`LazyTab`), so a tab you have
+never visited holds nothing.
 
 ## Titles
 
@@ -596,6 +612,11 @@ Run with Cmd-U. Coverage is concentrated where the risk is:
   the daily quota.
 - `CategoryManagerTests` — rule migration, multi-answer resolution, and the
   "contains" feed predicate, against a stub classifier.
+- `StoreCountsTests` — the badge and library counts, now that they're read
+  from the store on demand rather than counted out of a live query. Pins that
+  the cheap answer is the same answer: the Channels badges still follow the
+  Shorts setting, and the Your Shows badges still respect segments and the
+  retention window.
 - `ShowManagerTests` — the show catalogue: membership for both kinds of show
   (a channel's non-Short videos, a playlist's items — Shorts are never
   episodes either way), seasons and the picker's filter,

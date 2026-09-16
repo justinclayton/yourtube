@@ -14,18 +14,18 @@ import SwiftData
 /// row becoming a single card after a removal) it re-applied that state to
 /// whatever row took the old one's place and pushed it unasked.
 struct ShowsView: View {
-    @Query(
-        filter: #Predicate<Video> { $0.savedForLaterAt != nil },
-        sort: [SortDescriptor(\Video.upNextOrder), SortDescriptor(\Video.savedForLaterAt)]
-    )
-    private var upNext: [Video]
+    // No `@Query` of its own on purpose: a query is invalidated by any save
+    // anywhere, and this view is the parent of the whole tab, so one here
+    // re-created every section below it — including the sections on a tab
+    // nobody was looking at. Each section owns the query it draws from
+    // instead. See issue #66.
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 28) {
                     ContinueWatchingSection()
-                    UpNextSection(videos: upNext)
+                    UpNextSection()
                     YourShowsSection()
                 }
                 .padding(.horizontal)
@@ -54,10 +54,14 @@ struct ShowsView: View {
 /// beneath it.
 private struct UpNextSection: View {
     @Environment(AppServices.self) private var services
+    @Query(
+        filter: #Predicate<Video> { $0.savedForLaterAt != nil },
+        sort: [SortDescriptor(\Video.upNextOrder), SortDescriptor(\Video.savedForLaterAt)]
+    )
+    private var videos: [Video]
     @Query private var subscriptions: [Subscription]
     @Query private var shows: [Show]
     @State private var isEditing = false
-    let videos: [Video]
 
     private var avatars: [String: String] {
         Dictionary(subscriptions.compactMap { sub in sub.thumbnailURL.map { (sub.channelId, $0) } },

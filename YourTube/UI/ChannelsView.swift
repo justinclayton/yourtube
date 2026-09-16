@@ -44,6 +44,7 @@ struct ChannelsView: View {
 /// `@Query` needs fixed at init time.
 private struct ChannelList: View {
     @Environment(AppServices.self) private var services
+    @Environment(\.modelContext) private var modelContext
     let showShorts: Bool
     let searchQuery: String
     let presentation: ChannelsPresentation
@@ -59,10 +60,13 @@ private struct ChannelList: View {
     /// The show catalogue, so a row can say at a glance whether the channel
     /// is one. Tombstones for "not a show" are rows too; `isActive` sorts them.
     @Query private var showRecords: [Show]
-    /// One query for every unwatched video, counted per channel here, rather
-    /// than a live query per row — with several hundred subscriptions the
-    /// per-row version makes the list unusable.
-    @Query private var unwatched: [Video]
+    /// Unwatched videos per channel, read from the store when this list is on
+    /// screen and after each save. Not a live query over every unwatched
+    /// video: that one re-counted thousands of rows on every store change
+    /// whichever tab was showing (issue #66), and not a `fetchCount` per row
+    /// either, which is hundreds of round trips for one screen. See
+    /// `StoreCounts.unwatchedByChannel(in:includingShorts:)`.
+    @State private var unwatchedByChannel: [String: Int] = [:]
 
     @State private var collapsed: Set<String> = []
     @State private var filing: Subscription?
@@ -86,16 +90,9 @@ private struct ChannelList: View {
         self.showShorts = showShorts
         self.searchQuery = searchQuery
         self.presentation = presentation
-        _unwatched = Query(filter: showShorts
-            ? #Predicate<Video> { !$0.isWatched }
-            : #Predicate<Video> { !$0.isWatched && !$0.isLikelyShort }
-        )
     }
 
     private var groups: [ChannelGroup] {
-        let unwatchedByChannel = unwatched.reduce(into: [String: Int]()) {
-            $0[$1.channelId, default: 0] += 1
-        }
         let ruleByChannel = Dictionary(rules.map { ($0.channelId, $0) }, uniquingKeysWith: { first, _ in first })
         var byCollection: [PersistentIdentifier: [Subscription]] = [:]
         var uncategorized: [Subscription] = []
@@ -142,9 +139,6 @@ private struct ChannelList: View {
         } else if subscriptions.isEmpty {
             ContentUnavailableView.search(text: searchQuery)
         } else {
-            let unwatchedByChannel = unwatched.reduce(into: [String: Int]()) {
-                $0[$1.channelId, default: 0] += 1
-            }
             VStack(spacing: 0) {
                 if case .running(let done, let total) = services.categories.status {
                     HStack {
@@ -187,6 +181,12 @@ private struct ChannelList: View {
                 Button("OK", role: .cancel) { channelError = nil }
             } message: {
                 Text(channelError ?? "")
+            }
+            .recomputingFromStore(id: showShorts) {
+                unwatchedByChannel = (try? StoreCounts.unwatchedByChannel(
+                    in: modelContext,
+                    includingShorts: showShorts
+                )) ?? [:]
             }
         }
     }

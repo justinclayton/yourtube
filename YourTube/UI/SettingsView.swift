@@ -24,8 +24,11 @@ struct SettingsView: View {
     @AppStorage(SettingsKeys.channelDailyCap) private var channelDailyCap = SettingsKeys.defaultChannelDailyCap
     @AppStorage(TitleCleaner.rewriteEnabledKey) private var rewriteTitles = true
 
-    @Query private var subscriptions: [Subscription]
-    @Query private var videos: [Video]
+    /// Counted on demand rather than held as a live query: three numbers
+    /// aren't worth keeping every video in the store in a tab's memory, let
+    /// alone re-reading them on every save from whichever tab is showing.
+    /// See `StoreCounts` and issue #66.
+    @State private var counts = LibraryCounts()
 
     var body: some View {
         NavigationStack {
@@ -84,9 +87,9 @@ struct SettingsView: View {
                 titlesSection
 
                 Section("Library") {
-                    LabeledContent("Subscriptions", value: "\(subscriptions.count)")
-                    LabeledContent("Videos", value: "\(videos.count)")
-                    LabeledContent("Filtered as Shorts", value: "\(shortsCount)")
+                    LabeledContent("Subscriptions", value: "\(counts.subscriptions)")
+                    LabeledContent("Videos", value: "\(counts.videos)")
+                    LabeledContent("Filtered as Shorts", value: "\(counts.shorts)")
                     if let last = services.feed.lastRefreshedAt {
                         LabeledContent("Last refresh") {
                             Text(last, format: .relative(presentation: .named))
@@ -108,11 +111,14 @@ struct SettingsView: View {
                 } footer: {
                     Text("""
                     Resets at midnight US Pacific. A full refresh costs about \
-                    \(max(1, subscriptions.count + 4)) units.
+                    \(max(1, counts.subscriptions + 4)) units.
                     """)
                 }
             }
             .navigationTitle("Settings")
+            .recomputingFromStore(id: 0) {
+                counts = (try? StoreCounts.library(in: modelContext)) ?? counts
+            }
         }
     }
 
@@ -165,9 +171,5 @@ struct SettingsView: View {
             the cleaned one in the player.
             """)
         }
-    }
-
-    private var shortsCount: Int {
-        videos.filter { $0.isLikelyShort }.count
     }
 }
