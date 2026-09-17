@@ -108,12 +108,12 @@ final class Show {
     var retentionCount: Int?
     /// How short a video has to be, as a fraction of this show's typical
     /// episode, before it counts as a segment cut from one. A half by
-    /// default; see `ShowManager+Segments`.
+    /// default; see `ShowListing`.
     var segmentThreshold: Double = Show.defaultSegmentThreshold
     /// Whether this show hides cut-downs behind the segment toggle at all.
     /// On by default; a show can turn it off in settings when the app still
     /// gets the classification wrong for its catalogue, at which point every
-    /// source video is listed as an episode. See `ShowManager+Segments`.
+    /// source video is listed as an episode. See `ShowListing`.
     var hideSegments: Bool = true
     var artPreferenceRaw: String
     /// Why the detector flagged this channel, in its own words, so a guess can
