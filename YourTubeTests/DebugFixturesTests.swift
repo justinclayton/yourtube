@@ -162,11 +162,11 @@ extension DebugFixturesTests {
         )
         XCTAssertEqual(quizmaster.seasonNames, ["Series 14", "Series 13", "Series 12"])
         XCTAssertNotNil(quizmaster.membershipRefreshedAt)
-        XCTAssertEqual(try manager.episodes(of: quizmaster).count, 15)
+        XCTAssertEqual(try manager.listing(of: quizmaster).episodes.count, 15)
 
         // One playlist is one show with nothing to pick between, so no seasons.
         let conan = try XCTUnwrap(shows.first { $0.title == "Conan O'Brien Needs a Friend" })
         XCTAssertTrue(conan.seasonNames.isEmpty)
-        XCTAssertEqual(try manager.episodes(of: conan).count, 6)
+        XCTAssertEqual(try manager.listing(of: conan).episodes.count, 6)
     }
 }
