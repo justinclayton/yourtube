@@ -34,6 +34,11 @@ struct ShowVerdict: Sendable, Equatable {
 /// such rule to resolve, so its membership is stored on the record and
 /// refreshed from the API when the show is opened; see `ShowManager+Playlists`
 /// and `FeedRefresher+PlaylistShows`.
+///
+/// What a show *lists* — episodes, segments, the retention window, the
+/// counts, "Play next", cadence — is not here: that is `ShowListing`, one
+/// value type over a show's settings and a pile of videos. This class fetches
+/// the videos (`listing(of:)`) and owns the catalogue writes.
 @MainActor
 final class ShowManager {
     let modelContext: ModelContext
@@ -177,25 +182,24 @@ final class ShowManager {
         return show
     }
 
-    // MARK: - Membership
+    // MARK: - Listing
 
-    /// The show's episodes, in its play order, with segments and the
-    /// retention window applied.
+    /// The show's listing, fetched rather than handed in: the one place a
+    /// show's videos are read out of the store.
     ///
-    /// A channel-backed show's episodes are every non-Short video from its
-    /// channel; a playlist-backed show's are the ones the playlist holds, as
-    /// of its last membership refresh. Shorts are never episodes of anything
-    /// either way — a playlist can contain one, and it still isn't an episode
-    /// — and neither are the cut-downs of an episode, whatever the source
-    /// (see `ShowManager+Segments`).
-    func episodes(of show: Show) throws -> [Video] {
-        Self.order(try listing(of: show).episodes, by: show.playOrder)
+    /// Everything about what a show lists, counts, hides and plays next is
+    /// `ShowListing`'s (see that type); this is the thin layer that gets it
+    /// the videos. A view that already holds a live `@Query` builds its own
+    /// listing from that instead, and gets the same answers.
+    func listing(of show: Show, season: Int? = nil) throws -> ShowListing {
+        ShowListing(of: show, season: season, from: try sourceVideos(of: show))
     }
 
     /// Every video from the show's source, newest first, before anything is
-    /// classified or hidden. The raw material for `listing(of:)`, and the one
-    /// place membership is resolved against the store.
-    func sourceVideos(of show: Show) throws -> [Video] {
+    /// classified or hidden — the one place membership is resolved against
+    /// the store. `ShowListing` applies the same rule to videos handed in, so
+    /// the narrowing here is only about fetching less.
+    private func sourceVideos(of show: Show) throws -> [Video] {
         let byDate = [SortDescriptor(\Video.publishedAt, order: .reverse)]
         switch show.source {
         case .channel(let channelId):
@@ -213,59 +217,42 @@ final class ShowManager {
         }
     }
 
-    /// How many of a show's episodes are still unwatched. Segments and the
-    /// episodes the retention window hides are not counted: a badge should
-    /// only ever ask for what the show page is offering. Zero means the grid
-    /// draws no badge at all.
-    func unwatchedCount(for show: Show) throws -> Int {
-        try episodes(of: show).filter { !$0.isWatched }.count
-    }
-
-    /// Unwatched counts for several shows at once, keyed by show ID, from
-    /// videos the caller already has. The grid feeds it a live `@Query` so the
-    /// badges follow the store without a fetch per poster.
+    /// The show a video is an episode of, over a catalogue the caller already
+    /// has, or nil when it belongs to none.
     ///
-    /// `videos` may hold anything; Shorts and videos outside the show's
-    /// source are filtered out by `listing`, so the caller's query doesn't
-    /// have to be exact. Grouping by channel first only narrows the work for
-    /// channel-backed shows; a playlist's members can come from anywhere.
-    nonisolated static func unwatchedCounts(from videos: [Video], shows: [Show]) -> [String: Int] {
-        let candidates = videos.filter { !$0.isLikelyShort }
-        let byChannel = Dictionary(grouping: candidates, by: \.channelId)
-        return shows.reduce(into: [String: Int]()) { counts, show in
-            let pool: [Video]
-            switch show.source {
-            case .channel(let channelId):
-                pool = byChannel[channelId] ?? []
-            case .playlist:
-                pool = candidates
-            }
-            counts[show.id] = listing(from: members(from: pool, of: show), of: show)
-                .episodes.filter { !$0.isWatched }.count
+    /// A channel-backed show wins over a playlist-backed one on the same
+    /// channel: it's the whole of what the channel puts out, so following it
+    /// forward is following the channel forward. A playlist-backed show is
+    /// only consulted when the channel itself isn't a show, or when the video
+    /// came from a channel with no show at all — a playlist may hold a guest
+    /// channel's video, and that video is still an episode of this show.
+    ///
+    /// A view that already holds a live `@Query` of `[Show]` (the catalogue
+    /// is a handful of rows) uses this to resolve a card's show once, instead
+    /// of paying for a fetch on every body evaluation.
+    nonisolated static func show(containing video: Video, in shows: [Show]) -> Show? {
+        if let channelShow = shows.first(where: {
+            !$0.isPlaylistBacked && $0.channelId == video.channelId && $0.isActive
+        }) {
+            return channelShow
+        }
+        return shows.first {
+            $0.isActive && $0.isPlaylistBacked && $0.memberVideoIds.contains(video.videoId)
         }
     }
 
-    /// Which of `videos` belong to the show, unordered. The membership rule in
-    /// one place, so the live-query paths (the grid's counts, the show page)
-    /// answer exactly what `episodes(of:)` fetches.
-    nonisolated static func members(from videos: [Video], of show: Show) -> [Video] {
-        switch show.source {
-        case .channel(let channelId):
-            return videos.filter { $0.channelId == channelId && !$0.isLikelyShort }
-        case .playlist:
-            let ids = Set(show.memberVideoIds)
-            return videos.filter { ids.contains($0.videoId) && !$0.isLikelyShort }
-        }
-    }
-
-    /// "Keep the last N": the newest N episodes, given a newest-first list.
-    nonisolated static func retained(_ newestFirst: [Video], count: Int?) -> [Video] {
-        guard let count, count >= 0 else { return newestFirst }
-        return Array(newestFirst.prefix(count))
-    }
-
-    nonisolated static func order(_ newestFirst: [Video], by playOrder: PlayOrder) -> [Video] {
-        playOrder == .newestFirst ? newestFirst : Array(newestFirst.reversed())
+    /// Marks every listed episode watched, which is what "Mark all watched"
+    /// means: the show's badge goes, its episodes leave Continue Watching and
+    /// Up Next, and the ones hidden as segments or aged out by the retention
+    /// window are left alone — clearing a backlog shouldn't reach behind the
+    /// page you're looking at.
+    ///
+    /// The per-video effect is `WatchState.markWatched`'s: a finished episode
+    /// has no business waiting in a list of things to watch. Returns how many
+    /// episodes changed.
+    @discardableResult
+    func markAllWatched(of show: Show) throws -> Int {
+        try watchState.markWatched(listing(of: show).episodes.filter { !$0.isWatched })
     }
 
     // MARK: - Automatic pass

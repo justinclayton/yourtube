@@ -124,7 +124,7 @@ final class StoreCountsTests: XCTestCase {
         let counts = try manager.unwatchedCounts(for: [show])
 
         XCTAssertEqual(counts[show.id], 2)
-        XCTAssertEqual(counts, ShowManager.unwatchedCounts(from: try allVideos(), shows: [show]))
+        XCTAssertEqual(counts, ShowListing.unwatchedCounts(from: try allVideos(), shows: [show]))
     }
 
     func testShowBadgeRespectsSegmentsAndRetention() throws {
@@ -143,7 +143,7 @@ final class StoreCountsTests: XCTestCase {
         XCTAssertEqual(try manager.unwatchedCounts(for: [show])[show.id], 1)
         XCTAssertEqual(
             try manager.unwatchedCounts(for: [show]),
-            ShowManager.unwatchedCounts(from: try allVideos(), shows: [show])
+            ShowListing.unwatchedCounts(from: try allVideos(), shows: [show])
         )
     }
 
@@ -164,7 +164,7 @@ final class StoreCountsTests: XCTestCase {
         let counts = try manager.unwatchedCounts(for: [show])
 
         XCTAssertEqual(counts[show.id], 2)
-        XCTAssertEqual(counts, ShowManager.unwatchedCounts(from: try allVideos(), shows: [show]))
+        XCTAssertEqual(counts, ShowListing.unwatchedCounts(from: try allVideos(), shows: [show]))
     }
 
     func testShowBadgeCountsAreZeroWhenTheCatalogueHasNoVideosYet() throws {

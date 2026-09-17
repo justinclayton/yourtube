@@ -7,7 +7,7 @@ import SwiftData
 /// the episodes themselves.
 ///
 /// Everything above the list is either stored on the show or computed by
-/// `ShowManager` on the spot — cadence and typical duration are never stored,
+/// `ShowListing` on the spot — cadence and typical duration are never stored,
 /// so a show that changes its habits stops claiming the old ones as soon as
 /// the new episodes land.
 ///
@@ -26,8 +26,8 @@ struct ShowPageView: View {
     /// channel's for a channel-backed show, and its members' for a
     /// playlist-backed one, scoped by `memberVideoIds` rather than fetched
     /// whole, since a playlist may hold a guest channel's video and
-    /// `ShowManager` is the thing that knows which are members. The
-    /// retention window is applied by `ShowManager` on top of it, so the page
+    /// `ShowListing` is the thing that knows which are members. The
+    /// retention window is applied by `ShowListing` on top of it, so the page
     /// lists exactly what the catalogue counts.
     @Query private var channelVideos: [Video]
     @State private var isShowingSettings = false
@@ -75,36 +75,18 @@ struct ShowPageView: View {
         }
     }
 
-    /// The raw material the page classifies: the show's members — its
-    /// channel's uploads or its playlist's items — narrowed to the chosen
-    /// season.
+    /// Everything the page draws, derived once from the live query: the
+    /// episodes it lists, the segments behind the toggle, what the retention
+    /// window is holding back, the unwatched count, which episode Play next
+    /// opens, and the cadence line. One value type, so the header's count and
+    /// the poster's badge on the Shows tab are the same number rather than
+    /// two expressions that agree by luck.
     ///
-    /// The season is applied *before* classification rather than after, so
-    /// the whole listing is about one thing: the segments behind the toggle,
-    /// the retention window and the footer all describe the season in front
-    /// of you. Filtering afterwards would leave an older series empty on a
-    /// show told to keep only its last few episodes, which is not what
-    /// picking that series means.
-    private var seasonVideos: [Video] {
-        ShowManager.episodes(
-            ShowManager.members(from: channelVideos, of: show),
-            inSeason: season,
-            of: show
-        )
-    }
-
-    /// What the page has to work with: the episodes it lists, the segments
-    /// behind the toggle, and what the retention window is holding back. In
-    /// air order, newest at the top, whatever the play order.
+    /// The season is handed in rather than applied afterwards: the whole
+    /// listing describes the season in front of you, footer and retention
+    /// window included.
     private var listing: ShowListing {
-        ShowManager.listing(from: seasonVideos, of: show)
-    }
-
-    /// The same episodes in the show's play order, which is what decides
-    /// which one Play next opens. It follows the season picker too: the
-    /// button should open what the list in front of you says is next.
-    private var episodesInPlayOrder: [Video] {
-        ShowManager.order(listing.episodes, by: show.playOrder)
+        ShowListing(of: show, season: season, from: channelVideos)
     }
 
     private var subscription: Subscription? {
@@ -114,7 +96,6 @@ struct ShowPageView: View {
     var body: some View {
         let listing = listing
         let episodes = listing.episodes
-        let unwatched = episodes.filter { !$0.isWatched }.count
         // Segments sit among the episodes in air order rather than in a list
         // of their own: a clip means something next to the episode it came
         // from, and nowhere else.
@@ -122,7 +103,7 @@ struct ShowPageView: View {
         let segmentIds = Set(listing.segments.map(\.videoId))
         List {
             Section {
-                header(episodes: episodes, unwatched: unwatched)
+                header(listing: listing)
                     .listRowSeparator(.hidden)
                     .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
             }
@@ -134,7 +115,7 @@ struct ShowPageView: View {
                 // The plain style pins this header while the rows scroll but
                 // paints nothing behind it, so rows would show through. The
                 // bar material matches the navigation bar it sits under.
-                episodesHeader(listing: listing, unwatched: unwatched)
+                episodesHeader(listing: listing)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -259,7 +240,7 @@ struct ShowPageView: View {
     /// order of how sure the app is of them: the source is a fact, the
     /// cadence is computed from what's arrived so far, and the detector's
     /// reasons for calling this a show sit beneath them when it was a guess.
-    private func header(episodes: [Video], unwatched: Int) -> some View {
+    private func header(listing: ShowListing) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 16) {
                 ChannelArt(
@@ -279,7 +260,7 @@ struct ShowPageView: View {
                     Text(show.sourceDescription(channelTitle: subscription?.title ?? show.title))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                    if let cadence = ShowManager.cadenceDescription(of: episodes) {
+                    if let cadence = listing.cadenceDescription() {
                         Text(cadence)
                             .font(.footnote)
                             .foregroundStyle(.secondary)
@@ -294,7 +275,7 @@ struct ShowPageView: View {
                 markAsNotAShow: show.isPlaylistBacked ? nil : markAsNotAShow
             )
             seasonPicker
-            buttons(unwatched: unwatched)
+            buttons(listing: listing)
         }
     }
 
@@ -317,9 +298,9 @@ struct ShowPageView: View {
     }
 
     @ViewBuilder
-    private func buttons(unwatched: Int) -> some View {
+    private func buttons(listing: ShowListing) -> some View {
         HStack(spacing: 12) {
-            if let next = ShowManager.nextUp(in: episodesInPlayOrder) {
+            if let next = listing.nextUp {
                 Button {
                     playing = next
                 } label: {
@@ -327,7 +308,7 @@ struct ShowPageView: View {
                     // inside a `List` row renders title-only.
                     HStack(spacing: 6) {
                         Image(systemName: "play.fill")
-                        Text(ShowManager.isResumable(next) ? "Resume" : "Play next")
+                        Text(ShowListing.isResumable(next) ? "Resume" : "Play next")
                     }
                     .frame(maxWidth: .infinity)
                 }
@@ -345,7 +326,7 @@ struct ShowPageView: View {
                 try? services.shows.markAllWatched(of: show)
             }
             .buttonStyle(.bordered)
-            .disabled(unwatched == 0)
+            .disabled(listing.unwatchedCount == 0)
         }
         .font(.subheadline)
     }
@@ -357,11 +338,11 @@ struct ShowPageView: View {
     /// showing. The toggle sits beside it because that's the count it
     /// explains.
     @ViewBuilder
-    private func episodesHeader(listing: ShowListing, unwatched: Int) -> some View {
+    private func episodesHeader(listing: ShowListing) -> some View {
         HStack {
             Text(listing.episodes.isEmpty
                  ? "No episodes yet"
-                 : "\(unwatched) unwatched of \(listing.episodes.count)")
+                 : "\(listing.unwatchedCount) unwatched of \(listing.episodes.count)")
             Spacer(minLength: 8)
             if !listing.segments.isEmpty {
                 Button(isShowingSegments
@@ -480,7 +461,7 @@ private struct ShowEpisodeRow: View {
     }
 
     private var inProgressFraction: Double? {
-        ShowManager.isResumable(episode) ? episode.playbackFraction : nil
+        ShowListing.isResumable(episode) ? episode.playbackFraction : nil
     }
 }
 
@@ -498,7 +479,7 @@ private struct ShowSettingsSheet: View {
     let videos: [Video]
 
     private var listing: ShowListing {
-        ShowManager.listing(from: videos, of: show)
+        ShowListing(of: show, from: videos)
     }
 
     /// "Keep everything" is a retention count of nil, which a `Picker` can't
@@ -592,7 +573,7 @@ private struct ShowSettingsSheet: View {
             return "\(percent)% of an episode"
         }
         guard let typical = listing.typicalEpisodeDuration,
-              let length = ShowManager.approximateLength(typical * show.segmentThreshold) else {
+              let length = ShowListing.approximateLength(typical * show.segmentThreshold) else {
             return "No segments: this show's videos are all about the same length."
         }
         return "\(length) · \(listing.segmentCount) of \(listing.sourceCount)"

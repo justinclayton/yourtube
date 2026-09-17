@@ -75,10 +75,10 @@ final class DebugFixturesTests: XCTestCase {
         XCTAssertTrue(shows.allSatisfy { $0.flagOrigin == .user })
 
         for show in shows {
-            let episodes = try manager.episodes(of: show)
-            XCTAssertFalse(episodes.isEmpty, "\(show.title) has no episodes")
-            XCTAssertFalse(episodes.contains(where: \.isLikelyShort))
-            XCTAssertGreaterThan(try manager.unwatchedCount(for: show), 0,
+            let listing = try manager.listing(of: show)
+            XCTAssertFalse(listing.episodes.isEmpty, "\(show.title) has no episodes")
+            XCTAssertFalse(listing.episodes.contains(where: \.isLikelyShort))
+            XCTAssertGreaterThan(listing.unwatchedCount, 0,
                                  "\(show.title) should show a badge")
         }
 
