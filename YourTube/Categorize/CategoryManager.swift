@@ -33,8 +33,15 @@ final class CategoryManager {
         case unassigned
         /// Unassigned plus channels the classifier previously left uncategorised.
         case unassignedAndUnsure
-        /// Every channel except user-set rules.
+        /// Every channel except user-set rules. Unbounded and immediate — the
+        /// explicit Settings "re-run everything" action, not the automatic
+        /// version-bump path (`staleVersion`).
         case allAutomatic
+        /// Non-user-set channels whose rule predates the current classifier
+        /// version — the version-bump path. Paged by `classifyBudgetPerLaunch`
+        /// across launches, newest-activity channels first; see
+        /// `classifyUnassignedInBackground`.
+        case staleVersion
     }
 
     /// The taxonomy seeded on first launch. Editable afterwards in Settings.
@@ -67,9 +74,11 @@ final class CategoryManager {
     }
 
     /// Bump when the prompt or answer handling changes in a way that should
-    /// give previously-classified channels another go. Stored in UserDefaults
-    /// after a completed run; the next launch after a bump widens the
-    /// automatic pass to every non-user-set channel once.
+    /// give previously-classified channels another go. Compared against each
+    /// rule's own `ChannelRule.classifiedVersion`: a bump makes every
+    /// non-user-set rule below it due for `Scope.staleVersion`, paged across
+    /// launches by `classifyBudgetPerLaunch` rather than re-run in one pass —
+    /// see issue #119, split out of #65.
     ///
     /// 3: multi-tagging. Channels filed under one category get a chance to
     /// pick up a second or third.
@@ -78,12 +87,6 @@ final class CategoryManager {
     /// from YouTube's own filing — so every channel padded out to two or
     /// three guesses needs re-sorting once.
     static let classifierVersion = 4
-    static let classifierVersionKey = "categories.classifierVersion"
-
-    /// Which scope the automatic launch-time pass should use.
-    nonisolated static func automaticScope(storedVersion: Int) -> Scope {
-        storedVersion < classifierVersion ? .allAutomatic : .unassigned
-    }
 
     /// Whether an automatically-filed channel's recent uploads have turned
     /// over enough to be worth asking the classifier about again. Compares
@@ -124,16 +127,29 @@ final class CategoryManager {
 
     private let recentTitlesPerChannel = 10
 
+    /// How many classifier calls one launch's version-bump pass may spend, on
+    /// top of whatever `.unassigned` needs (always run in full — see
+    /// `classifyUnassignedInBackground`). One call per channel takes about a
+    /// second on-device (see #65's audit), so this keeps a bump launch under
+    /// about a minute before going idle, the same order of magnitude as
+    /// `TitleCleaner.rewriteBudgetPerLaunch`. The rest of the backlog is
+    /// picked up on the next launch or idle period; with ~629 channels that's
+    /// a bounded handful of launches to reach the current version, never an
+    /// unbounded wait.
+    private let classifyBudgetPerLaunch: Int
+
     init(
         modelContext: ModelContext,
         categorizer: (any ChannelCategorizer)?,
         defaults: UserDefaults = .standard,
-        writer: StoreWriter? = nil
+        writer: StoreWriter? = nil,
+        classifyBudgetPerLaunch: Int = 60
     ) {
         self.modelContext = modelContext
         self.writer = writer ?? StoreWriter(modelContainer: modelContext.container)
         self.categorizer = categorizer
         self.defaults = defaults
+        self.classifyBudgetPerLaunch = classifyBudgetPerLaunch
     }
 
     var canClassify: Bool { categorizer != nil }
@@ -373,17 +389,21 @@ final class CategoryManager {
     // MARK: - Classification
 
     /// Fire-and-forget entry point used at launch and after each refresh.
-    /// No-op if the model isn't available, a run is already going, or there's
-    /// nothing unassigned.
+    /// No-op if the model isn't available or a run is already going.
+    ///
+    /// `.unassigned` always runs in full and first: it's what files a fresh
+    /// subscription into the feed's categories at all, so it can't wait on a
+    /// budget. Behind it, `.staleVersion` spends up to
+    /// `classifyBudgetPerLaunch` calls paying down whatever a classifier
+    /// version bump left behind, newest-activity channels first, and leaves
+    /// the rest for the next launch or idle period — the same shape
+    /// `TitleCleaner` gives its rewrite pass.
     func classifyUnassignedInBackground() {
         guard canClassify, !isRunning else { return }
-        let stored = defaults.integer(forKey: Self.classifierVersionKey)
-        let scope = Self.automaticScope(storedVersion: stored)
         runningTask = Task {
-            await classify(scope: scope)
-            if case .idle = status {
-                defaults.set(Self.classifierVersion, forKey: Self.classifierVersionKey)
-            }
+            await classify(scope: .unassigned)
+            guard !Task.isCancelled else { return }
+            await classify(scope: .staleVersion, limit: classifyBudgetPerLaunch)
         }
     }
 
@@ -396,7 +416,10 @@ final class CategoryManager {
         runningTask?.cancel()
     }
 
-    func classify(scope: Scope) async {
+    /// `limit` bounds how many channels `scope` actually asks the model
+    /// about; nil (the default) runs the whole scope, as every caller but
+    /// `classifyUnassignedInBackground`'s version-bump pass wants.
+    func classify(scope: Scope, limit: Int? = nil) async {
         guard let categorizer else {
             status = .failed("Automatic categories aren't available on this device.")
             return
@@ -410,6 +433,7 @@ final class CategoryManager {
                 scope: scope,
                 using: categorizer,
                 recentTitlesPerChannel: recentTitlesPerChannel,
+                limit: limit,
                 onProgress: { [weak self] completed, total in
                     Task { @MainActor in self?.reportProgress(completed, total) }
                 }

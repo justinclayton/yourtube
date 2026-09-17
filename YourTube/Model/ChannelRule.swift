@@ -74,6 +74,15 @@ final class ChannelRule {
     /// treats as due for one. Never set for a user-set rule. Optional with no
     /// default so existing stores open without a migration.
     var classifierRecentVideoIds: [String]?
+    /// The classifier version that produced this rule's current answer.
+    /// Compared against `CategoryManager.classifierVersion` the way
+    /// `Video.titleCleanerVersion` tracks title cleaning: a rule below the
+    /// current version is due for the version-bump pass (`Scope.staleVersion`),
+    /// paged across launches rather than re-run all at once. Defaults to 0, so
+    /// every rule written before this field existed is due once, the same
+    /// one-time cost the old whole-store bump paid. Never set for a user-set
+    /// rule.
+    var classifiedVersion: Int = 0
 
     init(
         channelId: String,
