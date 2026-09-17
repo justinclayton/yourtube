@@ -3,40 +3,78 @@
 Spike for issue #129. Run on 2026-09-17 against the signed-in store: 629
 subscriptions, 620 of them filed by the on-device classifier at version 4.
 
-Reproduce with Settings → Categories → "Export classifier evidence", then:
+## What this spike could not answer
 
-```
-scripts/category-agreement.sh yourtube-categories-<n>.json
-```
+Issue #129 asks whether the custom categorization work is pulling its weight.
+**This does not answer that**, and no amount of the data below would.
 
-The run this document is written from is checked in beside it, as
-[`129-category-agreement-report.txt`](129-category-agreement-report.txt). The
-export itself is not: it carries every channel title, description and recent
-video title in the subscription list.
+`ChannelRule.isUserSet` is false for all 629 channels: nobody has ever
+corrected a filing by hand, so there is no ground truth. Everything here
+compares YouTube's filing against the *model's*, which means two guessers
+being compared to each other. A disagreement says one of them is wrong
+without saying which, and an agreement can be two identical mistakes.
+
+So the question this spike does answer is the narrower one: **would YouTube's
+own category be a usable substitute for, or pre-filter on, the classifier
+pass?** That one turns out to be answerable without ground truth, because the
+answer is no on structural grounds.
+
+Answering the original question needs a different spike: file fifty channels
+by hand in the Channels tab, then measure both sources against those.
 
 ## Answer
 
 **Keep the classifier, and don't build a pre-filter.** YouTube's category is
-silent about half the subscription list, and where it does speak it is too
+silent about most of the subscription list, and where it does speak it is too
 coarse to name a category in this taxonomy — 42% at the absolute best, and
 that best is measured with hindsight.
 
-A separate finding fell out of the run: the second-category mechanism added in
-classifier v4 is effectively dead on this store, firing on 2 channels out of
-629. That is a defect, not a design result — see "The signal is wired to the
-wrong names" below.
+A separate finding fell out of the run, and is worth more than the rest of it:
+the second-category mechanism added in classifier v4 is effectively dead on
+this store, firing on 2 channels out of 629. That is a defect, not a design
+result — issue #130.
 
-## 1. Agreement rate
+## Method
 
-296 channels have both a clear YouTube majority category and a filing to
-compare it against. Taken literally — YouTube's category name equals the
-category the channel is filed under — they agree on 16, or 5%.
+The numbers come from the SwiftData store on the signed-in simulator, copied
+aside and queried read-only. Everything needed is also in the export from
+Settings → Categories → "Export classifier evidence", which carries
+`youtubeCategoryVotes` — each channel's stored `snippet.categoryId`s, counted
+live — alongside its filing.
+
+Three definitions, matching what the app itself does:
+
+- **A channel's YouTube category** is the majority `categoryId` among its
+  stored videos, needing more than half the votes, the way
+  `YouTubeCategorySignal.suggestion(for:taxonomy:)` decides. Videos with no
+  stored category don't vote.
+- **Catch-alls** are People & Blogs, Entertainment and Education — what an
+  uploader picks when nothing fits. `YouTubeCategorySignal` already maps them
+  to nothing.
+- **The ceiling** is, for each YouTube category, the share of its channels
+  filed under that category's single most common filing. It is what a perfect
+  hand-written mapping could reach, chosen after seeing the answers.
+
+## 1. Coverage
+
+| | channels | |
+| --- | ---: | ---: |
+| no video carries a `categoryId` | 324 | 52% |
+| majority is a YouTube catch-all | 107 | 17% |
+| no clear majority | 4 | 1% |
+| **usable YouTube signal** | **194** | **31%** |
+
+The 52% is largely an artifact and will shrink — see "Limits" below.
+
+## 2. Agreement
+
+296 channels have both a clear YouTube majority and a filing to compare it
+against. Taken literally — YouTube's category name equals the category the
+channel is filed under — they agree on 16, or 5%.
 
 That number means almost nothing, because the two taxonomies don't share a
 vocabulary. YouTube has "Comedy"; this device has Stand-up, Sketches and Panel
-Shows. So the fair measure is the generous one: for each YouTube category, how
-often is the channel's filing that category's *most common* filing? That is
-the ceiling a perfect hand-written mapping could reach.
+Shows. The ceiling is the fair measure:
 
 | YouTube category | channels | ceiling | how the filings split |
 | --- | ---: | ---: | --- |
@@ -56,48 +94,44 @@ the ceiling a perfect hand-written mapping could reach.
 | Nonprofits & Activism | 1 | 100% | Film & TV 1 |
 
 **124 of 296 = 42%** of comparable channels, which is **20% of all 629
-subscriptions**. Dropping YouTube's three catch-alls (People & Blogs,
-Entertainment, Education) lifts it to **54%, over 30% of subscriptions**.
+subscriptions**. Dropping the catch-alls lifts it to **54%, over 30% of
+subscriptions**.
 
-That ceiling is fitted on this very data — it picks each YouTube category's
-winning filing after seeing the answers — so real performance on a new channel
-would be lower. Read it as "not even in principle", not as a forecast.
+Read the ceiling as "not even in principle", not as a forecast: it is fitted
+on this very data, so real performance on a new channel would be lower.
 
-## 2. Is YouTube's taxonomy too coarse?
+## 3. Is YouTube's taxonomy too coarse?
 
-Yes, and the table above is the argument. Only News & Politics (83%) predicts
-a single category with any confidence; Sports, Autos & Vehicles and Nonprofits
-& Activism are pure but have two or three channels between them.
+Yes, and the table is the argument. Only News & Politics (83%) predicts a
+single category with any confidence; Sports, Autos & Vehicles and Nonprofits &
+Activism are pure but have two or three channels between them.
 
-Every category that carries real weight here splits:
+Every category carrying real weight splits:
 
-- **Comedy** (50 channels) is four different things on this device. Stand-up
-  is the plurality at 24, but seven Comedy-filed channels are filed under
-  News — political comedy, which YouTube has no way to express.
+- **Comedy** (50) is four things here. Stand-up is the plurality at 24, but
+  seven Comedy-filed channels are filed under News — political comedy, which
+  YouTube has no way to express.
 - **Music** (49) splits across Music Production, Music Commentary, Artists and
   Music Gear. YouTube's "Music" says the subject is music, not whether the
   channel makes it, reviews the gear, or talks about it.
-- **Science & Technology** (26) is mostly 3D Printing here, then Science,
-  Software and Music Gear.
+- **Science & Technology** (26) is mostly 3D Printing, then Science, Software
+  and Music Gear.
 
-And the catch-alls are worse than silence: Entertainment (46 channels, 22%)
-and People & Blogs (34, 15%) are what an uploader picks when nothing fits, so
-they carry almost no information about the subject.
-`YouTubeCategorySignal` is already right to map them to nothing.
+The catch-alls are worse than silence: Entertainment (46, 22%) and People &
+Blogs (34, 15%) carry almost no information about the subject.
 
-The gap isn't fixable by mapping harder. YouTube's 44 IDs are one axis —
-broad subject — and this taxonomy's two dozen names encode subject *and* format
-(Stand-up vs Sketches vs Panel Shows, Music Production vs Music Commentary).
-No function from the first to the second exists.
+This is the part that was foreseeable from reading the two lists side by side.
+YouTube's 44 IDs are one axis — broad subject — and this taxonomy's two dozen
+names encode subject *and* format (Stand-up vs Sketches vs Panel Shows, Music
+Production vs Music Commentary). No function from the first to the second
+exists, and no amount of mapping effort creates one.
 
-## 3. Would a pre-filter pay?
+## 4. Would a pre-filter pay?
 
-Only 194 of 629 channels (31%) have a YouTube signal that is both a clear
-majority and not a catch-all. Skipping the LLM on exactly those:
+Skipping the LLM on exactly the 194 channels with a usable signal:
 
 - saves **at most 31% of classifier calls**;
-- files them at **54% at best** — the hindsight ceiling — against a classifier
-  that a spot-check of the table's leading filings says is broadly right;
+- files them at **54% at best**, the hindsight ceiling;
 - costs a visible wrong chip on the feed for the rest.
 
 The call it saves is ~1s, once per channel, cached forever as a rule, run in
@@ -105,7 +139,7 @@ the background off the main context. There is no user-visible cost to buy back
 here, and precision over recall is the stated policy (`CategoryDecision`).
 Not worth it.
 
-## The signal is wired to the wrong names
+## The signal is wired to the wrong names — issue #130
 
 `YouTubeCategorySignal.taxonomyByYouTubeCategoryId` maps YouTube's IDs onto
 `CategoryManager.defaultCategoryNames`, and only yields a suggestion when the
@@ -114,29 +148,21 @@ Comedy, Games, Makers & DIY, Music & Audio Gear, News & Politics or
 Tech & Engineering — only Cars and Film & TV survive.
 
 So the signal fires on 15 of 629 channels, and **2 rules in the whole store
-carry a second category from YouTube**. The v4 mechanism is, in practice, off.
+carry a second category from YouTube**. The v4 mechanism is, in practice, off,
+while looking alive in the code and green in the tests, which pass
+`defaultCategoryNames` as the taxonomy.
 
-This is worth its own issue: either re-point the mapping at something that
-survives an edited taxonomy, or drop the second-category path and let the
-model's single answer stand. Since the numbers above say a YouTube-derived
-second category would be right less than half the time, dropping it is the
-cheaper answer — but that is a design call, not this spike's.
+## Limits
 
-## Limits of this data
-
-- **No labelled data.** `isUserSet` is false for all 629 channels: nobody has
-  corrected a filing by hand, so "agreement with the user's final category",
-  as issue #129 asks for it, cannot be measured. Everything above compares
-  YouTube against the *model*, which means a channel both get wrong counts as
-  disagreement, and one they both get wrong in the same way counts as
-  agreement. The direction of the conclusion is not in doubt at 42% — the
-  exact figure is soft.
+- **No ground truth.** See the top of this document. The 42% ceiling's
+  direction is not in doubt; the exact figure is soft.
 - **The coverage numbers are young.** `snippet.categoryId` is stored on
   hydration and has never been backfilled, so it is present on 1665 of 2303
-  videos published this month and on essentially none published before.
-  The 52% of channels with no YouTube category at all is mostly "hasn't
-  uploaded since the field shipped", and will shrink. It will not reach zero:
-  a dormant channel never gets one.
+  videos published this month and on essentially none published earlier. The
+  52% of channels with no YouTube category is mostly "hasn't uploaded since
+  the field shipped", and will shrink — which weakens §4 specifically, since
+  the pre-filter's case rests on coverage. It will not reach zero: a dormant
+  channel never gets one. The coarseness argument in §3 doesn't depend on it.
 - **One device, one taxonomy.** The coarseness argument would soften on a
   device that kept the seeded `defaultCategoryNames`, which are closer to
   YouTube's own shape. It would not reverse: the catch-alls and the missing

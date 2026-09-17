@@ -1,5 +1,32 @@
 import Foundation
 
+/// One video, as the show detector sees it. A plain value type, like
+/// `VideoSignals`, so the detector is testable without SwiftData or the
+/// network.
+struct EpisodeSignals: Sendable, Equatable {
+    var durationSeconds: Int
+    var publishedAt: Date
+    var title: String
+    var description: String
+    /// YouTube's own `snippet.categoryId`, e.g. `"25"` for News & Politics.
+    /// Nil for videos stored before the field was fetched.
+    var categoryId: String?
+
+    init(
+        durationSeconds: Int,
+        publishedAt: Date,
+        title: String = "",
+        description: String = "",
+        categoryId: String? = nil
+    ) {
+        self.durationSeconds = durationSeconds
+        self.publishedAt = publishedAt
+        self.title = title
+        self.description = description
+        self.categoryId = categoryId
+    }
+}
+
 /// Everything the detector is given about one channel: who it is, and the
 /// non-Short videos we've stored from it.
 struct ChannelEvidence: Sendable, Equatable {
