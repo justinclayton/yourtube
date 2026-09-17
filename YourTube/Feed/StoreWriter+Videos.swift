@@ -3,8 +3,8 @@ import SwiftData
 
 /// Storing what a refresh found, on the writer's own context.
 ///
-/// `FeedRefresher` still owns the network: it decodes what the API returned
-/// and runs the Shorts heuristic, which needs to download thumbnails. Only the
+/// `VideoIntake` still owns the decision: it maps what the API returned and
+/// runs the Shorts heuristic, which may need a thumbnail looked at. Only the
 /// rows come through here. See `StoreWriter` for why.
 extension StoreWriter {
 
@@ -37,15 +37,7 @@ extension StoreWriter {
         let stale = try modelContext.fetch(FetchDescriptor<Video>(
             predicate: #Predicate { $0.classifierVersion < version }
         ))
-        return Dictionary(uniqueKeysWithValues: stale.map { video in
-            (video.videoId, VideoSignals(
-                durationSeconds: video.durationSeconds,
-                title: video.title,
-                description: video.videoDescription,
-                thumbnailWidth: video.thumbnailWidth,
-                thumbnailHeight: video.thumbnailHeight
-            ))
-        })
+        return Dictionary(uniqueKeysWithValues: stale.map { ($0.videoId, VideoSignals($0)) })
     }
 
     /// Writes re-judged verdicts back, saving after each chunk. A video with

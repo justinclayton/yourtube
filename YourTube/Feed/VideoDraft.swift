@@ -4,8 +4,8 @@ import Foundation
 /// verdict is judged from.
 ///
 /// A value type so the two halves of storing a video can sit on different
-/// actors: decoding and classification stay on `FeedRefresher`, which owns the
-/// thumbnail session, while the row itself is only ever built and inserted on
+/// actors: decoding and classification stay on `VideoIntake`, which owns the
+/// thumbnail verdict, while the row itself is only ever built and inserted on
 /// `StoreWriter`'s context. Nothing of SwiftData's crosses between them.
 struct VideoDraft: Sendable {
     var videoId: String
@@ -18,7 +18,7 @@ struct VideoDraft: Sendable {
     var thumbnailURL: String?
     var youtubeCategoryId: String?
     var signals: VideoSignals
-    /// Filled in before the row is built: see `FeedRefresher.upsert`.
+    /// Filled in before the row is built: see `VideoIntake.admit`.
     var isLikelyShort = false
 
     /// Nil for anything that can't be stored yet. Live streams and premieres
@@ -42,11 +42,7 @@ struct VideoDraft: Sendable {
         thumbnailURL = thumbnail?.url
         youtubeCategoryId = snippet.categoryId
         signals = VideoSignals(
-            durationSeconds: duration,
-            title: snippet.title ?? "",
-            description: snippet.description ?? "",
-            thumbnailWidth: thumbnail?.width,
-            thumbnailHeight: thumbnail?.height
+            snippet: snippet, durationSeconds: duration, thumbnail: thumbnail
         )
     }
 
