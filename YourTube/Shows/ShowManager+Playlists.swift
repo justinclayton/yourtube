@@ -25,8 +25,8 @@ struct PlaylistChoice: Hashable, Sendable {
 /// playlist's are a list only YouTube knows, so it's stored on the record and
 /// refreshed from the API when the show is opened (`FeedRefresher`
 /// `refreshPlaylistShow`). Everything downstream — the grid, the page, Play
-/// next, Next episode, cadence, retention — reads `episodes(of:)` and never
-/// learns which kind it's looking at.
+/// next, cadence, retention — reads a `ShowListing` and never learns which
+/// kind it's looking at.
 ///
 /// Categories and Priority are not stored here either: a `Show` carries the
 /// channel behind it whatever its source, and the chips read the channel's
@@ -96,19 +96,10 @@ extension ShowManager {
 
     // MARK: - Seasons
 
-    /// Narrows a list of episodes to one season, addressed by its index in
-    /// `seasonNames`. A nil index is "All seasons" and passes everything
-    /// through, which is what the picker starts on.
-    nonisolated static func episodes(
-        _ episodes: [Video],
-        inSeason index: Int?,
-        of show: Show
-    ) -> [Video] {
-        guard let index, show.hasSeasons else { return episodes }
-        let ids = Set(show.videoIds(inSeason: index))
-        return episodes.filter { ids.contains($0.videoId) }
-    }
-
+    /// Narrowing a list to one season is `ShowListing`'s: the season is
+    /// applied before classification, so a season's listing is about that
+    /// season alone.
+    ///
     /// Which season an episode belongs to, by index, or nil when the show has
     /// no seasons or the episode is in none of them.
     nonisolated static func seasonIndex(of video: Video, in show: Show) -> Int? {
