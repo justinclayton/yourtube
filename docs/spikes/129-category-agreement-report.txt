@@ -1,0 +1,61 @@
+YouTube's category vs. the on-device classifier
+export: export.json  ·  629 subscriptions  ·  taxonomy of 24
+
+1. Coverage — how many channels YouTube says anything about
+-----------------------------------------------------------
+classified by the model             620     99%
+corrected by hand                   0        0%
+no video carries a categoryId       324     52%
+no majority category                4        1%
+majority is a YouTube catch-all     107     17%
+usable YouTube signal               194     31%
+
+2. What `YouTubeCategorySignal` yields against this taxonomy
+------------------------------------------------------------
+channels the signal fires on        15       2%
+  ... naming the channel's filing   9       60%
+rules carrying a second category    2        0%
+
+The signal only fires where `taxonomyByYouTubeCategoryId`'s target name
+is in this taxonomy. Names it wants but this device hasn't got:
+  Comedy, Games, Makers & DIY, Music & Audio Gear, News & Politics, Tech & Engineering
+
+3. Agreement, YouTube's dominant category vs. the channel's filing
+------------------------------------------------------------------
+comparable channels                 296     47%
+YouTube's name equals the filing    16       5%
+
+Literal equality is the wrong measure when the two taxonomies don't
+share a vocabulary. The table below is the generous one: for each
+YouTube category, the best a perfect hand-written mapping could do.
+
+YouTube category        n       best  most common filings
+Comedy                  50      48%  Stand-up 24, News 7, Panel Shows 6, Sketches 5
+Music                   49      51%  Music Production 25, Music Commentary 9, Artists 6, Music Gear 3
+Entertainment           46      22%  Stand-up 10, Film & TV 4, Panel Shows 4, Podcasts 4
+People & Blogs          34      15%  3D Printing 5, Stand-up 5, Music Production 3, Panel Shows 3
+Science & Technology    26      46%  3D Printing 12, Science 6, Software 4, Music Gear 2
+Education               25      24%  Science 6, Explainers 5, Other 4, Education 2
+Gaming                  20      55%  Gaming 11, Other 3, Animation 1, Film & TV 1
+News & Politics         18      83%  News 15, Explainers 2, Stand-up 1
+Film & Animation        13      54%  Film & TV 7, Animation 3, Artists 1, Film Essays 1
+Howto & Style           7       29%  Other 2, 3D Printing 1, Animation 1, Music Production 1
+Sports                  3      100%  Sports 3
+Autos & Vehicles        2      100%  Cars 2
+Pets & Animals          2       50%  Animation 1, Stand-up 1
+Nonprofits & Activism   1      100%  Film & TV 1
+
+Best case with YouTube's category alone: 124/296 =   42% of comparable
+channels,   20% of all 629 subscriptions. Dropping the catch-alls:
+103/191 =   54%, over   30% of subscriptions.
+
+That best case is fitted on this very data — it picks each YouTube
+category's most common filing after seeing the answers — so it is an
+upper bound on what any mapping could achieve, not a forecast.
+
+4. What a pre-filter would save
+-------------------------------
+Model calls skipped if the LLM is only invoked where YouTube has no
+usable signal: 194 of 629 =   31% of calls.
+Those 194 channels would be filed at about   54% accuracy — the
+upper bound above — against a classifier pass costing ~1s per channel.

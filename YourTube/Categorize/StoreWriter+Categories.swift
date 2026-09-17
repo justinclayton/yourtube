@@ -254,6 +254,18 @@ extension StoreWriter {
         }
     }
 
+    /// Every channel's `youtubeCategoryId` tally in one pass. Counting all
+    /// videos once and grouping beats a fetch per subscription: the export
+    /// already does one of those per channel for the recent titles, and there
+    /// are several hundred channels behind a button in Settings.
+    private func youtubeCategoryVotesByChannel() throws -> [String: [String: Int]] {
+        let videos = try modelContext.fetch(FetchDescriptor<Video>())
+        return videos.reduce(into: [String: [String: Int]]()) { tally, video in
+            guard let categoryId = video.youtubeCategoryId, !categoryId.isEmpty else { return }
+            tally[video.channelId, default: [:]][categoryId, default: 0] += 1
+        }
+    }
+
     /// The most common `youtubeCategoryId` among everything we've stored for
     /// a channel. Every stored video votes, not just the recent titles the
     /// prompt shows the model — this is read off YouTube's own metadata, not
@@ -321,6 +333,19 @@ extension StoreWriter {
         /// `YouTubeCategory.name(forId:)` of the channel's dominant video
         /// category as of that pass. Nil alongside `rawAnswer`.
         var dominantYouTubeCategory: String?
+        /// Every stored video's `snippet.categoryId` for this channel,
+        /// counted, as of now — id to number of videos voting for it.
+        ///
+        /// Recomputed live for the same reason `about` and
+        /// `recentVideoTitles` are: `dominantYouTubeCategory` is a snapshot
+        /// from whenever the channel was last classified, and is nil for
+        /// every channel classified before that field existed, which makes it
+        /// useless as a measuring stick. The tally is the raw evidence
+        /// instead of a verdict, so a reader can apply whatever majority rule
+        /// or catch-all policy it wants — `YouTubeCategorySignal`'s, or a
+        /// different one it is being compared against. Empty for a channel
+        /// with no categorised videos at all.
+        var youtubeCategoryVotes: [String: Int]
         var isUserSet: Bool
         /// The categories the user filed the channel under by hand. Present
         /// only when `isUserSet`, so a record with both this and `rawAnswer`
@@ -340,6 +365,7 @@ extension StoreWriter {
             try rules().map { ($0.channelId, $0) },
             uniquingKeysWith: { first, _ in first }
         )
+        let votesByChannel = try youtubeCategoryVotesByChannel()
         return try subscriptions.map { subscription in
             let rule = ruleByChannel[subscription.channelId]
             let evidence = try descriptor(for: subscription, recentTitles: recentTitlesPerChannel)
@@ -354,6 +380,7 @@ extension StoreWriter {
                 youtubeCategory: rule?.classifierYouTubeCategory,
                 youtubeReason: rule?.classifierYouTubeReason,
                 dominantYouTubeCategory: rule?.classifierDominantCategoryId.map(YouTubeCategory.name(forId:)),
+                youtubeCategoryVotes: votesByChannel[subscription.channelId] ?? [:],
                 isUserSet: rule?.isUserSet ?? false,
                 userCategories: (rule?.isUserSet ?? false) ? rule?.topicCollections.map(\.name) : nil
             )

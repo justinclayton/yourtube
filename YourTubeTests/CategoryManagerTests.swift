@@ -636,6 +636,29 @@ final class CategoryManagerTests: XCTestCase {
         XCTAssertNil(record.userCategories)
     }
 
+    /// The vote tally is the raw evidence behind YouTube's filing, recomputed
+    /// live rather than read off the rule — so it is there for a channel the
+    /// classifier has never touched, which `dominantYouTubeCategory` is not.
+    func testExportTalliesYouTubeCategoryVotesLiveForEveryChannel() async throws {
+        let manager = makeManager(nil)
+        let voted = subscribe("Voted")
+        for _ in 0..<3 { addVideo(channelId: voted.channelId, categoryId: "23") }
+        addVideo(channelId: voted.channelId, categoryId: "24")
+        addVideo(channelId: voted.channelId, categoryId: nil)
+        let silent = subscribe("Silent")
+        addVideo(channelId: silent.channelId, categoryId: nil)
+
+        let data = try await manager.exportClassifierEvidence()
+        let records = try JSONDecoder().decode([StoreWriter.ChannelClassifierRecord].self, from: data)
+
+        let votedRecord = try XCTUnwrap(records.first { $0.channelId == voted.channelId })
+        XCTAssertEqual(votedRecord.youtubeCategoryVotes, ["23": 3, "24": 1], "uncategorised videos don't vote")
+        XCTAssertNil(votedRecord.dominantYouTubeCategory, "no classifier pass has run, so the rule records nothing")
+
+        let silentRecord = try XCTUnwrap(records.first { $0.channelId == silent.channelId })
+        XCTAssertEqual(silentRecord.youtubeCategoryVotes, [:])
+    }
+
     /// The measuring stick for later classifier changes: a corrected channel
     /// carries both the automatic answer and what the user chose instead.
     func testExportRecordsBothAutomaticAnswerAndUserCorrection() async throws {
