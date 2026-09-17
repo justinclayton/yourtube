@@ -22,6 +22,19 @@ private func guess(_ names: String..., raw: [String]? = nil) -> CategoryGuess {
     CategoryGuess(categories: names, rawCategories: raw ?? names)
 }
 
+/// Records which channels it was asked about, and in what order — what the
+/// version-bump pass's budget and ordering tests need instead of the
+/// on-device model.
+private final class CountingCategorizer: ChannelCategorizer, @unchecked Sendable {
+    private(set) var calledChannelTitles: [String] = []
+    var answer = CategoryGuess(categories: ["Other"])
+
+    func categorize(_ channel: ChannelDescriptor, among categories: [String]) async throws -> CategoryGuess {
+        calledChannelTitles.append(channel.title)
+        return answer
+    }
+}
+
 @MainActor
 final class CategoryManagerTests: XCTestCase {
     private var container: ModelContainer!
@@ -916,6 +929,103 @@ final class CategoryManagerTests: XCTestCase {
             previousVideoIds: ["a", "b", "c"], currentVideoIds: ["a", "b", "c"], windowSize: 3
         ))
     }
+
+    // MARK: - Classifier version bump, paged across launches (#119)
+
+    /// Inserts a channel already classified under `version` — standing in for
+    /// a channel that was fine under the classifier's previous version and is
+    /// now due for `.staleVersion`, without going through a real classify
+    /// pass first.
+    @discardableResult
+    private func makeStaleRule(
+        title: String,
+        version: Int,
+        classifiedAt: Date = .now
+    ) throws -> (subscription: Subscription, rule: ChannelRule) {
+        let sub = subscribe(title)
+        let cars = try XCTUnwrap(context.fetch(FetchDescriptor<VideoCollection>())
+            .first { $0.name == "Cars" })
+        let rule = ChannelRule(
+            channelId: sub.channelId, channelTitle: title, collections: [cars],
+            isUserSet: false, classifiedAt: classifiedAt
+        )
+        rule.classifiedVersion = version
+        context.insert(rule)
+        try context.save()
+        return (sub, rule)
+    }
+
+    /// A version-bump pass spends only its budget's worth of calls, leaving
+    /// the rest of the backlog for a later launch.
+    func testStaleVersionPassRespectsPerLaunchBudget() async throws {
+        let counter = CountingCategorizer()
+        let manager = makeManager(counter)
+        for i in 0..<5 { try makeStaleRule(title: "Stale \(i)", version: 0) }
+
+        await manager.classify(scope: .staleVersion, limit: 2)
+
+        XCTAssertEqual(counter.calledChannelTitles.count, 2)
+        let rules = try manager.rules()
+        XCTAssertEqual(rules.filter { $0.classifiedVersion == CategoryManager.classifierVersion }.count, 2)
+        XCTAssertEqual(rules.filter { $0.classifiedVersion == 0 }.count, 3)
+    }
+
+    /// Within one launch's budget, a channel with an upload since its last
+    /// classification goes first — the Done-when's explicit ordering.
+    func testStaleVersionOrdersUploadTurnoverFirst() async throws {
+        let counter = CountingCategorizer()
+        let manager = makeManager(counter)
+        let base = Date(timeIntervalSince1970: 1_000_000)
+        let (stableSub, _) = try makeStaleRule(title: "Stable", version: 0, classifiedAt: base)
+        addVideo(channelId: stableSub.channelId, categoryId: nil, publishedAt: base.addingTimeInterval(-10))
+        let (turnedOverSub, _) = try makeStaleRule(title: "TurnedOver", version: 0, classifiedAt: base)
+        addVideo(channelId: turnedOverSub.channelId, categoryId: nil, publishedAt: base.addingTimeInterval(10))
+
+        await manager.classify(scope: .staleVersion, limit: 1)
+
+        XCTAssertEqual(counter.calledChannelTitles, ["TurnedOver"])
+        XCTAssertEqual(try manager.rule(forChannelId: turnedOverSub.channelId)?.classifiedVersion, CategoryManager.classifierVersion)
+        XCTAssertEqual(try manager.rule(forChannelId: stableSub.channelId)?.classifiedVersion, 0)
+    }
+
+    /// However small the budget, every channel reaches the current version
+    /// within a bounded number of launches — no channel is skipped forever.
+    func testStaleVersionReachesEveryChannelWithinBoundedLaunches() async throws {
+        let channelCount = 5
+        let budget = 2
+        let counter = CountingCategorizer()
+        let manager = makeManager(counter)
+        for i in 0..<channelCount { try makeStaleRule(title: "Channel \(i)", version: 0) }
+
+        let expectedLaunches = Int((Double(channelCount) / Double(budget)).rounded(.up))
+        for _ in 0..<expectedLaunches {
+            await manager.classify(scope: .staleVersion, limit: budget)
+        }
+
+        let rules = try manager.rules()
+        XCTAssertEqual(rules.filter { $0.classifiedVersion == CategoryManager.classifierVersion }.count, channelCount,
+                       "every channel reached the current version within \(expectedLaunches) launches")
+        // One more launch beyond the bound must be a no-op: nothing left to page.
+        await manager.classify(scope: .staleVersion, limit: budget)
+        XCTAssertEqual(counter.calledChannelTitles.count, channelCount)
+    }
+
+    /// `.unassigned` — a fresh subscription — is classified on the launch
+    /// that first sees it, even while a version-bump backlog is also pending.
+    func testUnassignedIsClassifiedImmediatelyAlongsideAVersionBump() async throws {
+        let stub = StubCategorizer(answers: ["Fresh": guess("Cars")])
+        let manager = makeManager(stub)
+        try makeStaleRule(title: "Backlogged", version: 0)
+        let fresh = subscribe("Fresh")
+
+        manager.classifyUnassignedInBackground()
+        for _ in 0..<200 {
+            if try manager.rule(forChannelId: fresh.channelId)?.collections.isEmpty == false { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        XCTAssertEqual(try manager.rule(forChannelId: fresh.channelId)?.collections.map(\.name), ["Cars"])
+    }
 }
 
 // MARK: - Prompt
@@ -1001,14 +1111,6 @@ final class CategoryPromptTests: XCTestCase {
         XCTAssertEqual(CategoryPrompt.resolve("Podcasts", among: categories), nil,
                        "one of two words isn't a majority")
         XCTAssertEqual(CategoryPrompt.resolve("News, Politics", among: categories), "News & Politics")
-    }
-
-    /// After a bump every non-user-set channel is re-classified once, which
-    /// is how channels padded out to three guesses are re-sorted under v4.
-    func testAutomaticScopeWidensOnceAfterVersionBump() {
-        XCTAssertEqual(CategoryManager.automaticScope(storedVersion: 0), .allAutomatic)
-        XCTAssertEqual(CategoryManager.automaticScope(storedVersion: CategoryManager.classifierVersion - 1), .allAutomatic)
-        XCTAssertEqual(CategoryManager.automaticScope(storedVersion: CategoryManager.classifierVersion), .unassigned)
     }
 
 }

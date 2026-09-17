@@ -20,10 +20,15 @@ extension StoreWriter {
     }
 
     /// One call per channel in scope, sequentially, saving after each chunk.
+    /// `limit` caps how many channels are actually asked about — the rest of
+    /// `scope` stays untouched, pending a later call — while `onProgress` and
+    /// `ClassifyOutcome.total` still report the full scope, the same split
+    /// `rewritePendingTitles` uses for its own per-launch budget.
     func classifyChannels(
         scope: CategoryManager.Scope,
         using categorizer: any ChannelCategorizer,
         recentTitlesPerChannel: Int,
+        limit: Int? = nil,
         onProgress: @escaping StoreWriterProgress
     ) async throws -> ClassifyOutcome {
         let targets = try classificationTargets(scope: scope, recentTitlesPerChannel: recentTitlesPerChannel)
@@ -37,6 +42,7 @@ extension StoreWriter {
 
         do {
             for subscription in targets {
+                if let limit, outcome.completed >= limit { break }
                 try Task.checkCancellation()
                 let videos = try recentVideos(forChannelId: subscription.channelId, limit: recentTitlesPerChannel)
                 let channelDescriptor = try descriptor(
@@ -88,7 +94,7 @@ extension StoreWriter {
             try rules().map { ($0.channelId, $0) },
             uniquingKeysWith: { first, _ in first }
         )
-        return try subscriptions.filter { subscription in
+        let filtered = try subscriptions.filter { subscription in
             guard let rule = ruleByChannel[subscription.channelId] else { return true }
             if rule.isUserSet { return false }
             switch scope {
@@ -108,7 +114,43 @@ extension StoreWriter {
                 )
             case .unassignedAndUnsure: return rule.topicCollections.isEmpty
             case .allAutomatic: return true
+            case .staleVersion: return rule.classifiedVersion < CategoryManager.classifierVersion
             }
+        }
+        guard scope == .staleVersion else { return filtered }
+        return try orderedByActivity(filtered, ruleByChannel: ruleByChannel)
+    }
+
+    /// `.staleVersion`'s own order: channels with an upload newer than their
+    /// last classification first (issue #119's Done-when), newest upload
+    /// first within and beyond that group — the same "newest activity first"
+    /// shape `stripStaleTitles` and `rewritePendingTitles` use, so a channel
+    /// nobody's uploaded to in years settles to the back of a paged run
+    /// rather than claiming a slot ahead of one that has.
+    private func orderedByActivity(
+        _ subscriptions: [Subscription],
+        ruleByChannel: [String: ChannelRule]
+    ) throws -> [Subscription] {
+        struct Activity { var hasNewUpload: Bool; var mostRecentUpload: Date }
+        var activity: [String: Activity] = [:]
+        for subscription in subscriptions {
+            let mostRecent = try recentVideos(forChannelId: subscription.channelId, limit: 1).first?.publishedAt
+            let classifiedAt = ruleByChannel[subscription.channelId]?.classifiedAt
+            let hasNewUpload: Bool
+            if let mostRecent {
+                hasNewUpload = classifiedAt.map { mostRecent > $0 } ?? true
+            } else {
+                hasNewUpload = false
+            }
+            activity[subscription.channelId] = Activity(
+                hasNewUpload: hasNewUpload,
+                mostRecentUpload: mostRecent ?? .distantPast
+            )
+        }
+        return subscriptions.sorted { a, b in
+            let x = activity[a.channelId]!, y = activity[b.channelId]!
+            if x.hasNewUpload != y.hasNewUpload { return x.hasNewUpload }
+            return x.mostRecentUpload > y.mostRecentUpload
         }
     }
 
@@ -191,6 +233,7 @@ extension StoreWriter {
             rule.classifierYouTubeReason = guess.youtubeReason
             rule.classifierDominantCategoryId = dominantCategoryId
             rule.classifierRecentVideoIds = recentVideoIds
+            rule.classifiedVersion = CategoryManager.classifierVersion
         } else {
             let rule = ChannelRule(
                 channelId: subscription.channelId,
@@ -206,6 +249,7 @@ extension StoreWriter {
             rule.classifierYouTubeReason = guess.youtubeReason
             rule.classifierDominantCategoryId = dominantCategoryId
             rule.classifierRecentVideoIds = recentVideoIds
+            rule.classifiedVersion = CategoryManager.classifierVersion
             modelContext.insert(rule)
         }
     }
