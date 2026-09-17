@@ -10,6 +10,12 @@ import Observation
 /// never fixed it, and `search.list` costs 100 quota units per call. Walking
 /// each channel's uploads playlist costs 1 unit per channel, which is what
 /// makes a full refresh affordable — roughly 102 units for 100 channels.
+///
+/// What it keeps is the finding: the subscription list, the fan-out across
+/// channels, the phase the refresh is in, and the quota that costs. What
+/// happens to a video once it has been found — mapping, the Shorts verdict,
+/// the insert — belongs to `VideoIntake`, which is also what the fixtures and
+/// a playlist-backed show's membership refresh go through.
 @Observable
 @MainActor
 final class FeedRefresher {
@@ -61,24 +67,28 @@ final class FeedRefresher {
     private let uploadsPerChannel = 10
 
     private let modelContext: ModelContext
-    /// Rows go in through here rather than the main context, so a refresh
-    /// storing a few hundred videos doesn't make every live query in the app
-    /// re-fetch a few hundred times. See `StoreWriter`.
-    private let writer: StoreWriter
+    /// The one door videos enter the store by. This class finds out *which*
+    /// videos there are to store; what happens to them after that is not its
+    /// business. Internal so `FeedRefresher+PlaylistShows` uses the same door.
+    let intake: VideoIntake
     /// Internal so `FeedRefresher+PlaylistShows` can reach the same client.
     let api: YouTubeAPI
-    private let thumbnailSession: URLSession
 
     init(
         modelContext: ModelContext,
         api: YouTubeAPI,
-        thumbnailSession: URLSession = .shared,
-        writer: StoreWriter? = nil
+        writer: StoreWriter? = nil,
+        intake: VideoIntake? = nil
     ) {
         self.modelContext = modelContext
-        self.writer = writer ?? StoreWriter(modelContainer: modelContext.container)
         self.api = api
-        self.thumbnailSession = thumbnailSession
+        // Rows go in through the writer's context rather than the main one,
+        // so a refresh storing a few hundred videos doesn't make every live
+        // query in the app re-fetch a few hundred times. See `StoreWriter`.
+        self.intake = intake ?? VideoIntake(
+            writer: writer ?? StoreWriter(modelContainer: modelContext.container),
+            thumbnails: DownloadedThumbnailVerdict()
+        )
     }
 
     var isRefreshing: Bool {
@@ -93,7 +103,7 @@ final class FeedRefresher {
         status = .refreshing(.checkingChannels(completed: 0, total: 0))
 
         do {
-            try await reclassifyStaleVideos()
+            try await intake.reclassifyStale()
 
             let subscriptions = try await syncSubscriptions()
             guard !subscriptions.isEmpty else {
@@ -102,7 +112,7 @@ final class FeedRefresher {
                 return
             }
 
-            let known = try await knownVideoIds()
+            let known = try await intake.knownVideoIds()
             try await fetchAndStoreNewVideos(from: subscriptions, known: known)
 
             lastRefreshedAt = .now
@@ -120,14 +130,13 @@ final class FeedRefresher {
     /// Costs 1 unit for the playlist page plus 1 per 50 videos hydrated.
     func loadOlderUploads(channelId: String, pageSize: Int = 50) async throws -> Int {
         let playlistId = Subscription.uploadsPlaylistId(forChannelId: channelId)
-        let known = try await knownVideoIds()
+        let known = try await intake.knownVideoIds()
         let items = try await api.recentUploads(playlistId: playlistId, limit: pageSize)
         let newIds = items.compactMap(\.videoId).filter { !known.contains($0) }
         guard !newIds.isEmpty else { return 0 }
 
         let hydrated = try await api.videos(ids: newIds)
-        try await upsert(videos: hydrated)
-        return hydrated.count
+        return try await intake.admit(hydrated)
     }
 
     // MARK: - Steps
@@ -202,7 +211,7 @@ final class FeedRefresher {
     /// simultaneous connections to Google.
     ///
     /// Storing per channel rather than once for the whole refresh — still
-    /// classify-before-insert (see `upsert`), just at channel granularity
+    /// classify-before-insert (see `VideoIntake`), just at channel granularity
     /// instead of whole-refresh granularity — is what lets new videos reach
     /// the feed while later channels are still being checked, instead of a
     /// first fill of hundreds of videos showing nothing for minutes.
@@ -248,7 +257,7 @@ final class FeedRefresher {
                     let hydrated = try await api.videos(ids: Array(newIds))
 
                     status = .refreshing(.sortingShorts)
-                    try await upsert(videos: hydrated)
+                    try await intake.admit(hydrated)
 
                     known.formUnion(newIds)
                     status = .refreshing(.checkingChannels(completed: checked, total: total))
@@ -257,106 +266,6 @@ final class FeedRefresher {
                 fillSlot()
             }
         }
-    }
-
-    /// Every video ID already stored. Internal so a playlist-backed show's
-    /// refresh can ask the same question before hydrating anything.
-    func knownVideoIds() async throws -> Set<String> {
-        try await writer.knownVideoIds()
-    }
-
-    /// Stores hydrated videos, Shorts verdict first. Internal because it is
-    /// the one way videos enter the store: `FeedRefresher+PlaylistShows`
-    /// brings a playlist's items in through it rather than inserting its own.
-    ///
-    /// Classify before inserting. The feed's `@Query` watches the store, and
-    /// classification suspends on thumbnail downloads, so a video inserted
-    /// first would show up in the feed with the default `isLikelyShort =
-    /// false` and then vanish once its verdict landed. Holding the insert
-    /// until the verdict is known means a Short is hidden from its first
-    /// appearance. That the rows are written on another context doesn't change
-    /// it: what's deferred is the insert, not the save.
-    func upsert(videos: [YT.VideoItem]) async throws {
-        var drafts = videos.compactMap(VideoDraft.init(item:))
-        guard !drafts.isEmpty else { return }
-
-        let verdicts = await shortsVerdicts(for: drafts.map { ($0.videoId, $0.signals) })
-        for index in drafts.indices {
-            drafts[index].isLikelyShort = verdicts[drafts[index].videoId] ?? false
-        }
-        try await writer.insert(drafts, classifierVersion: ShortsHeuristic.version)
-    }
-
-    // MARK: - Shorts classification
-
-    /// Re-runs the heuristic over videos classified by an older version of it.
-    /// Cheap when there's nothing to do, which is every time but the first
-    /// launch after an app update that changed the heuristic. Runs at the start
-    /// of every refresh and when the feed appears, so an update takes effect
-    /// without waiting for new uploads.
-    func reclassifyStaleVideos() async throws {
-        let current = ShortsHeuristic.version
-        let stale = try await writer.staleShortsSignals(version: current)
-        guard !stale.isEmpty else { return }
-
-        let verdicts = await shortsVerdicts(for: stale.map { ($0.key, $0.value) })
-        try await writer.applyShortsVerdicts(verdicts, version: current)
-    }
-
-    /// Applies the Shorts heuristic to signals, fetching and analysing the
-    /// thumbnail for videos where it could change the answer: inside the
-    /// duration gate and not already caught by a cheaper signal.
-    ///
-    /// Works on plain signals rather than on rows because the rows belong to
-    /// the writer's context, and the thumbnail session belongs here.
-    private func shortsVerdicts(
-        for pending: [(videoId: String, signals: VideoSignals)]
-    ) async -> [String: Bool] {
-        var needsThumbnail: [String] = []
-        for (videoId, signals) in pending
-        where ShortsHeuristic.isWithinDurationGate(signals)
-            && !ShortsHeuristic.isLikelyShort(signals) {
-            needsThumbnail.append(videoId)
-        }
-
-        let pillarboxed = await analyzeThumbnails(videoIds: needsThumbnail)
-
-        var verdicts: [String: Bool] = [:]
-        for (videoId, signals) in pending {
-            var signals = signals
-            signals.hasPillarboxedThumbnail = pillarboxed[videoId] ?? nil
-            verdicts[videoId] = ShortsHeuristic.isLikelyShort(signals)
-        }
-        return verdicts
-    }
-
-    /// Downloads `hqdefault.jpg` for each ID and runs `ThumbnailAnalyzer`.
-    /// Failures (offline, 404, undecodable) map to nil: no evidence, and the
-    /// video is left un-flagged rather than the refresh failing.
-    private func analyzeThumbnails(videoIds: [String]) async -> [String: Bool?] {
-        var results: [String: Bool?] = [:]
-        let session = thumbnailSession
-
-        for batch in videoIds.chunked(into: maxConcurrentChannelFetches) {
-            await withTaskGroup(of: (String, Bool?).self) { group in
-                for id in batch {
-                    group.addTask {
-                        let url = ThumbnailAnalyzer.thumbnailURL(forVideoId: id)
-                        guard let (data, response) = try? await session.data(from: url),
-                              (response as? HTTPURLResponse)?.statusCode == 200
-                        else { return (id, nil) }
-                        // The video's own thumbnail is often this same
-                        // hqdefault URL (the API's "high" quality); seeding
-                        // it here means the feed row shows it without a
-                        // second download. See `ImageCache`.
-                        ImageCache.shared.seed(data: data, for: url)
-                        return (id, ThumbnailAnalyzer.looksPillarboxed(imageData: data))
-                    }
-                }
-                for await (id, verdict) in group { results[id] = verdict }
-            }
-        }
-        return results
     }
 }
 

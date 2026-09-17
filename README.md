@@ -293,8 +293,9 @@ The one difference is where its episodes come from. A channel's episodes
 arrive with the routine refresh; a playlist's membership is a list only
 YouTube knows, so it is asked for when the show is created and again when its
 page is opened — one quota unit per 50 items, never during the routine
-refresh. New videos a playlist turns up are stored through the same door the
-feed uses, Shorts verdict first, so they show up in the feed too. Signed out,
+refresh. New videos a playlist turns up are stored through `VideoIntake`, the
+same door the feed uses, Shorts verdict first, so they show up in the feed
+too. Signed out,
 nothing is asked and the page lists what the store already holds.
 
 ### Guessing which channels are shows
@@ -740,9 +741,19 @@ Run with Cmd-U. Coverage is concentrated where the risk is:
   on its boundary: a twice-weekly news show, a numbered podcast, a daily news
   show buried in its own segments, a maker channel, a vlog, and a clips
   channel.
-- `FeedRefresherTests` — a refresh against stubbed API and thumbnail
-  responses. Pins that a new video never reaches the store before its Shorts
-  verdict, since the feed observes the store live.
+- `VideoIntakeTests` — the one door videos enter the store by: the DTO
+  mapping, the Shorts verdict, and the insert. Pins that a new video never
+  reaches the store before its verdict, since the feed observes the store
+  live, and that the thumbnail is only asked about where it could change the
+  answer. No network: the thumbnail verdict is an injected dependency, canned
+  here and `URLSession`-backed in the app.
+- `FeedRefresherTests` — a refresh against stubbed API responses: the
+  subscription reconciliation, the channel fan-out, and the phases the
+  progress ring shows.
+- `PlaylistMembershipTests` — a playlist-backed show's membership refresh:
+  what it records, what counts as a new video, and the quota arithmetic —
+  a unit per 50 playlist items, a batch per 50 videos hydrated, and nothing
+  at all for a membership asked for a moment ago.
 - `YouTubeAPITests` — pagination, batching, and error classification, against
   stubbed responses. Pagination gets attention because a loop there would burn
   the daily quota.

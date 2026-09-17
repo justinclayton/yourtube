@@ -18,6 +18,16 @@ import SwiftData
 /// channel to trip the daily cap, a few Shorts, two earmarked videos so
 /// Up Next shows its two-column grid, and one left partway through so
 /// Continue Watching has a card.
+///
+/// **Nothing here is hand-stamped.** The fixtures describe videos the way the
+/// API describes them and hand them to `VideoIntake`, the same door a refresh
+/// uses, with `CannedThumbnailVerdict` standing in for the thumbnail
+/// download; `isLikelyShort` and `classifierVersion` are then whatever the
+/// real heuristic decided. `Show` rows are made by `ShowManager`, and watched
+/// / Up Next / partway-through are set by `WatchState`. A fixture run
+/// therefore exercises the real paths rather than a parallel one that can
+/// drift away from them, and `DebugFixturesTests` asserts on what came
+/// through the door.
 enum DebugFixtures {
     static let launchArgument = "-seedFixtures"
 
@@ -79,9 +89,96 @@ enum DebugFixtures {
             for: Video.self, Subscription.self, VideoCollection.self, ChannelRule.self, Show.self,
             configurations: ModelConfiguration(isStoredInMemoryOnly: true)
         )
-        try seed(container.mainContext)
+
+        // Built once and used twice: the videos go in through intake, and
+        // what the store should then say about them — watched, earmarked,
+        // partway through — is read off the same list. Published dates are
+        // relative to now, so generating them twice would not give the same
+        // answer.
+        let videos = allVideos()
+        let intake = VideoIntake(
+            writer: StoreWriter(modelContainer: container),
+            // A fixture marked as a Short has a pillarboxed thumbnail, which
+            // is what YouTube actually serves for one. The heuristic only
+            // asks about a video inside the duration gate that no cheaper
+            // signal has already caught, so this produces exactly the
+            // declared verdicts — reached, not stamped.
+            thumbnails: CannedThumbnailVerdict(
+                pillarboxedIds: Set(videos.filter(\.isShort).map(\.id))
+            )
+        )
+        try runBlocking { try await intake.admit(videos.map(\.item)) }
+
+        try seed(container.mainContext, videos: videos)
         return container
     }
+
+    /// Runs the async half of seeding to completion from the synchronous
+    /// launch path. `YourTubeApp.init` can't await, and the fixture store has
+    /// to be fully populated before the first view reads it — a feed that
+    /// fills in a moment after launch is not the thing being exercised.
+    ///
+    /// Safe to block the main thread on: everything awaited inside runs on
+    /// `StoreWriter`'s own executor or the cooperative pool and never hops
+    /// back to the main actor, so the wait can't be waiting on the thread it
+    /// is holding. Debug fixture seeding only; nothing in the real app does
+    /// this.
+    private static func runBlocking(
+        _ body: @escaping @Sendable () async throws -> Void
+    ) throws {
+        let finished = DispatchSemaphore(value: 0)
+        nonisolated(unsafe) var thrown: Error?
+        Task.detached {
+            do { try await body() } catch { thrown = error }
+            finished.signal()
+        }
+        finished.wait()
+        if let thrown { throw thrown }
+    }
+
+    // MARK: - One fixture video
+
+    /// A video the fixtures want in the store, described the way the API
+    /// describes one so that intake can judge it like any other.
+    ///
+    /// `isShort` and `isWatched` are what the fixture *intends*, not fields
+    /// written to the row: the first is answered by the Shorts heuristic via
+    /// the canned thumbnail verdict, the second by `WatchState` once the row
+    /// exists.
+    struct FixtureVideo {
+        var id: String
+        var channelId: String
+        var channelTitle: String
+        var title: String
+        var summary: String = ""
+        var publishedAt: Date
+        var seconds: Int
+        var youtubeCategoryId: String?
+        var isShort = false
+        var isWatched = false
+
+        var item: YT.VideoItem {
+            YT.VideoItem(
+                id: id,
+                snippet: YT.VideoItem.Snippet(
+                    title: title,
+                    description: summary,
+                    channelId: channelId,
+                    channelTitle: channelTitle,
+                    publishedAt: publishedAt,
+                    thumbnails: nil,
+                    categoryId: youtubeCategoryId
+                ),
+                contentDetails: YT.VideoItem.ContentDetails(duration: "PT\(seconds)S")
+            )
+        }
+    }
+
+    private static func allVideos() -> [FixtureVideo] {
+        feedVideos() + showChannelVideos() + playlistShowVideos()
+    }
+
+    // MARK: - Awkward-data channels
 
     private struct Channel {
         var id: String
@@ -171,7 +268,28 @@ enum DebugFixtures {
     /// show. Neither earmarked nor watched, so it's the section's own.
     private static let inProgress = ["UC-lmnc-0": 620.0]
 
-    private static func seed(_ context: ModelContext) throws {
+    private static func feedVideos() -> [FixtureVideo] {
+        channels.flatMap { channel in
+            channel.videos.enumerated().map { index, video in
+                FixtureVideo(
+                    id: "\(channel.id)-\(index)",
+                    channelId: channel.id,
+                    channelTitle: channel.title,
+                    title: video.title,
+                    publishedAt: Date(timeIntervalSinceNow: -video.hoursAgo * 3600),
+                    seconds: video.seconds,
+                    youtubeCategoryId: channel.youtubeCategoryId,
+                    isShort: video.short,
+                    isWatched: index == channel.videos.count - 1
+                )
+            }
+        }
+    }
+
+    // MARK: - Seeding the rest of the store
+
+    @MainActor
+    private static func seed(_ context: ModelContext, videos: [FixtureVideo]) throws {
         let collections = Dictionary(
             uniqueKeysWithValues: CategoryManager.defaultCategoryNames.enumerated().map { index, name in
                 (name, VideoCollection(name: name, isUserCreated: false, sortOrder: index))
@@ -213,31 +331,43 @@ enum DebugFixtures {
                 }
                 context.insert(rule)
             }
-            for (index, video) in channel.videos.enumerated() {
-                let videoId = "\(channel.id)-\(index)"
-                let position = upNext.firstIndex(of: videoId)
-                context.insert(Video(
-                    videoId: videoId,
-                    channelId: channel.id,
-                    channelTitle: channel.title,
-                    title: video.title,
-                    videoDescription: "",
-                    publishedAt: Date(timeIntervalSinceNow: -video.hoursAgo * 3600),
-                    durationSeconds: video.seconds,
-                    youtubeCategoryId: channel.youtubeCategoryId,
-                    isLikelyShort: video.short,
-                    isWatched: index == channel.videos.count - 1,
-                    savedForLaterAt: position.map { Date(timeIntervalSinceNow: -Double($0 + 1) * 86_400) },
-                    upNextOrder: position.map { $0 + 1 },
-                    resumePositionSeconds: inProgress[videoId],
-                    lastPlayedAt: inProgress[videoId].map { _ in Date(timeIntervalSinceNow: -7200) },
-                    classifierVersion: ShortsHeuristic.version
-                ))
-            }
         }
-        try seedShows(context, collections: collections, priority: priority)
-        try seedPlaylistShows(context, collections: collections)
         try context.save()
+
+        let watchState = WatchState(modelContext: context)
+        let shows = ShowManager(modelContext: context, watchState: watchState)
+        try seedShows(context, collections: collections, priority: priority, shows: shows)
+        try seedPlaylistShows(context, collections: collections, shows: shows)
+        try context.save()
+
+        try applyWatchState(context, videos: videos, watchState: watchState)
+    }
+
+    /// Watched, earmarked and partway-through, applied to rows that are
+    /// already in the store — through `WatchState`, which is their only
+    /// writer everywhere else in the app (see CONTEXT.md). Watched first:
+    /// marking a video watched clears any Up Next place and any position, and
+    /// no fixture video is meant to be both.
+    @MainActor
+    private static func applyWatchState(
+        _ context: ModelContext,
+        videos: [FixtureVideo],
+        watchState: WatchState
+    ) throws {
+        let stored = Dictionary(
+            uniqueKeysWithValues: try context.fetch(FetchDescriptor<Video>())
+                .map { ($0.videoId, $0) }
+        )
+        try watchState.markWatched(videos.filter(\.isWatched).compactMap { stored[$0.id] })
+        // In this order, so Up Next's own order is the one declared above.
+        for id in upNext {
+            guard let video = stored[id] else { continue }
+            try watchState.earmark(video)
+        }
+        for (id, position) in inProgress {
+            guard let video = stored[id] else { continue }
+            watchState.record(video, position: position)
+        }
     }
 }
 
@@ -389,16 +519,63 @@ extension DebugFixtures {
         ),
     ]
 
-    /// Seeds the show-shaped channels, their videos, and the `Show` rows that
-    /// put them in Your Shows. Three are flagged as the user would flag them
-    /// by hand, so the grid is populated without anything automatic having to
-    /// run; the other two are left for the detector to get right and wrong.
-    static func seedShows(
+    /// The show-shaped channels' episodes and segments, newest first, with
+    /// the dates a real cadence would have put them on.
+    private static func showChannelVideos() -> [FixtureVideo] {
+        let calendar = Calendar.current
+        var result: [FixtureVideo] = []
+        for channel in showChannels {
+            let dates = recentDates(
+                onWeekdays: channel.weekdays,
+                count: channel.episodes.count,
+                hour: channel.hour,
+                calendar: calendar
+            )
+            for (index, episode) in channel.episodes.enumerated() {
+                let date = dates[index]
+                let watched = index >= channel.unwatched
+                result.append(FixtureVideo(
+                    id: "\(channel.id)-e\(index)",
+                    channelId: channel.id,
+                    channelTitle: channel.title,
+                    title: dateStamped(episode.title, date: date, calendar: calendar),
+                    summary: "Fixture episode of \(channel.title).",
+                    publishedAt: date,
+                    seconds: episode.seconds,
+                    youtubeCategoryId: channel.youtubeCategoryId,
+                    isWatched: watched
+                ))
+                // Segments land through the evening after the full episode.
+                for (offset, segment) in channel.segments.enumerated() {
+                    result.append(FixtureVideo(
+                        id: "\(channel.id)-e\(index)s\(offset)",
+                        channelId: channel.id,
+                        channelTitle: channel.title,
+                        title: segment.title,
+                        summary: "Fixture episode of \(channel.title).",
+                        publishedAt: date.addingTimeInterval(Double(offset + 1) * 2_700),
+                        seconds: segment.seconds,
+                        youtubeCategoryId: channel.youtubeCategoryId,
+                        isWatched: watched
+                    ))
+                }
+            }
+        }
+        return result
+    }
+
+    /// Seeds the show-shaped channels and the `Show` rows that put them in
+    /// Your Shows. Three are flagged the way the user would flag them by hand
+    /// — through `ShowManager`, the same call the Channels list makes — so the
+    /// grid is populated without anything automatic having to run; the other
+    /// two are left for the detector to get right and wrong.
+    @MainActor
+    private static func seedShows(
         _ context: ModelContext,
         collections: [String: VideoCollection],
-        priority: VideoCollection
+        priority: VideoCollection,
+        shows: ShowManager
     ) throws {
-        let calendar = Calendar.current
         for channel in showChannels {
             context.insert(Subscription(
                 channelId: channel.id,
@@ -418,78 +595,19 @@ extension DebugFixtures {
             }
             switch channel.flag {
             case .user:
-                context.insert(Show(
-                    source: .channel(id: channel.id),
-                    title: channel.title,
-                    flagOrigin: .user,
-                    override: .forceShow,
-                    playOrder: channel.playOrder
-                ))
+                let show = try shows.markAsShow(
+                    channelId: channel.id, channelTitle: channel.title
+                )
+                // Play order is a setting on the show, set the same way the
+                // show page's picker sets it.
+                show.playOrder = channel.playOrder
             case .notAShow:
-                context.insert(Show(
-                    source: .channel(id: channel.id),
-                    title: channel.title,
-                    flagOrigin: .user,
-                    override: .forceNotShow,
-                    playOrder: channel.playOrder
-                ))
+                try shows.markAsNotAShow(channelId: channel.id, channelTitle: channel.title)
             case .undecided:
                 break
             }
-
-            let dates = recentDates(
-                onWeekdays: channel.weekdays,
-                count: channel.episodes.count,
-                hour: channel.hour,
-                calendar: calendar
-            )
-            for (index, episode) in channel.episodes.enumerated() {
-                let date = dates[index]
-                let watched = index >= channel.unwatched
-                context.insert(fixtureVideo(
-                    id: "\(channel.id)-e\(index)",
-                    channel: channel,
-                    title: dateStamped(episode.title, date: date, calendar: calendar),
-                    publishedAt: date,
-                    seconds: episode.seconds,
-                    isWatched: watched
-                ))
-                // Segments land through the evening after the full episode.
-                for (offset, segment) in channel.segments.enumerated() {
-                    context.insert(fixtureVideo(
-                        id: "\(channel.id)-e\(index)s\(offset)",
-                        channel: channel,
-                        title: segment.title,
-                        publishedAt: date.addingTimeInterval(Double(offset + 1) * 2_700),
-                        seconds: segment.seconds,
-                        isWatched: watched
-                    ))
-                }
-            }
         }
-    }
-
-    private static func fixtureVideo(
-        id: String,
-        channel: ShowChannel,
-        title: String,
-        publishedAt: Date,
-        seconds: Int,
-        isWatched: Bool
-    ) -> Video {
-        Video(
-            videoId: id,
-            channelId: channel.id,
-            channelTitle: channel.title,
-            title: title,
-            videoDescription: "Fixture episode of \(channel.title).",
-            publishedAt: publishedAt,
-            durationSeconds: seconds,
-            youtubeCategoryId: channel.youtubeCategoryId,
-            isLikelyShort: false,
-            isWatched: isWatched,
-            classifierVersion: ShortsHeuristic.version
-        )
+        try context.save()
     }
 
     /// A daily show's episodes are named for their day, so the fixture titles
@@ -546,9 +664,10 @@ extension DebugFixtures {
 ///   Quizmaster Extra's uploads are outtakes and trailers, and only the three
 ///   series playlists are the programme.
 ///
-/// Membership is seeded the way a refresh would leave it — the playlist's
-/// video IDs recorded on the `Show` — so a fixture run exercises the stored
-/// path without a network call.
+/// Membership is recorded the way a refresh records it — `addPlaylistShow`
+/// then `setPlaylistItems`, the same two calls `FeedRefresher
+/// .refreshMembership` makes — so a fixture run exercises the stored path
+/// without a network call.
 extension DebugFixtures {
     private struct PlaylistSeason {
         var playlistId: String
@@ -561,6 +680,13 @@ extension DebugFixtures {
         var weeksAgo: Int
         /// How many of the newest episodes are left unwatched.
         var unwatched: Int
+
+        /// The IDs given to this season's episodes, newest first — the same
+        /// derivation `playlistShowVideos()` uses, so membership and rows
+        /// can't disagree.
+        var videoIds: [String] {
+            episodes.indices.map { "\(playlistId)-\($0)" }
+        }
     }
 
     private struct PlaylistShow {
@@ -653,14 +779,45 @@ extension DebugFixtures {
         ),
     ]
 
-    /// Seeds the playlist-backed shows, their episodes, and the membership a
-    /// refresh would have recorded. No `ChannelRule` is created for a show
-    /// whose channel already has one: inheriting it is the behaviour on show.
-    static func seedPlaylistShows(
-        _ context: ModelContext,
-        collections: [String: VideoCollection]
-    ) throws {
+    /// Every playlist-backed show's episodes, season by season.
+    private static func playlistShowVideos() -> [FixtureVideo] {
         let calendar = Calendar.current
+        var result: [FixtureVideo] = []
+        for entry in playlistShows {
+            for season in entry.seasons {
+                let dates = recentDates(
+                    onWeekdays: season.weekdays,
+                    count: season.episodes.count,
+                    hour: 20,
+                    calendar: calendar,
+                    from: Date(timeIntervalSinceNow: -Double(season.weeksAgo) * 7 * 86_400)
+                )
+                for (index, episode) in season.episodes.enumerated() {
+                    result.append(FixtureVideo(
+                        id: "\(season.playlistId)-\(index)",
+                        channelId: entry.channelId,
+                        channelTitle: entry.channelTitle,
+                        title: episode.title,
+                        summary: "Fixture episode of \(entry.title).",
+                        publishedAt: dates[index],
+                        seconds: episode.seconds,
+                        isWatched: index >= season.unwatched
+                    ))
+                }
+            }
+        }
+        return result
+    }
+
+    /// Seeds the playlist-backed shows and the membership a refresh would
+    /// have recorded. No `ChannelRule` is created for a show whose channel
+    /// already has one: inheriting it is the behaviour on show.
+    @MainActor
+    private static func seedPlaylistShows(
+        _ context: ModelContext,
+        collections: [String: VideoCollection],
+        shows: ShowManager
+    ) throws {
         for entry in playlistShows {
             if let categories = entry.channelCategories {
                 context.insert(Subscription(
@@ -679,56 +836,24 @@ extension DebugFixtures {
                 }
             }
             if entry.channelIsNotAShow {
-                context.insert(Show(
-                    source: .channel(id: entry.channelId),
-                    title: entry.channelTitle,
-                    flagOrigin: .user,
-                    override: .forceNotShow
-                ))
+                try shows.markAsNotAShow(
+                    channelId: entry.channelId, channelTitle: entry.channelTitle
+                )
             }
 
-            let show = Show(
-                source: .playlist(id: entry.seasons[0].playlistId, channelId: entry.channelId),
-                title: entry.title,
-                flagOrigin: .user,
-                override: .forceShow
+            let show = try shows.addPlaylistShow(
+                entry.seasons.map { PlaylistChoice(playlistId: $0.playlistId, title: $0.name) },
+                channelId: entry.channelId,
+                title: entry.title
             )
-            show.seasonPlaylistIds = entry.seasons.map(\.playlistId)
-            show.seasonNames = entry.seasons.count > 1 ? entry.seasons.map(\.name) : []
-            show.membershipRefreshedAt = .now
-
             for season in entry.seasons {
-                let dates = recentDates(
-                    onWeekdays: season.weekdays,
-                    count: season.episodes.count,
-                    hour: 20,
-                    calendar: calendar,
-                    from: Date(timeIntervalSinceNow: -Double(season.weeksAgo) * 7 * 86_400)
-                )
-                var videoIds: [String] = []
-                for (index, episode) in season.episodes.enumerated() {
-                    let videoId = "\(season.playlistId)-\(index)"
-                    videoIds.append(videoId)
-                    context.insert(Video(
-                        videoId: videoId,
-                        channelId: entry.channelId,
-                        channelTitle: entry.channelTitle,
-                        title: episode.title,
-                        videoDescription: "Fixture episode of \(entry.title).",
-                        publishedAt: dates[index],
-                        durationSeconds: episode.seconds,
-                        isLikelyShort: false,
-                        isWatched: index >= season.unwatched,
-                        classifierVersion: ShortsHeuristic.version
-                    ))
-                }
                 // Playlist order, which for a series is the order it aired:
                 // oldest episode first, however the page lists them.
-                show.playlistItemIds[season.playlistId] = videoIds.reversed()
+                try shows.setPlaylistItems(
+                    season.videoIds.reversed(), playlistId: season.playlistId, of: show
+                )
             }
-            context.insert(show)
         }
     }
 }
 #endif
-

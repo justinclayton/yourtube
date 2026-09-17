@@ -77,3 +77,38 @@ Settled during issue #60 (2026-09-16):
 - **Not this type's job:** the catalogue. Which channels are shows, the
   tombstones, the detector's verdicts and the playlist membership writes stay
   on `ShowManager`, which owns the store.
+
+## Intake
+
+The door videos enter the store by. Everything between "the API handed back
+some JSON" and "there is a `Video` row" happens in `VideoIntake`
+(`YourTube/Feed/VideoIntake.swift`) and nowhere else: the DTO is mapped to a
+`VideoDraft`, the Shorts verdict is reached, and only then is the row
+inserted. Three callers use it — the feed refresh, a playlist-backed show's
+membership refresh, and `DebugFixtures` — and no other code in the app
+constructs a `Video`.
+
+Settled while doing issue #62 (2026-09-16):
+
+- **Classify before inserting.** The feed's `@Query` watches the store, so a
+  video inserted before its verdict would appear and then vanish. The insert
+  is what's deferred, not the save; a Short is hidden from its first
+  appearance.
+- **The thumbnail verdict is accepted, not owned.** `ThumbnailVerdict` has two
+  adapters: `DownloadedThumbnailVerdict` in the app and
+  `CannedThumbnailVerdict` everywhere else. It is the only part of the
+  decision that leaves the process, so it is the only seam intake needs — and
+  with it, "held until the verdict is known" is a test with no `URLProtocol`
+  in it.
+- **Fixtures go through the door.** `DebugFixtures` describes videos the way
+  the API describes them and hands them to intake with a canned verdict, so
+  `isLikelyShort` and `classifierVersion` are reached rather than stamped.
+  There is no second way in that can drift.
+- **`VideoSignals` has one home.** Both derivations — from a hydrated DTO and
+  from a stored row being re-judged — live on `VideoSignals` itself, so the
+  two halves of one decision can't read different fields.
+
+Not this module's job: finding out which videos there are. The subscription
+list, the channel fan-out, the refresh's phases and the quota they cost stay
+on `FeedRefresher`; `ShowManager` still owns the show catalogue, and
+`WatchState` still owns watched / Up Next / partway-through.

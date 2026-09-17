@@ -1,34 +1,5 @@
 import Foundation
 
-/// The inputs the Shorts heuristic needs. Kept as a plain value type so the
-/// heuristic is testable without SwiftData or the network.
-struct VideoSignals: Equatable {
-    var durationSeconds: Int
-    var title: String
-    var description: String
-    var thumbnailWidth: Int?
-    var thumbnailHeight: Int?
-    /// Result of `ThumbnailAnalyzer` on the thumbnail image, if it was run.
-    /// Nil means "not analysed", which is treated as no evidence either way.
-    var hasPillarboxedThumbnail: Bool?
-
-    init(
-        durationSeconds: Int,
-        title: String = "",
-        description: String = "",
-        thumbnailWidth: Int? = nil,
-        thumbnailHeight: Int? = nil,
-        hasPillarboxedThumbnail: Bool? = nil
-    ) {
-        self.durationSeconds = durationSeconds
-        self.title = title
-        self.description = description
-        self.thumbnailWidth = thumbnailWidth
-        self.thumbnailHeight = thumbnailHeight
-        self.hasPillarboxedThumbnail = hasPillarboxedThumbnail
-    }
-}
-
 /// Decides whether a video is a Short.
 ///
 /// There is still no `isShort` field on the Data API in 2026, so this is
