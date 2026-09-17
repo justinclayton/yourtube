@@ -4,7 +4,7 @@ import SwiftData
 /// The library view of show-like content: Continue Watching, Up Next, and
 /// Your Shows, top to bottom.
 ///
-/// Up Next is the user's earmark list (see `UpNextQueue`). It's never filled
+/// Up Next is the user's earmark list (see `WatchState`). It's never filled
 /// in by the app and the order is the user's own, so the section offers no
 /// "play all" and no sorting: just the cards, and an Edit sheet for moving
 /// or removing them by hand.
@@ -113,10 +113,7 @@ private struct DormancyReviewBanner: View {
 /// beneath it.
 private struct UpNextSection: View {
     @Environment(AppServices.self) private var services
-    @Query(
-        filter: #Predicate<Video> { $0.savedForLaterAt != nil },
-        sort: [SortDescriptor(\Video.upNextOrder), SortDescriptor(\Video.savedForLaterAt)]
-    )
+    @Query(filter: WatchState.upNextPredicate, sort: WatchState.upNextSortDescriptors)
     private var videos: [Video]
     @Query private var subscriptions: [Subscription]
     @Query private var shows: [Show]
@@ -176,7 +173,7 @@ private struct UpNextSection: View {
     }
 
     private func remove(_ video: Video) {
-        try? services.upNext.remove(video)
+        try? services.watchState.remove(video)
     }
 }
 
@@ -184,10 +181,7 @@ private struct UpNextSection: View {
 private struct UpNextEditSheet: View {
     @Environment(AppServices.self) private var services
     @Environment(\.dismiss) private var dismiss
-    @Query(
-        filter: #Predicate<Video> { $0.savedForLaterAt != nil },
-        sort: [SortDescriptor(\Video.upNextOrder), SortDescriptor(\Video.savedForLaterAt)]
-    )
+    @Query(filter: WatchState.upNextPredicate, sort: WatchState.upNextSortDescriptors)
     private var upNext: [Video]
 
     var body: some View {
@@ -197,11 +191,11 @@ private struct UpNextEditSheet: View {
                     VideoRow(video: video)
                 }
                 .onMove { source, destination in
-                    try? services.upNext.move(fromOffsets: source, toOffset: destination)
+                    try? services.watchState.move(upNext, fromOffsets: source, toOffset: destination)
                 }
                 .onDelete { offsets in
                     for video in offsets.map({ upNext[$0] }) {
-                        try? services.upNext.remove(video)
+                        try? services.watchState.remove(video)
                     }
                 }
             }

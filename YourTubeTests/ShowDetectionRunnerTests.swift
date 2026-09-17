@@ -20,7 +20,7 @@ final class ShowDetectionRunnerTests: XCTestCase {
             for: Video.self, Subscription.self, VideoCollection.self, ChannelRule.self, Show.self,
             configurations: ModelConfiguration(isStoredInMemoryOnly: true)
         )
-        shows = ShowManager(modelContext: context)
+        shows = ShowManager(modelContext: context, watchState: WatchState(modelContext: context))
         defaults = UserDefaults(suiteName: "ShowDetectionRunnerTests-\(UUID().uuidString)")
         runner = ShowDetectionRunner(modelContext: context, defaults: defaults)
     }

@@ -63,7 +63,7 @@ final class DebugFixturesTests: XCTestCase {
     func testFixturesSeedShowShapedChannels() throws {
         let container = try DebugFixtures.makeContainer()
         let context = container.mainContext
-        let manager = ShowManager(modelContext: context)
+        let manager = ShowManager(modelContext: context, watchState: WatchState(modelContext: context))
         let shows = try manager.shows()
         XCTAssertGreaterThanOrEqual(shows.count, 3, "the grid has to have something in it")
         XCTAssertTrue(shows.allSatisfy { $0.flagOrigin == .user })

@@ -74,9 +74,8 @@ final class AppServices {
     let api: YouTubeAPI
     let feed: FeedRefresher
     let categories: CategoryManager
-    let upNext: UpNextQueue
+    let watchState: WatchState
     let titles: TitleCleaner
-    let playback: PlaybackProgress
     let shows: ShowManager
     let showDetector: ShowDetectionRunner
 
@@ -101,9 +100,9 @@ final class AppServices {
             defaults: defaults,
             writer: writer
         )
-        let upNext = UpNextQueue(modelContext: modelContext)
-        self.upNext = upNext
-        self.shows = ShowManager(modelContext: modelContext)
+        let watchState = WatchState(modelContext: modelContext)
+        self.watchState = watchState
+        self.shows = ShowManager(modelContext: modelContext, watchState: watchState)
         self.titles = TitleCleaner(
             modelContext: modelContext,
             rewriter: TitleRewriterFactory.makeSystemRewriter(),
@@ -111,7 +110,6 @@ final class AppServices {
             writer: writer,
             isRefreshingProvider: { [weak feed] in feed?.isRefreshing ?? false }
         )
-        self.playback = PlaybackProgress(modelContext: modelContext, upNext: upNext)
         self.showDetector = ShowDetectionRunner(
             modelContext: modelContext, defaults: defaults, writer: writer
         )

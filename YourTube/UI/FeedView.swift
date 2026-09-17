@@ -352,7 +352,7 @@ private struct FeedVideoRow: View {
         }
         .swipeActions(edge: .leading) {
             Button {
-                try? services.upNext.earmark(video)
+                try? services.watchState.earmark(video)
             } label: {
                 Label("Earmark", systemImage: "bookmark.fill")
             }
@@ -360,7 +360,7 @@ private struct FeedVideoRow: View {
         }
         .swipeActions(edge: .trailing) {
             Button {
-                try? services.upNext.markWatched(video)
+                try? services.watchState.markWatched(video)
             } label: {
                 Label("Watched", systemImage: "checkmark.circle.fill")
             }

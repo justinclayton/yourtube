@@ -300,7 +300,7 @@ final class TitleCleanerTests: XCTestCase {
         playlistId: String,
         videoIds: [String]
     ) throws -> Show {
-        let manager = ShowManager(modelContext: context)
+        let manager = ShowManager(modelContext: context, watchState: WatchState(modelContext: context))
         let show = try manager.addPlaylistShow(
             [PlaylistChoice(playlistId: playlistId, title: title)],
             channelId: channelId,

@@ -4,8 +4,8 @@ import SwiftData
 /// Where playback stopped, and when a video counts as watched.
 ///
 /// The player reports its current time here every few seconds and again when
-/// the view is left; everything else about resume follows from the two fields
-/// this writes on `Video` (`resumePositionSeconds` and `lastPlayedAt`).
+/// the view is left; everything else about resume follows from
+/// `resumePositionSeconds` and `lastPlayedAt`.
 ///
 /// Two rules give those fields their meaning:
 ///
@@ -16,13 +16,9 @@ import SwiftData
 /// - Past `watchedFraction` of the duration is *watched*. This replaces the
 ///   old "opening the player marks watched" rule, which conflicted with
 ///   resuming: peeking at an earmarked video used to drop it out of Up Next.
-///   Watched still leaves Up Next (`UpNextQueue.markWatched`), and it leaves
-///   Continue Watching because that section only lists unwatched videos.
-///
-/// The manual "Mark watched" button is untouched: this is the automatic path,
-/// not the only one.
-@MainActor
-final class PlaybackProgress {
+///   Watched still leaves Up Next and Continue Watching, through the same
+///   `markWatched` the manual button uses.
+extension WatchState {
     /// Below this many seconds in, a video counts as not started.
     static let startedThreshold: Double = 30
 
@@ -40,7 +36,7 @@ final class PlaybackProgress {
     /// Whether a newly polled position is worth writing to the store.
     ///
     /// Pure and `nonisolated` so the throttle can be proven correct — see
-    /// `PlaybackProgressThrottleTests` — without a player, a view, or a
+    /// `WatchStateThrottleTests` — without a player, a view, or a
     /// `ModelContext`.
     ///
     /// - Parameters:
@@ -53,14 +49,6 @@ final class PlaybackProgress {
         guard !forced else { return true }
         guard let lastWritten else { return true }
         return abs(position - lastWritten) >= minimumWriteDelta
-    }
-
-    private let modelContext: ModelContext
-    private let upNext: UpNextQueue
-
-    init(modelContext: ModelContext, upNext: UpNextQueue) {
-        self.modelContext = modelContext
-        self.upNext = upNext
     }
 
     /// Where the player should start, or nil to start from the beginning.
@@ -79,12 +67,13 @@ final class PlaybackProgress {
         if duration > 0, position >= duration * Self.watchedFraction {
             // Finished in all but name. Clear the position so a replay
             // starts at the top rather than at the 90% mark.
-            video.resumePositionSeconds = nil
             video.lastPlayedAt = .now
-            if !video.isWatched {
-                try? upNext.markWatched(video)
+            if video.isWatched {
+                video.resumePositionSeconds = nil
+                try? modelContext.save()
+            } else {
+                try? markWatched(video)
             }
-            try? modelContext.save()
             return
         }
 
@@ -96,10 +85,7 @@ final class PlaybackProgress {
     /// Videos to offer in Continue Watching: started, not finished, most
     /// recently played first.
     func inProgress() throws -> [Video] {
-        var descriptor = FetchDescriptor<Video>(
-            predicate: #Predicate { $0.resumePositionSeconds != nil && !$0.isWatched },
-            sortBy: [SortDescriptor(\.lastPlayedAt, order: .reverse)]
-        )
+        var descriptor = FetchDescriptor<Video>(predicate: Self.inProgressPredicate, sortBy: Self.inProgressSortDescriptors)
         descriptor.fetchLimit = 50
         return try modelContext.fetch(descriptor)
     }

@@ -20,7 +20,7 @@ final class StoreCountsTests: XCTestCase {
             for: Video.self, Subscription.self, VideoCollection.self, ChannelRule.self, Show.self,
             configurations: config
         )
-        manager = ShowManager(modelContext: context)
+        manager = ShowManager(modelContext: context, watchState: WatchState(modelContext: context))
     }
 
     @discardableResult

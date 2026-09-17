@@ -387,7 +387,7 @@ struct ShowPageView: View {
         }
         .swipeActions(edge: .leading) {
             Button {
-                try? services.upNext.toggle(episode)
+                try? services.watchState.toggle(episode)
             } label: {
                 Label(
                     episode.isInUpNext ? "Un-earmark" : "Earmark",
@@ -399,9 +399,9 @@ struct ShowPageView: View {
         .swipeActions(edge: .trailing) {
             Button {
                 if episode.isWatched {
-                    episode.isWatched = false
+                    try? services.watchState.unwatch(episode)
                 } else {
-                    try? services.upNext.markWatched(episode)
+                    try? services.watchState.markWatched(episode)
                 }
             } label: {
                 Label(

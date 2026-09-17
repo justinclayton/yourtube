@@ -30,7 +30,7 @@ extension ShowManager {
     /// `nextUp(of:)` over episodes the caller already has, in play order.
     nonisolated static func nextUp(in episodesInPlayOrder: [Video]) -> Video? {
         let pending = episodesInPlayOrder.filter { !$0.isWatched }
-        let resumable = pending.filter { PlaybackProgress.resumePosition(for: $0) != nil }
+        let resumable = pending.filter { WatchState.resumePosition(for: $0) != nil }
         if !resumable.isEmpty {
             // More than one half-watched episode is rare; when it happens the
             // one you touched last is the one you meant, the same rule that
@@ -43,7 +43,7 @@ extension ShowManager {
     /// Whether "Play next" should read "Resume": this episode has a stored
     /// position to pick up from.
     nonisolated static func isResumable(_ video: Video) -> Bool {
-        PlaybackProgress.resumePosition(for: video) != nil
+        WatchState.resumePosition(for: video) != nil
     }
 
     // MARK: - Clearing a backlog
@@ -54,20 +54,12 @@ extension ShowManager {
     /// window are left alone — clearing a backlog shouldn't reach behind the
     /// page you're looking at.
     ///
-    /// The per-video effect is `UpNextQueue.markWatched`'s: a finished episode
+    /// The per-video effect is `WatchState.markWatched`'s: a finished episode
     /// has no business waiting in a list of things to watch. Returns how many
     /// episodes changed.
     @discardableResult
     func markAllWatched(of show: Show) throws -> Int {
-        let pending = try episodes(of: show).filter { !$0.isWatched }
-        for video in pending {
-            video.isWatched = true
-            video.resumePositionSeconds = nil
-            video.savedForLaterAt = nil
-            video.upNextOrder = nil
-        }
-        if !pending.isEmpty { try modelContext.save() }
-        return pending.count
+        try watchState.markWatched(episodes(of: show).filter { !$0.isWatched })
     }
 
     // MARK: - Cadence and typical duration

@@ -2,17 +2,17 @@ import XCTest
 @testable import YourTube
 
 /// Proves the store-write throttle described in #71: the player polls every
-/// two seconds, but `PlaybackProgress.shouldWrite` should only let a fraction
+/// two seconds, but `WatchState.shouldWrite` should only let a fraction
 /// of those polls actually reach `record` (a store change that reruns every
 /// live query in the app for as long as playback lasts).
-final class PlaybackProgressThrottleTests: XCTestCase {
+final class WatchStateThrottleTests: XCTestCase {
     /// Simulates `PlayerView.reportProgress`'s bookkeeping: feed it every
     /// polled position in order and count how many would have been written.
     private func simulateWrites(positions: [Double]) -> Int {
         var lastWritten: Double?
         var writes = 0
         for position in positions {
-            if PlaybackProgress.shouldWrite(lastWritten: lastWritten, position: position) {
+            if WatchState.shouldWrite(lastWritten: lastWritten, position: position) {
                 lastWritten = position
                 writes += 1
             }
@@ -28,25 +28,25 @@ final class PlaybackProgressThrottleTests: XCTestCase {
     }
 
     func testFirstReportAlwaysWrites() {
-        XCTAssertTrue(PlaybackProgress.shouldWrite(lastWritten: nil, position: 0.5))
+        XCTAssertTrue(WatchState.shouldWrite(lastWritten: nil, position: 0.5))
     }
 
     func testSmallMovementIsSkipped() {
-        XCTAssertFalse(PlaybackProgress.shouldWrite(lastWritten: 100, position: 114))
+        XCTAssertFalse(WatchState.shouldWrite(lastWritten: 100, position: 114))
     }
 
     func testMovementAtTheThresholdWrites() {
-        XCTAssertTrue(PlaybackProgress.shouldWrite(lastWritten: 100, position: 115))
+        XCTAssertTrue(WatchState.shouldWrite(lastWritten: 100, position: 115))
     }
 
     func testMovementBackwardsPastTheThresholdAlsoWrites() {
         // A seek backwards should still bank the new position once it moves
         // far enough, not just forward progress.
-        XCTAssertTrue(PlaybackProgress.shouldWrite(lastWritten: 100, position: 84))
+        XCTAssertTrue(WatchState.shouldWrite(lastWritten: 100, position: 84))
     }
 
     func testForcedAlwaysWritesRegardlessOfMovement() {
-        XCTAssertTrue(PlaybackProgress.shouldWrite(lastWritten: 100, position: 100.1, forced: true))
+        XCTAssertTrue(WatchState.shouldWrite(lastWritten: 100, position: 100.1, forced: true))
     }
 
     /// The 90%-watched rule must still fire even though most polls are
@@ -62,7 +62,7 @@ final class PlaybackProgressThrottleTests: XCTestCase {
         var lastWritten: Double?
         var wroteAtOrPastWatched = false
         for position in positions {
-            if PlaybackProgress.shouldWrite(lastWritten: lastWritten, position: position) {
+            if WatchState.shouldWrite(lastWritten: lastWritten, position: position) {
                 lastWritten = position
                 if position >= 18 { wroteAtOrPastWatched = true }
             }

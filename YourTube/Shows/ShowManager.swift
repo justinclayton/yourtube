@@ -37,9 +37,11 @@ struct ShowVerdict: Sendable, Equatable {
 @MainActor
 final class ShowManager {
     let modelContext: ModelContext
+    let watchState: WatchState
 
-    init(modelContext: ModelContext) {
+    init(modelContext: ModelContext, watchState: WatchState) {
         self.modelContext = modelContext
+        self.watchState = watchState
     }
 
     // MARK: - Catalogue
