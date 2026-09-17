@@ -19,7 +19,7 @@ final class ShowManagerTests: XCTestCase {
             for: Video.self, Subscription.self, VideoCollection.self, ChannelRule.self, Show.self,
             configurations: config
         )
-        manager = ShowManager(modelContext: context)
+        manager = ShowManager(modelContext: context, watchState: WatchState(modelContext: context))
     }
 
     @discardableResult
@@ -574,7 +574,7 @@ final class ShowManagerTests: XCTestCase {
                        "the one you walked away from is the one you meant")
     }
 
-    /// The thirty-second rule from `PlaybackProgress`: a glance isn't a start,
+    /// The thirty-second rule from `WatchState`: a glance isn't a start,
     /// so it mustn't hijack Play next either.
     func testAGlanceAtAnEpisodeDoesNotCountAsInProgress() throws {
         let show = try manager.markAsShow(channelId: "UC-news", channelTitle: "Newsline")

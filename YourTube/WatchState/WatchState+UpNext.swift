@@ -9,21 +9,11 @@ import SwiftData
 /// earmark date (kept under its Watch Later name so existing stores open
 /// without a migration) and `upNextOrder` is the position. Marking a video
 /// watched removes it, so the list stays honest.
-@MainActor
-final class UpNextQueue {
-    private let modelContext: ModelContext
-
-    init(modelContext: ModelContext) {
-        self.modelContext = modelContext
-    }
-
-    /// Earmarked videos in the user's order. Entries that predate Up Next
-    /// and haven't been migrated yet fall to the end, oldest save first.
+extension WatchState {
+    /// Earmarked videos in the user's order.
     func entries() throws -> [Video] {
-        let descriptor = FetchDescriptor<Video>(
-            predicate: #Predicate { $0.savedForLaterAt != nil }
-        )
-        return try modelContext.fetch(descriptor).sorted(by: Self.precedes)
+        let descriptor = FetchDescriptor<Video>(predicate: Self.upNextPredicate, sortBy: Self.upNextSortDescriptors)
+        return try modelContext.fetch(descriptor)
     }
 
     /// Watch Later saves from before Up Next existed carry a date but no
@@ -68,31 +58,17 @@ final class UpNextQueue {
         }
     }
 
-    /// Reorder, with offsets in the order `entries()` returns.
-    func move(fromOffsets source: IndexSet, toOffset destination: Int) throws {
-        var ordered = try entries()
+    /// Reorder. `ordered` is the list exactly as the caller displayed it —
+    /// its own `@Query` over `upNextPredicate`/`upNextSortDescriptors` — so
+    /// the offsets SwiftUI's `onMove` hands in always index the same array
+    /// this reassigns, rather than whatever a fresh `entries()` fetch would
+    /// return.
+    func move(_ ordered: [Video], fromOffsets source: IndexSet, toOffset destination: Int) throws {
+        var ordered = ordered
         ordered.move(fromOffsets: source, toOffset: destination)
         for (index, video) in ordered.enumerated() {
             video.upNextOrder = index + 1
         }
         try modelContext.save()
-    }
-
-    /// Watched is the one thing that empties Up Next without the user
-    /// removing an entry by hand: a finished video has no business waiting.
-    func markWatched(_ video: Video) throws {
-        video.isWatched = true
-        video.savedForLaterAt = nil
-        video.upNextOrder = nil
-        try modelContext.save()
-    }
-
-    nonisolated static func precedes(_ a: Video, _ b: Video) -> Bool {
-        switch (a.upNextOrder, b.upNextOrder) {
-        case let (x?, y?): return x < y
-        case (_?, nil): return true
-        case (nil, _?): return false
-        case (nil, nil): return (a.savedForLaterAt ?? .distantPast) < (b.savedForLaterAt ?? .distantPast)
-        }
     }
 }

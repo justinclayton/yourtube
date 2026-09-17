@@ -21,7 +21,7 @@ struct EpisodeCard: View {
     let size: Size
     /// How far through the video is, 0...1, when it's one you're partway
     /// into. Nil (the usual case) leaves the card exactly as it was: no bar
-    /// over the art, and duration rather than time left. See `PlaybackProgress`.
+    /// over the art, and duration rather than time left. See `WatchState`.
     var progress: Double?
 
     /// The show `video` belongs to, or nil when it's in no show. Both the

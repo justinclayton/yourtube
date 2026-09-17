@@ -27,14 +27,14 @@ final class Video {
     var isWatched: Bool
     /// When the user earmarked this video to Up Next; nil when it isn't there.
     /// Named for the Watch Later feature it predates so existing stores open
-    /// without a migration. See `UpNextQueue`.
+    /// without a migration. See `WatchState`.
     var savedForLaterAt: Date?
     /// Position in Up Next. Nil for an entry saved before Up Next existed
-    /// until `UpNextQueue.migrateLegacySaves()` places it.
+    /// until `WatchState.migrateLegacySaves()` places it.
     var upNextOrder: Int?
     /// Where playback stopped, in seconds. Nil when the video hasn't been
     /// started (a position under thirty seconds doesn't count). See
-    /// `PlaybackProgress`.
+    /// `WatchState`.
     var resumePositionSeconds: Double?
     /// When playback last reported a position, which orders Continue Watching.
     var lastPlayedAt: Date?

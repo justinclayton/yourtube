@@ -17,7 +17,6 @@ struct PlayerView: View {
     /// has no next-episode action, so a `let` is enough, and the model's
     /// observation keeps the title and buttons live.
     let video: Video
-    @Environment(\.modelContext) private var modelContext
     @Environment(AppServices.self) private var services
 
     @State private var player: YouTubePlayer
@@ -25,7 +24,7 @@ struct PlayerView: View {
     /// store one without waiting on the web view we're tearing down.
     @State private var lastReportedPosition: Double?
     /// The last position actually written to the store for the current
-    /// video, so `reportProgress` can throttle: see `PlaybackProgress.shouldWrite`.
+    /// video, so `reportProgress` can throttle: see `WatchState.shouldWrite`.
     @State private var lastWrittenPosition: Double?
     /// Whether the previous poll saw the player paused, so a pause writes
     /// once on the play->pause edge rather than on every poll spent paused.
@@ -49,7 +48,7 @@ struct PlayerView: View {
                     // Resume: the IFrame player's own start parameter, so
                     // playback opens at the stored position rather than
                     // seeking there after the fact.
-                    startTime: PlaybackProgress.resumePosition(for: video)
+                    startTime: WatchState.resumePosition(for: video)
                         .map { Measurement(value: $0, unit: UnitDuration.seconds) },
                     showControls: true,
                     restrictRelatedVideosToSameChannel: true
@@ -101,17 +100,17 @@ struct PlayerView: View {
         // Opening the player doesn't mark a video watched: watched removes a
         // video from Up Next, and peeking at an earmarked video must not do
         // that. Watched is set automatically once playback passes 90% of the
-        // duration instead — see `PlaybackProgress`.
+        // duration instead — see `WatchState`.
         .task { await reportProgress() }
         .onDisappear {
             if let position = lastReportedPosition {
-                services.playback.record(video, position: position)
+                services.watchState.record(video, position: position)
             }
         }
     }
 
     /// Poll the player while it's playing and hand positions worth keeping to
-    /// `PlaybackProgress`. Polling rather than the kit's `currentTimePublisher`
+    /// `WatchState`. Polling rather than the kit's `currentTimePublisher`
     /// because that one rides an undocumented progress event, and because a
     /// position must only be recorded while the video is actually playing: a
     /// buffering or cued player reports zero, which would read as "not
@@ -119,7 +118,7 @@ struct PlayerView: View {
     ///
     /// The poll itself stays at two seconds, but most polls don't write:
     /// every write is a store change that reruns every live query in the app
-    /// for as long as playback lasts (#71). `PlaybackProgress.shouldWrite`
+    /// for as long as playback lasts (#71). `WatchState.shouldWrite`
     /// throttles to roughly every 15 s of movement; pausing and leaving the
     /// player (`onDisappear`) always write so the
     /// resume point reflects where playback actually stopped.
@@ -132,8 +131,8 @@ struct PlayerView: View {
                 // Some videos never report a time close to the end; the
                 // ended state is the honest signal that they finished.
                 let position = Double(video.durationSeconds)
-                if PlaybackProgress.shouldWrite(lastWritten: lastWrittenPosition, position: position) {
-                    services.playback.record(video, position: position)
+                if WatchState.shouldWrite(lastWritten: lastWrittenPosition, position: position) {
+                    services.watchState.record(video, position: position)
                     lastWrittenPosition = position
                 }
                 continue
@@ -142,7 +141,7 @@ struct PlayerView: View {
                 // Write once on the play->pause edge, not on every poll
                 // spent paused.
                 if !wasPaused, let position = lastReportedPosition {
-                    services.playback.record(video, position: position)
+                    services.watchState.record(video, position: position)
                     lastWrittenPosition = position
                 }
                 wasPaused = true
@@ -154,8 +153,8 @@ struct PlayerView: View {
             let seconds = time.converted(to: .seconds).value
             guard seconds > 0 else { continue }
             lastReportedPosition = seconds
-            if PlaybackProgress.shouldWrite(lastWritten: lastWrittenPosition, position: seconds) {
-                services.playback.record(video, position: seconds)
+            if WatchState.shouldWrite(lastWritten: lastWrittenPosition, position: seconds) {
+                services.watchState.record(video, position: seconds)
                 lastWrittenPosition = seconds
             }
         }
@@ -185,7 +184,7 @@ struct PlayerView: View {
     private var actions: some View {
         HStack(spacing: 12) {
             Button {
-                try? services.upNext.toggle(video)
+                try? services.watchState.toggle(video)
             } label: {
                 Image(systemName: video.isInUpNext ? "bookmark.fill" : "bookmark")
             }
@@ -209,10 +208,9 @@ struct PlayerView: View {
     /// Watched leaves Up Next; unwatching doesn't put it back.
     private func toggleWatched() {
         if video.isWatched {
-            video.isWatched = false
-            try? modelContext.save()
+            try? services.watchState.unwatch(video)
         } else {
-            try? services.upNext.markWatched(video)
+            try? services.watchState.markWatched(video)
         }
     }
 }

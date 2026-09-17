@@ -13,10 +13,7 @@ import SwiftData
 /// way — one item full width, two or more a two-column grid — so the tab
 /// reads as one calm column.
 struct ContinueWatchingSection: View {
-    @Query(
-        filter: #Predicate<Video> { $0.resumePositionSeconds != nil && !$0.isWatched },
-        sort: [SortDescriptor(\Video.lastPlayedAt, order: .reverse)]
-    )
+    @Query(filter: WatchState.inProgressPredicate, sort: WatchState.inProgressSortDescriptors)
     private var videos: [Video]
     @Query private var subscriptions: [Subscription]
     @Query private var shows: [Show]
