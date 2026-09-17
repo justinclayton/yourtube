@@ -622,7 +622,7 @@ replaced.
 
 ## Development loop
 
-Run and test on **one** simulator, named `YourTube Dev`, and never erase it.
+Run and test on **one** simulator, named `YourTube 1`, and never erase it.
 The refresh token lives in that device's Keychain and the Google web login in
 its cookie jar, so signing in is a weekly one-tap affair rather than a
 password-and-2FA trip on every fresh device. Debug builds keep the Google
@@ -632,39 +632,48 @@ under `DEBUG`); release builds still isolate the session.
 If the device doesn't exist yet:
 
 ```sh
-xcrun simctl create "YourTube Dev" "iPhone 17 Pro"
+xcrun simctl create "YourTube 1" "iPhone 17 Pro"
 ```
 
 `.claude/launch.json` targets it by UDID because `xcodebuild` doesn't
 reliably resolve the name; update the `id=` there after creating the device
-(`xcrun simctl list devices | grep "YourTube Dev"`).
+(`xcrun simctl list devices | grep "YourTube 1"`), and update `STORE_UDID` at
+the top of `scripts/simpool.sh` to match — that constant, not this doc, is
+what the pool script reads to find the signed-in-store device.
 
-Agents: pass `device: "YourTube Dev"` when building or launching in the
+Agents: pass `device: "YourTube 1"` when building or launching in the
 simulator. The simulator tool's tap and swipe coordinates are device points
 (402×874 on an iPhone 17 Pro, as `attach` reports), not the pixels of the
 screenshot it returns (1206×2622): divide by three, or taps silently miss.
 
 ### Parallel work: the simulator pool
 
-`YourTube Dev` is the only simulator that holds the signed-in store, and the
-only reason to keep to one device is that store. Unit tests and
-`-seedFixtures` drives never open it, so they can run on throwaway
-simulators in parallel. Create a pool of three matching devices once:
+All four simulators — `YourTube 1` through `YourTube 4` — share one naming
+scheme and are all managed by `scripts/simpool.sh`, which discovers them by
+name prefix rather than a hard-coded list, so a fifth device joins the pool
+just by being created as `YourTube 5`. `YourTube 1` is the only one that
+holds the signed-in store (recorded as `STORE_UDID` at the top of
+`simpool.sh`); the only reason to keep to that one device for real-data
+drives is the store. Unit tests and `-seedFixtures` drives never need it, so
+they run on the other three in parallel. Create the other three matching
+devices once:
 
 ```sh
-for i in 1 2 3; do
-  xcrun simctl boot "$(xcrun simctl create "YourTube Test $i" \
+for i in 2 3 4; do
+  xcrun simctl boot "$(xcrun simctl create "YourTube $i" \
     com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro \
     com.apple.CoreSimulator.SimRuntime.iOS-26-2)"
 done
 ```
 
-`scripts/simpool.sh acquire <name>` prints the UDID of a free booted
-`YourTube Test N` (waiting if all are busy), `release <name>` hands it back,
-and `status` lists the pool. Run tests and fixture drives on the UDID it
-gives you; screenshots come out identical to the Dev device. Keep
-`YourTube Dev` for drives that need the real data, and never uninstall or
-erase it.
+`scripts/simpool.sh acquire <name>` prints the UDID of a free booted device
+other than the store device (waiting if all are busy), `release <name>`
+hands it back, and `status` lists the whole pool. Run tests and fixture
+drives on the UDID it gives you; screenshots come out identical to the store
+device. A drive that genuinely needs real data asks for the store device with
+`scripts/simpool.sh acquire --store <name>`, which still takes a lock so
+nothing else lands on it at the same time; never uninstall or erase that
+device.
 
 ### What keeps the data, and what wipes it
 
@@ -675,8 +684,8 @@ the bundle id stays installed, whichever build is in it:
 
 | Keeps the store | Wipes the store |
 | --- | --- |
-| Xcode Run (Cmd-R) | `xcrun simctl uninstall "YourTube Dev" net.claytons.yourtube` |
-| `xcrun simctl install "YourTube Dev" <path>.app` over an existing install | `xcrun simctl erase` |
+| Xcode Run (Cmd-R) | `xcrun simctl uninstall "YourTube 1" net.claytons.yourtube` |
+| `xcrun simctl install "YourTube 1" <path>.app` over an existing install | `xcrun simctl erase` |
 | `xcodebuild test` (installs the test host the same way) | Deleting the app from the home screen |
 | `xcrun simctl launch ... -seedFixtures` (in-memory store, own defaults) | Deleting the simulator |
 
@@ -689,7 +698,7 @@ the store fails loudly with its setup screen rather than touching it.
 Before anything you're unsure of, copy the store out:
 
 ```sh
-C=$(xcrun simctl get_app_container "YourTube Dev" net.claytons.yourtube data)
+C=$(xcrun simctl get_app_container "YourTube 1" net.claytons.yourtube data)
 cp "$C/Library/Application Support/"default.store* ~/Desktop/yourtube-store-backup/
 ```
 
@@ -719,7 +728,7 @@ argument, not a reinstall: don't pair it with `simctl uninstall`, which
 deletes the real store (see above).
 
 Xcode: *Product > Scheme > Edit Scheme > Run > Arguments Passed On Launch*.
-Command line: `xcrun simctl launch "YourTube Dev" net.claytons.yourtube -seedFixtures`.
+Command line: `xcrun simctl launch "YourTube 1" net.claytons.yourtube -seedFixtures`.
 The `yourtube-sim-fixtures` entry in `.claude/launch.json` carries it.
 
 ## Tests
