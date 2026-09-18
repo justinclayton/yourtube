@@ -42,7 +42,6 @@ final class ShowManagerTests: XCTestCase {
         channelId: String,
         daysAgo: Double,
         seconds: Int = 2_400,
-        short: Bool = false,
         watched: Bool = false
     ) -> Video {
         let video = Video(
@@ -53,7 +52,6 @@ final class ShowManagerTests: XCTestCase {
             videoDescription: "",
             publishedAt: Date(timeIntervalSinceNow: -daysAgo * 86_400),
             durationSeconds: seconds,
-            isLikelyShort: short,
             isWatched: watched
         )
         context.insert(video)
@@ -164,8 +162,8 @@ final class ShowManagerTests: XCTestCase {
         return show
     }
 
-    /// Hiding is presentation only, the same policy as Shorts: the feed and
-    /// everything else still see every video.
+    /// Hiding is presentation only: the feed and everything else still see
+    /// every video.
     func testHiddenSegmentsAndOlderEpisodesAreStillInTheStore() throws {
         let show = try newsShow()
         show.retentionCount = 2
@@ -192,7 +190,6 @@ final class ShowManagerTests: XCTestCase {
         let show = try newsShow(nights: 8)
         show.retentionCount = 3
         video("elsewhere", channelId: "UC-other", daysAgo: 1)
-        video("a-short", channelId: "UC-news", daysAgo: 0.5, seconds: 30, short: true)
         try context.save()
 
         let fetched = try manager.listing(of: show)
@@ -206,7 +203,7 @@ final class ShowManagerTests: XCTestCase {
                        try manager.unwatchedCounts(for: [show])[show.id],
                        "and the grid's badge fetch agrees with both")
         XCTAssertEqual(fetched.episodes.map(\.videoId), ["ep-1", "ep-2", "ep-3"],
-                       "another channel's video and a Short are no part of it")
+                       "another channel's video is no part of it")
     }
 
     // MARK: - Mark all watched
@@ -443,7 +440,6 @@ final class ShowManagerTests: XCTestCase {
         video("friend-1", channelId: "UC-coco", daysAgo: 1)
         video("friend-2", channelId: "UC-coco", daysAgo: 8)
         video("a-clip", channelId: "UC-coco", daysAgo: 2)
-        video("a-short", channelId: "UC-coco", daysAgo: 3, seconds: 40, short: true)
         video("guest-channel-cut", channelId: "UC-elsewhere", daysAgo: 4)
         try context.save()
 
@@ -451,7 +447,7 @@ final class ShowManagerTests: XCTestCase {
             "Conan O'Brien Needs a Friend",
             channelId: "UC-coco",
             seasons: [(playlist: "PL-friend", name: "Conan O'Brien Needs a Friend",
-                       videoIds: ["friend-2", "a-short", "friend-1", "guest-channel-cut"])]
+                       videoIds: ["friend-2", "friend-1", "guest-channel-cut"])]
         )
 
         XCTAssertEqual(show.id, "playlist:PL-friend")
@@ -461,21 +457,8 @@ final class ShowManagerTests: XCTestCase {
                        "the playlist's items, newest first; the channel's other videos are not episodes")
     }
 
-    /// A playlist can hold a video from another channel, and a Short is never
-    /// an episode however it got into the playlist.
-    func testAPlaylistItemThatIsAShortIsStillNotAnEpisode() throws {
-        video("ep", channelId: "UC-coco", daysAgo: 1)
-        video("promo-short", channelId: "UC-coco", daysAgo: 2, seconds: 30, short: true)
-        try context.save()
-
-        let show = try playlistShow("Friend", channelId: "UC-coco",
-                                    seasons: [(playlist: "PL-f", name: "Friend",
-                                               videoIds: ["ep", "promo-short"])])
-        XCTAssertEqual(try manager.listing(of: show).episodes.map(\.videoId), ["ep"])
-    }
-
-    /// `ShowPageView`'s `channelVideos` query used to fetch every non-Short
-    /// video in the store for a playlist-backed show, filtering to members in
+    /// `ShowPageView`'s `channelVideos` query used to fetch every video in the
+    /// store for a playlist-backed show, filtering to members in
     /// memory (issue #86). It now builds its predicate from the show's own
     /// `memberVideoIds`, the same narrowing `ShowManager+Badges.swift` got in
     /// #66 — checked here with a `fetchCount` of that exact predicate against
@@ -511,7 +494,6 @@ final class ShowManagerTests: XCTestCase {
     func testShowPageViewsQueryStillFetchesTheWholeChannelForAChannelBackedShow() throws {
         video("upload-1", channelId: "UC-coco", daysAgo: 1)
         video("upload-2", channelId: "UC-coco", daysAgo: 2)
-        video("a-short", channelId: "UC-coco", daysAgo: 3, seconds: 30, short: true)
         video("other-channel", channelId: "UC-elsewhere", daysAgo: 1)
         try context.save()
 
@@ -520,7 +502,7 @@ final class ShowManagerTests: XCTestCase {
         let predicate = ShowPageView.channelVideosPredicate(for: show)
         let fetchCount = try context.fetchCount(FetchDescriptor<Video>(predicate: predicate))
 
-        XCTAssertEqual(fetchCount, 2, "the channel's non-Short uploads, not the other channel's or the Short")
+        XCTAssertEqual(fetchCount, 2, "the channel's uploads, not the other channel's")
     }
 
     /// A network channel can be a show and host one too; they are two rows,

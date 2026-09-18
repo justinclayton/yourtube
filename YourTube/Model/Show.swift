@@ -68,9 +68,9 @@ enum ShowArtPreference: String, Codable, Sendable {
 /// `source`.
 ///
 /// A channel-backed show's membership isn't stored: its episodes are every
-/// non-Short video from its channel, resolved live by `ShowManager`, which
-/// keeps the catalogue idempotent under refresh the way `ChannelRule` does
-/// for categories. A playlist-backed show has no such rule to resolve — only
+/// video from its channel, resolved live by `ShowManager`, which keeps the
+/// catalogue idempotent under refresh the way `ChannelRule` does for
+/// categories. A playlist-backed show has no such rule to resolve — only
 /// YouTube knows what's in a playlist — so its membership is stored, in
 /// `playlistItemIds`, and refreshed when the show is opened.
 @Model
@@ -103,8 +103,7 @@ final class Show {
     var overrideRaw: String
     var playOrderRaw: String
     /// "Keep the last N episodes": older ones are hidden from the show page
-    /// and the unwatched count. Nil keeps everything. Nothing is deleted,
-    /// the same policy as Shorts hiding.
+    /// and the unwatched count. Nil keeps everything. Nothing is deleted.
     var retentionCount: Int?
     /// How short a video has to be, as a fraction of this show's typical
     /// episode, before it counts as a segment cut from one. A half by

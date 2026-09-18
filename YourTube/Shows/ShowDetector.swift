@@ -1,8 +1,7 @@
 import Foundation
 
-/// One video, as the show detector sees it. A plain value type, like
-/// `VideoSignals`, so the detector is testable without SwiftData or the
-/// network.
+/// One video, as the show detector sees it. A plain value type, so the
+/// detector is testable without SwiftData or the network.
 struct EpisodeSignals: Sendable, Equatable {
     var durationSeconds: Int
     var publishedAt: Date
@@ -28,7 +27,7 @@ struct EpisodeSignals: Sendable, Equatable {
 }
 
 /// Everything the detector is given about one channel: who it is, and the
-/// non-Short videos we've stored from it.
+/// videos we've stored from it.
 struct ChannelEvidence: Sendable, Equatable {
     var channelId: String
     var channelTitle: String
@@ -37,8 +36,7 @@ struct ChannelEvidence: Sendable, Equatable {
 
 /// Decides whether a channel is a show.
 ///
-/// The YouTube API has no notion of a show, so this is guesswork of the same
-/// kind as `ShortsHeuristic` — and it's answered the same way: a gate that
+/// The YouTube API has no notion of a show, so this is guesswork: a gate that
 /// rules out what can't be a show, then several weak signals summed against a
 /// threshold. Every signal that fires becomes a sentence the user can read on
 /// the show page, so a wrong guess can be understood and corrected rather than

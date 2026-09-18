@@ -22,9 +22,8 @@ extension StoreWriter {
     func detectShows(fingerprints stored: [String: String]) throws -> DetectionOutcome {
         var fingerprints = stored
         let subscriptions = try modelContext.fetch(FetchDescriptor<Subscription>())
-        // Shorts are never episodes, so they're no evidence either.
         let byChannel = Dictionary(
-            grouping: try modelContext.fetch(FetchDescriptor<Video>()).filter { !$0.isLikelyShort },
+            grouping: try modelContext.fetch(FetchDescriptor<Video>()),
             by: \.channelId
         )
         // Only a channel-backed record speaks for the channel's own override:

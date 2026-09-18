@@ -6,7 +6,7 @@ extension ShowManager {
     /// ID, in one fetch scoped to the videos those shows could hold.
     ///
     /// The grid used to feed `ShowListing.unwatchedCounts(from:shows:)` a live `@Query`
-    /// over every non-Short video in the store — thousands of rows, re-fetched
+    /// over every video in the store — thousands of rows, re-fetched
     /// on every store change even while another tab was showing (issue #66).
     /// The answer is the same one: the pure pass still applies segments and
     /// the retention window, so a badge never promises more than the show page
@@ -21,8 +21,7 @@ extension ShowManager {
         }
         let videos = try modelContext.fetch(FetchDescriptor<Video>(
             predicate: #Predicate {
-                !$0.isLikelyShort
-                    && (channelIds.contains($0.channelId) || memberIds.contains($0.videoId))
+                channelIds.contains($0.channelId) || memberIds.contains($0.videoId)
             }
         ))
         return ShowListing.unwatchedCounts(from: videos, shows: shows)

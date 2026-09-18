@@ -7,9 +7,7 @@ import SwiftData
 ///
 /// The fixtures go in through the app's own doors — `VideoIntake` for videos,
 /// `ShowManager` for shows, `WatchState` for watched and Up Next — so what
-/// these tests assert on is what came through them. Asserting that a
-/// hand-stamped `isLikelyShort` is the value it was stamped with would be
-/// testing the duplicate rather than the door.
+/// these tests assert on is what came through them.
 @MainActor
 final class DebugFixturesTests: XCTestCase {
     func testFixturesSeedSubscriptionsRulesAndVideos() throws {
@@ -77,7 +75,6 @@ final class DebugFixturesTests: XCTestCase {
         for show in shows {
             let listing = try manager.listing(of: show)
             XCTAssertFalse(listing.episodes.isEmpty, "\(show.title) has no episodes")
-            XCTAssertFalse(listing.episodes.contains(where: \.isLikelyShort))
             XCTAssertGreaterThan(listing.unwatchedCount, 0,
                                  "\(show.title) should show a badge")
         }
@@ -100,30 +97,6 @@ final class DebugFixturesTests: XCTestCase {
 // MARK: - What came through the door
 
 extension DebugFixturesTests {
-    /// Every fixture video's Shorts verdict is the heuristic's, reached from
-    /// the signals the fixture describes. "Späti tour" carries no `#shorts`
-    /// tag and no portrait thumbnail, so the only thing that can have flagged
-    /// it is the thumbnail verdict — which is to say, the fixtures went
-    /// through the classification the feed goes through.
-    func testFixtureShortsAreClassifiedRatherThanStamped() throws {
-        let container = try DebugFixtures.makeContainer()
-        let context = container.mainContext
-        let videos = try context.fetch(FetchDescriptor<Video>())
-
-        XCTAssertTrue(
-            videos.allSatisfy { $0.classifierVersion == ShortsHeuristic.version },
-            "a fixture video was stored without being judged by the current heuristic"
-        )
-        XCTAssertEqual(
-            Set(videos.filter(\.isLikelyShort).map(\.videoId)),
-            ["UC-teamcoco-2", "UC-berlin-1", "UC-nasa-4"]
-        )
-        let untagged = try XCTUnwrap(videos.first { $0.videoId == "UC-berlin-1" })
-        XCTAssertFalse(ShortsHeuristic.hasShortsTag(VideoSignals(untagged)))
-        XCTAssertFalse(ShortsHeuristic.hasPortraitThumbnail(VideoSignals(untagged)))
-        XCTAssertTrue(untagged.isLikelyShort)
-    }
-
     /// Watched, Up Next and partway-through are `WatchState`'s to write, so
     /// the fixture store has to read back through `WatchState` as a real one
     /// would: two entries in the declared order, neither watched, and one

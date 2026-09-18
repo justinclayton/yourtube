@@ -28,7 +28,7 @@ struct ShowVerdict: Sendable, Equatable {
 /// `Show` row behind purely as a tombstone. `shows()` never returns those.
 ///
 /// A channel-backed show's membership is resolved live rather than stored:
-/// its episodes are every non-Short video from its channel. That keeps the
+/// its episodes are every video from its channel. That keeps the
 /// catalogue idempotent under feed refresh — a new upload is an episode the
 /// moment it lands, with nothing to reconcile. A playlist-backed show has no
 /// such rule to resolve, so its membership is stored on the record and
@@ -204,14 +204,14 @@ final class ShowManager {
         switch show.source {
         case .channel(let channelId):
             return try modelContext.fetch(FetchDescriptor<Video>(
-                predicate: #Predicate { $0.channelId == channelId && !$0.isLikelyShort },
+                predicate: #Predicate { $0.channelId == channelId },
                 sortBy: byDate
             ))
         case .playlist:
             let ids = show.memberVideoIds
             guard !ids.isEmpty else { return [] }
             return try modelContext.fetch(FetchDescriptor<Video>(
-                predicate: #Predicate { ids.contains($0.videoId) && !$0.isLikelyShort },
+                predicate: #Predicate { ids.contains($0.videoId) },
                 sortBy: byDate
             ))
         }

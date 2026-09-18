@@ -62,7 +62,6 @@ final class ShowListingTests: XCTestCase {
         channelId: String = "UC-news",
         daysAgo: Double,
         seconds: Int = 2_400,
-        short: Bool = false,
         watched: Bool = false
     ) -> Video {
         Video(
@@ -73,7 +72,6 @@ final class ShowListingTests: XCTestCase {
             videoDescription: "",
             publishedAt: Date(timeIntervalSinceNow: -daysAgo * 86_400),
             durationSeconds: seconds,
-            isLikelyShort: short,
             isWatched: watched
         )
     }
@@ -133,17 +131,16 @@ final class ShowListingTests: XCTestCase {
 
     // MARK: - Membership
 
-    func testEpisodesAreEveryFullLengthNonShortVideoFromTheChannel() {
+    func testEpisodesAreEveryFullLengthVideoFromTheChannel() {
         let listing = ShowListing(of: show(), from: [
             video("full-1", daysAgo: 1, seconds: 3_000),
             video("segment-1", daysAgo: 1.1, seconds: 480),
-            video("clip-short", daysAgo: 1.2, seconds: 42, short: true),
             video("full-2", daysAgo: 2, seconds: 3_100),
             video("elsewhere", channelId: "UC-other", daysAgo: 1),
         ])
 
         XCTAssertEqual(listing.episodes.map(\.videoId), ["full-1", "full-2"],
-                       "Shorts are never episodes, nor is another channel's video, nor a cut-down")
+                       "another channel's video is never an episode, nor is a cut-down")
         XCTAssertEqual(listing.segments.map(\.videoId), ["segment-1"])
     }
 
@@ -184,18 +181,17 @@ final class ShowListingTests: XCTestCase {
             "Conan O'Brien Needs a Friend",
             channelId: "UC-coco",
             seasons: [(playlist: "PL-friend", name: "Friend",
-                       videoIds: ["friend-2", "a-short", "friend-1", "guest-channel-cut"])]
+                       videoIds: ["friend-2", "friend-1", "guest-channel-cut"])]
         )
         let listing = ShowListing(of: show, from: [
             video("friend-1", channelId: "UC-coco", daysAgo: 1),
             video("friend-2", channelId: "UC-coco", daysAgo: 8),
             video("non-member-upload", channelId: "UC-coco", daysAgo: 2),
-            video("a-short", channelId: "UC-coco", daysAgo: 3, seconds: 40, short: true),
             video("guest-channel-cut", channelId: "UC-elsewhere", daysAgo: 4),
         ])
 
         XCTAssertEqual(listing.episodes.map(\.videoId), ["friend-1", "guest-channel-cut", "friend-2"],
-                       "the playlist's items, newest first, guest channel included; a Short never")
+                       "the playlist's items, newest first, guest channel included; a non-member never")
     }
 
     // MARK: - Seasons
@@ -420,12 +416,11 @@ final class ShowListingTests: XCTestCase {
 
     // MARK: - Counts
 
-    func testUnwatchedCountIgnoresWatchedShortsAndSegments() {
+    func testUnwatchedCountIgnoresWatchedAndSegments() {
         let listing = ShowListing(of: show(), from: [
             video("new-1", daysAgo: 1, seconds: 3_000),
             video("new-2", daysAgo: 2, seconds: 3_000),
             video("seen", daysAgo: 3, seconds: 3_000, watched: true),
-            video("short", daysAgo: 4, seconds: 30, short: true),
             video("clip", daysAgo: 5, seconds: 400),
         ])
 
@@ -454,7 +449,7 @@ final class ShowListingTests: XCTestCase {
                                              videoIds: ["guest-clip", "coco-1"])])
         let videos = (1...5).map { video("n-\($0)", daysAgo: Double($0)) } + [
             video("n-seen", daysAgo: 6, watched: true),
-            video("n-short", daysAgo: 7, short: true),
+            video("n-old", daysAgo: 7),
             video("p-1", channelId: "UC-pod", daysAgo: 1),
             video("guest-clip", channelId: "UC-guest", daysAgo: 1),
             video("coco-1", channelId: "UC-coco", daysAgo: 2, watched: true),

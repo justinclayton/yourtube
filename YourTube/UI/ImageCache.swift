@@ -8,11 +8,9 @@ import UIKit
 ///
 /// Two tiers, both keyed by URL:
 ///
-/// - `rawData` holds the compressed bytes a fetch returned. `analyzeThumbnails`
-///   already downloads every new upload's `hqdefault` for the Shorts
-///   heuristic, so it seeds this tier directly (`seed(data:for:)`) and the
-///   feed row that shows the same video's thumbnail decodes it without a
-///   second download.
+/// - `rawData` holds the compressed bytes a fetch returned, seeded directly
+///   (`seed(data:for:)`) the first time a URL is fetched so a later request
+///   for the same image at a different size skips the network.
 /// - `decoded` holds the `UIImage` produced from those bytes at one exact
 ///   pixel size. The same URL drawn at two different slots (a 44pt avatar
 ///   and a 120pt one) gets two entries: decoding once at the larger size and
@@ -35,8 +33,7 @@ final class ImageCache: @unchecked Sendable {
     }
 
     /// Stores bytes for `url` without decoding them, so a later request for a
-    /// downsampled image can skip the network. `FeedRefresher.analyzeThumbnails`
-    /// calls this with the `hqdefault` bytes it already downloaded.
+    /// downsampled image can skip the network.
     func seed(data: Data, for url: URL) {
         rawData.setObject(data as NSData, forKey: url.absoluteString as NSString)
     }

@@ -38,7 +38,8 @@ struct YourTubeApp: App {
                 let config = try AppConfig.load()
                 let container = try ModelContainer(
                     for: Video.self, Subscription.self,
-                    VideoCollection.self, ChannelRule.self, Show.self
+                    VideoCollection.self, ChannelRule.self, Show.self,
+                    migrationPlan: VideoMigrationPlan.self
                 )
                 let services = AppServices(
                     config: config,

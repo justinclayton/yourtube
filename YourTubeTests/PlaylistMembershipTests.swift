@@ -183,10 +183,7 @@ final class PlaylistMembershipTests: XCTestCase {
     }
 
     private func makeIntake() -> VideoIntake {
-        VideoIntake(
-            writer: StoreWriter(modelContainer: container),
-            thumbnails: CannedThumbnailVerdict()
-        )
+        VideoIntake(writer: StoreWriter(modelContainer: container))
     }
 
     private func makeRefresher(intake: VideoIntake? = nil) -> FeedRefresher {
@@ -208,7 +205,6 @@ final class PlaylistMembershipTests: XCTestCase {
         "{ \"items\": [\(ids.map { videoJSON(id: $0) }.joined(separator: ","))] }"
     }
 
-    /// Ten minutes: outside the Shorts duration gate, so no verdict is needed.
     private static func videoJSON(id: String, duration: String? = "PT10M") -> String {
         """
         {
