@@ -13,9 +13,9 @@ import Observation
 ///
 /// What it keeps is the finding: the subscription list, the fan-out across
 /// channels, the phase the refresh is in, and the quota that costs. What
-/// happens to a video once it has been found — mapping, the Shorts verdict,
-/// the insert — belongs to `VideoIntake`, which is also what the fixtures and
-/// a playlist-backed show's membership refresh go through.
+/// happens to a video once it has been found — mapping, the insert — belongs
+/// to `VideoIntake`, which is also what the fixtures and a playlist-backed
+/// show's membership refresh go through.
 @Observable
 @MainActor
 final class FeedRefresher {
@@ -26,13 +26,12 @@ final class FeedRefresher {
 
         /// Where in a refresh we are, for `RefreshButton` to show. A refresh
         /// used to look done the moment the channel fan-out finished, while
-        /// hydration, Shorts classification and the save still ran behind an
-        /// unmoving ring; each phase now gets its own label, and, where a
+        /// hydration and the save still ran behind an unmoving ring; each
+        /// phase now gets its own label, and, where a
         /// total is knowable, its own count.
         enum Phase: Equatable {
             case checkingChannels(completed: Int, total: Int)
             case fetchingVideos(completed: Int, total: Int)
-            case sortingShorts
 
             var label: String {
                 switch self {
@@ -40,8 +39,6 @@ final class FeedRefresher {
                     "Checking \(total) channel\(total == 1 ? "" : "s")"
                 case .fetchingVideos(_, let total):
                     "Fetching \(total) new video\(total == 1 ? "" : "s")"
-                case .sortingShorts:
-                    "Sorting Shorts"
                 }
             }
 
@@ -51,7 +48,6 @@ final class FeedRefresher {
                 switch self {
                 case .checkingChannels(let completed, let total): (completed, total)
                 case .fetchingVideos(let completed, let total): (completed, total)
-                case .sortingShorts: nil
                 }
             }
         }
@@ -86,8 +82,7 @@ final class FeedRefresher {
         // so a refresh storing a few hundred videos doesn't make every live
         // query in the app re-fetch a few hundred times. See `StoreWriter`.
         self.intake = intake ?? VideoIntake(
-            writer: writer ?? StoreWriter(modelContainer: modelContext.container),
-            thumbnails: DownloadedThumbnailVerdict()
+            writer: writer ?? StoreWriter(modelContainer: modelContext.container)
         )
     }
 
@@ -103,8 +98,6 @@ final class FeedRefresher {
         status = .refreshing(.checkingChannels(completed: 0, total: 0))
 
         do {
-            try await intake.reclassifyStale()
-
             let subscriptions = try await syncSubscriptions()
             guard !subscriptions.isEmpty else {
                 status = .idle
@@ -131,7 +124,14 @@ final class FeedRefresher {
     func loadOlderUploads(channelId: String, pageSize: Int = 50) async throws -> Int {
         let playlistId = Subscription.uploadsPlaylistId(forChannelId: channelId)
         let known = try await intake.knownVideoIds()
-        let items = try await api.recentUploads(playlistId: playlistId, limit: pageSize)
+        let items: [YT.PlaylistItem]
+        do {
+            items = try await api.recentUploads(playlistId: playlistId, limit: pageSize)
+        } catch YouTubeAPI.APIError.http(let status, _) where status == 404 {
+            // A Shorts-only (or otherwise videos-tab-less) channel has no
+            // UULF playlist at all. Nothing older to offer.
+            return 0
+        }
         let newIds = items.compactMap(\.videoId).filter { !known.contains($0) }
         guard !newIds.isEmpty else { return 0 }
 
@@ -255,8 +255,6 @@ final class FeedRefresher {
                 if !newIds.isEmpty {
                     status = .refreshing(.fetchingVideos(completed: 0, total: newIds.count))
                     let hydrated = try await api.videos(ids: Array(newIds))
-
-                    status = .refreshing(.sortingShorts)
                     try await intake.admit(hydrated)
 
                     known.formUnion(newIds)

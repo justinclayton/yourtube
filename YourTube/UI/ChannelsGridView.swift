@@ -15,7 +15,6 @@ struct ChannelsGridView: View {
     let unwatchedByChannel: [String: Int]
     let showChannelIds: Set<String>
     let priorityChannelIds: Set<String>
-    let showShorts: Bool
     let onFile: (Subscription) -> Void
     let onAddPlaylist: (Subscription) -> Void
     let onError: (String) -> Void
@@ -58,7 +57,7 @@ struct ChannelsGridView: View {
             // has to include the group, same as the list row.
             ForEach(channels, id: \.channelId) { subscription in
                 NavigationLink {
-                    ChannelView(subscription: subscription, showShorts: showShorts)
+                    ChannelView(subscription: subscription)
                 } label: {
                     ChannelTile(
                         subscription: subscription,

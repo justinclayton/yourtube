@@ -4,8 +4,7 @@ import SwiftData
 
 /// The counts the UI used to get from live queries over the whole `Video`
 /// table, now read from the store a question at a time (issue #66). What's
-/// under test is that the cheap answer is the same answer: the Channels
-/// badges still ignore Shorts when Shorts are hidden, and the Your Shows
+/// under test is that the cheap answer is the same answer: the Your Shows
 /// badges still respect segments and the retention window, because they still
 /// run the same pure pass — just over a narrower fetch.
 @MainActor
@@ -29,7 +28,6 @@ final class StoreCountsTests: XCTestCase {
         channelId: String,
         daysAgo: Double = 1,
         seconds: Int = 2_400,
-        short: Bool = false,
         watched: Bool = false
     ) -> Video {
         let video = Video(
@@ -40,7 +38,6 @@ final class StoreCountsTests: XCTestCase {
             videoDescription: "",
             publishedAt: Date(timeIntervalSinceNow: -daysAgo * 86_400),
             durationSeconds: seconds,
-            isLikelyShort: short,
             isWatched: watched
         )
         context.insert(video)
@@ -57,15 +54,14 @@ final class StoreCountsTests: XCTestCase {
         context.insert(Subscription(channelId: "UC-a", title: "A"))
         context.insert(Subscription(channelId: "UC-b", title: "B"))
         video("v1", channelId: "UC-a")
-        video("v2", channelId: "UC-a", short: true)
-        video("v3", channelId: "UC-b", short: true)
+        video("v2", channelId: "UC-a")
+        video("v3", channelId: "UC-b")
         try context.save()
 
         let counts = try StoreCounts.library(in: context)
 
         XCTAssertEqual(counts.subscriptions, 2)
         XCTAssertEqual(counts.videos, 3)
-        XCTAssertEqual(counts.shorts, 2)
     }
 
     func testLibraryCountsAreZeroOnAnEmptyStore() throws {
@@ -81,32 +77,17 @@ final class StoreCountsTests: XCTestCase {
         video("b1", channelId: "UC-b")
         try context.save()
 
-        let counts = try StoreCounts.unwatchedByChannel(in: context, includingShorts: false)
+        let counts = try StoreCounts.unwatchedByChannel(in: context)
 
         XCTAssertEqual(counts["UC-a"], 2)
         XCTAssertEqual(counts["UC-b"], 1)
-    }
-
-    func testUnwatchedByChannelFollowsTheShortsSetting() throws {
-        video("a1", channelId: "UC-a")
-        video("a2", channelId: "UC-a", short: true)
-        try context.save()
-
-        XCTAssertEqual(
-            try StoreCounts.unwatchedByChannel(in: context, includingShorts: false)["UC-a"],
-            1
-        )
-        XCTAssertEqual(
-            try StoreCounts.unwatchedByChannel(in: context, includingShorts: true)["UC-a"],
-            2
-        )
     }
 
     func testUnwatchedByChannelLeavesOutChannelsWithNothingUnwatched() throws {
         video("a1", channelId: "UC-a", watched: true)
         try context.save()
 
-        XCTAssertNil(try StoreCounts.unwatchedByChannel(in: context, includingShorts: false)["UC-a"])
+        XCTAssertNil(try StoreCounts.unwatchedByChannel(in: context)["UC-a"])
     }
 
     // MARK: - Your Shows badges
@@ -116,7 +97,6 @@ final class StoreCountsTests: XCTestCase {
         video("a1", channelId: "UC-a")
         video("a2", channelId: "UC-a")
         video("a3", channelId: "UC-a", watched: true)
-        video("a4", channelId: "UC-a", short: true)
         // A channel that isn't a show, with plenty unwatched, must not leak in.
         for i in 0..<20 { video("b\(i)", channelId: "UC-b") }
         try context.save()

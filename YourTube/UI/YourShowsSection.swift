@@ -116,8 +116,8 @@ struct YourShowsSection: View {
 /// to hold. A `@Query` is invalidated by any save anywhere, whether or not its
 /// own results changed, so on a tab nobody was looking at they re-evaluated
 /// this section's body every time a video was marked watched somewhere else —
-/// and one of them fetched every non-Short video in the library to do it. See
-/// issue #66. Nothing here is observed, so a hidden Shows tab is idle; a
+/// and one of them fetched every video in the library to do it. See issue
+/// #66. Nothing here is observed, so a hidden Shows tab is idle; a
 /// visible one is rebuilt after each save by `recomputingFromStore(id:_:)`,
 /// which is as live as a live query and costs nothing when the tab is away.
 struct ShowsGrid {

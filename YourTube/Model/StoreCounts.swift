@@ -9,14 +9,11 @@ import SwiftData
 /// its tab was on screen (issue #66). They are one-shot reads instead, driven
 /// by `View.recomputingFromStore(id:_:)`.
 enum StoreCounts {
-    /// What the Settings "Library" section reports. Three counts, no rows.
+    /// What the Settings "Library" section reports. Two counts, no rows.
     static func library(in context: ModelContext) throws -> LibraryCounts {
         LibraryCounts(
             subscriptions: try context.fetchCount(FetchDescriptor<Subscription>()),
-            videos: try context.fetchCount(FetchDescriptor<Video>()),
-            shorts: try context.fetchCount(FetchDescriptor<Video>(
-                predicate: #Predicate { $0.isLikelyShort }
-            ))
+            videos: try context.fetchCount(FetchDescriptor<Video>())
         )
     }
 
@@ -27,15 +24,8 @@ enum StoreCounts {
     /// subscriptions a count each is hundreds of round trips, and the answer
     /// is wanted for all of them at once. Only `channelId` is read back, so
     /// the rows come across narrow.
-    static func unwatchedByChannel(
-        in context: ModelContext,
-        includingShorts: Bool
-    ) throws -> [String: Int] {
-        var descriptor = FetchDescriptor<Video>(
-            predicate: includingShorts
-                ? #Predicate<Video> { !$0.isWatched }
-                : #Predicate<Video> { !$0.isWatched && !$0.isLikelyShort }
-        )
+    static func unwatchedByChannel(in context: ModelContext) throws -> [String: Int] {
+        var descriptor = FetchDescriptor<Video>(predicate: #Predicate<Video> { !$0.isWatched })
         descriptor.propertiesToFetch = [\.channelId]
         return try context.fetch(descriptor).reduce(into: [String: Int]()) {
             $0[$1.channelId, default: 0] += 1
@@ -43,10 +33,9 @@ enum StoreCounts {
     }
 }
 
-/// The three numbers the Settings library section shows. Zero everywhere
+/// The two numbers the Settings library section shows. Zero everywhere
 /// until the first read lands, which is one frame after the view appears.
 struct LibraryCounts: Equatable {
     var subscriptions = 0
     var videos = 0
-    var shorts = 0
 }

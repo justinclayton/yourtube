@@ -377,20 +377,6 @@ final class TitleCleanerTests: XCTestCase {
         XCTAssertEqual(rewriter.log.requests.count, 2)
     }
 
-    /// Shorts are never episodes of anything, so they're never rewritten.
-    func testShortsAreNotRewritten() async throws {
-        makeShow(channelId: "UC-qi", title: "QI")
-        let videos = seed(qi)
-        videos[0].isLikelyShort = true
-        try context.save()
-
-        let rewriter = StubRewriter()
-        await makeCleaner(rewriter).cleanStale()
-
-        XCTAssertFalse(try stored()[0].isTitleRewritten)
-        XCTAssertEqual(rewriter.log.requests.count, qi.count - 1)
-    }
-
     /// An answer the app can't use costs the viewer the rewrite, never the
     /// title: the stripped version stands, with its shouting taken off.
     func testAnUnusableAnswerLeavesTheCalmedStrippedTitle() async throws {

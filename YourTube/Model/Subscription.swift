@@ -24,15 +24,16 @@ final class Subscription {
         self.channelDescription = channelDescription
     }
 
-    /// YouTube's uploads playlist for a channel is the channel ID with the
-    /// second character rewritten from `C` to `U`. This is stable and saves us
-    /// a `channels.list` round trip per channel.
+    /// YouTube's long-form-uploads playlist for a channel: the channel ID
+    /// with its `UC` prefix rewritten to `UULF`. This is the channel's Videos
+    /// tab — no Shorts, no live streams — undocumented but stable, and it
+    /// saves us a `channels.list` round trip per channel.
     var uploadsPlaylistId: String {
         Self.uploadsPlaylistId(forChannelId: channelId)
     }
 
     static func uploadsPlaylistId(forChannelId id: String) -> String {
         guard id.count > 2, id.hasPrefix("UC") else { return id }
-        return "UU" + id.dropFirst(2)
+        return "UULF" + id.dropFirst(2)
     }
 }

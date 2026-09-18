@@ -13,8 +13,10 @@ import SwiftData
 /// what it was before playlist shows existed.
 ///
 /// New videos come in through `VideoIntake`, the same door the feed uses, so
-/// a playlist item gets its Shorts verdict before it is stored and appears in
-/// the feed the moment it lands, like any other video.
+/// a playlist item is stored and appears in the feed the moment it lands,
+/// like any other video — including a Short, since nothing filters a
+/// playlist's members the way `UULF` filters a channel's own uploads. See
+/// the "Watch for" note on issue #132.
 extension FeedRefresher {
 
     /// What one refresh of a playlist-backed show cost and found.

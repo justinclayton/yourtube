@@ -62,16 +62,16 @@ struct ShowPageView: View {
 
     /// The fetch scope for `channelVideos`: a channel-backed show still asks
     /// for its whole channel, but a playlist-backed one is narrowed to its
-    /// own members rather than every non-Short video in the store (issue
-    /// #86) — the same treatment the Your Shows badge fetch got in
+    /// own members rather than every video in the store (issue #86) — the
+    /// same treatment the Your Shows badge fetch got in
     /// `ShowManager+Badges.swift` (issue #66).
     static func channelVideosPredicate(for show: Show) -> Predicate<Video> {
         let channelId = show.channelId
         if show.isPlaylistBacked {
             let memberIds = show.memberVideoIds
-            return #Predicate<Video> { memberIds.contains($0.videoId) && !$0.isLikelyShort }
+            return #Predicate<Video> { memberIds.contains($0.videoId) }
         } else {
-            return #Predicate<Video> { $0.channelId == channelId && !$0.isLikelyShort }
+            return #Predicate<Video> { $0.channelId == channelId }
         }
     }
 
