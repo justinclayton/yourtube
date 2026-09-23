@@ -29,8 +29,8 @@ enum FeedRow<V>: Identifiable where V: Identifiable {
 /// A dedup by source, not a ranking: the first `cap` videos from each channel
 /// stay where they are, everything after folds into a single "+N more" row at
 /// the position the first hidden video would have taken. Order is never
-/// changed. The caller has already filtered Shorts and bucketed by day, so
-/// this only ever sees one day's worth of videos.
+/// changed. The caller has already bucketed by day, so this only ever sees
+/// one day's worth of videos.
 enum ChannelDailyCap {
     /// Feed keys with a stable form so the UI can persist expansion per fold.
     static func key(channelId: String, day: Date) -> String {

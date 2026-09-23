@@ -64,8 +64,7 @@ struct ChannelBoilerplate: Equatable {
 /// pass can't (#27) reuses the same cache fields and the same version.
 enum TitleStripper {
     /// Bump when the stripping logic changes so stored videos get re-cleaned
-    /// on the next launch (see `Video.titleCleanerVersion`). Mirrors
-    /// `ShortsHeuristic.version`.
+    /// on the next launch (see `Video.titleCleanerVersion`).
     static let version = 1
 
     /// Below this many titles a "shared" affix is just a coincidence.

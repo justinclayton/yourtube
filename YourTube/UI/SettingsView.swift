@@ -2,7 +2,6 @@ import SwiftUI
 import SwiftData
 
 enum SettingsKeys {
-    static let showShorts = "settings.showShorts"
     /// Name of the category the feed is filtered to; empty = all.
     static let feedCategory = "settings.feedCategory"
     /// Name of the category the Your Shows grid is filtered to; empty = all.
@@ -24,14 +23,13 @@ enum SettingsKeys {
 struct SettingsView: View {
     @Environment(AppServices.self) private var services
     @Environment(\.modelContext) private var modelContext
-    @AppStorage(SettingsKeys.showShorts) private var showShorts = false
     @AppStorage(SettingsKeys.channelDailyCap) private var channelDailyCap = SettingsKeys.defaultChannelDailyCap
     @AppStorage(TitleCleaner.rewriteEnabledKey) private var rewriteTitles = true
 
-    /// Counted on demand rather than held as a live query: three numbers
-    /// aren't worth keeping every video in the store in a tab's memory, let
-    /// alone re-reading them on every save from whichever tab is showing.
-    /// See `StoreCounts` and issue #66.
+    /// Counted on demand rather than held as a live query: two numbers aren't
+    /// worth keeping every video in the store in a tab's memory, let alone
+    /// re-reading them on every save from whichever tab is showing. See
+    /// `StoreCounts` and issue #66.
     @State private var counts = LibraryCounts()
 
     var body: some View {
@@ -62,7 +60,6 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Toggle("Show Shorts", isOn: $showShorts)
                     Stepper(value: $channelDailyCap, in: 0...10) {
                         LabeledContent(
                             "Per-channel daily cap",
@@ -76,9 +73,6 @@ struct SettingsView: View {
                     Text("Feed")
                 } footer: {
                     Text("""
-                    Shorts are detected heuristically: 3 minutes or less, tagged \
-                    #shorts, or vertical video.
-
                     The daily cap folds a channel's extra uploads on one day into \
                     a single "+N more" row.
                     """)
@@ -89,7 +83,6 @@ struct SettingsView: View {
                 Section("Library") {
                     LabeledContent("Subscriptions", value: "\(counts.subscriptions)")
                     LabeledContent("Videos", value: "\(counts.videos)")
-                    LabeledContent("Filtered as Shorts", value: "\(counts.shorts)")
                     if let last = services.feed.lastRefreshedAt {
                         LabeledContent("Last refresh") {
                             Text(last, format: .relative(presentation: .named))

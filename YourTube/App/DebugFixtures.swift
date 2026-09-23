@@ -15,19 +15,16 @@ import SwiftData
 ///
 /// The data is chosen to be awkward on purpose: diacritics, mixed case, a
 /// channel name that also appears in another channel's titles, a prolific
-/// channel to trip the daily cap, a few Shorts, two earmarked videos so
-/// Up Next shows its two-column grid, and one left partway through so
-/// Continue Watching has a card.
+/// channel to trip the daily cap, two earmarked videos so Up Next shows its
+/// two-column grid, and one left partway through so Continue Watching has a
+/// card.
 ///
 /// **Nothing here is hand-stamped.** The fixtures describe videos the way the
 /// API describes them and hand them to `VideoIntake`, the same door a refresh
-/// uses, with `CannedThumbnailVerdict` standing in for the thumbnail
-/// download; `isLikelyShort` and `classifierVersion` are then whatever the
-/// real heuristic decided. `Show` rows are made by `ShowManager`, and watched
-/// / Up Next / partway-through are set by `WatchState`. A fixture run
-/// therefore exercises the real paths rather than a parallel one that can
-/// drift away from them, and `DebugFixturesTests` asserts on what came
-/// through the door.
+/// uses. `Show` rows are made by `ShowManager`, and watched / Up Next /
+/// partway-through are set by `WatchState`. A fixture run therefore exercises
+/// the real paths rather than a parallel one that can drift away from them,
+/// and `DebugFixturesTests` asserts on what came through the door.
 enum DebugFixtures {
     static let launchArgument = "-seedFixtures"
 
@@ -96,17 +93,7 @@ enum DebugFixtures {
         // relative to now, so generating them twice would not give the same
         // answer.
         let videos = allVideos()
-        let intake = VideoIntake(
-            writer: StoreWriter(modelContainer: container),
-            // A fixture marked as a Short has a pillarboxed thumbnail, which
-            // is what YouTube actually serves for one. The heuristic only
-            // asks about a video inside the duration gate that no cheaper
-            // signal has already caught, so this produces exactly the
-            // declared verdicts — reached, not stamped.
-            thumbnails: CannedThumbnailVerdict(
-                pillarboxedIds: Set(videos.filter(\.isShort).map(\.id))
-            )
-        )
+        let intake = VideoIntake(writer: StoreWriter(modelContainer: container))
         try runBlocking { try await intake.admit(videos.map(\.item)) }
 
         try seed(container.mainContext, videos: videos)
@@ -139,12 +126,10 @@ enum DebugFixtures {
     // MARK: - One fixture video
 
     /// A video the fixtures want in the store, described the way the API
-    /// describes one so that intake can judge it like any other.
+    /// describes one so that intake can store it like any other.
     ///
-    /// `isShort` and `isWatched` are what the fixture *intends*, not fields
-    /// written to the row: the first is answered by the Shorts heuristic via
-    /// the canned thumbnail verdict, the second by `WatchState` once the row
-    /// exists.
+    /// `isWatched` is what the fixture *intends*, not a field written to the
+    /// row: it's applied by `WatchState` once the row exists.
     struct FixtureVideo {
         var id: String
         var channelId: String
@@ -154,7 +139,6 @@ enum DebugFixtures {
         var publishedAt: Date
         var seconds: Int
         var youtubeCategoryId: String?
-        var isShort = false
         var isWatched = false
 
         var item: YT.VideoItem {
@@ -195,7 +179,7 @@ enum DebugFixtures {
         /// leaves the videos uncategorised on YouTube's side, which is what
         /// most fixture channels want.
         var youtubeCategoryId: String?
-        var videos: [(title: String, hoursAgo: Double, seconds: Int, short: Bool)]
+        var videos: [(title: String, hoursAgo: Double, seconds: Int)]
     }
 
     /// See `Channel.classifier`.
@@ -208,21 +192,21 @@ enum DebugFixtures {
 
     private static let channels: [Channel] = [
         Channel(id: "UC-teamcoco", title: "Team Coco", categories: ["Comedy", "Podcasts & Interviews"], videos: [
-            ("Conan Visits Cuba", 3, 1260, false),
-            ("Conan O'Brien Needs A Friend: Full Episode", 26, 3900, false),
-            ("Conan tries the world's hottest wing #shorts", 27, 45, true),
+            ("Conan Visits Cuba", 3, 1260),
+            ("Conan O'Brien Needs A Friend: Full Episode", 26, 3900),
+            ("Conan tries the world's hottest wing #shorts", 27, 45),
         ]),
         Channel(id: "UC-beyonce", title: "Beyoncé", categories: ["Music & Audio Gear"], videos: [
-            ("Café Sessions, Part 4", 5, 620, false),
-            ("Rehearsal Diaries: São Paulo", 30, 780, false),
+            ("Café Sessions, Part 4", 5, 620),
+            ("Rehearsal Diaries: São Paulo", 30, 780),
         ]),
         Channel(id: "UC-lmnc", title: "Look Mum No Computer", categories: ["Music & Audio Gear", "Makers & DIY"], videos: [
-            ("Building a Synth From a Furby", 8, 1420, false),
-            ("Modular jam in the bunker", 50, 900, false),
+            ("Building a Synth From a Furby", 8, 1420),
+            ("Modular jam in the bunker", 50, 900),
         ]),
         Channel(id: "UC-berlin", title: "Berlin Vlogs", categories: [], videos: [
-            ("Straße walk in Kreuzberg", 12, 2400, false),
-            ("Späti tour", 13, 60, true),
+            ("Straße walk in Kreuzberg", 12, 2400),
+            ("Späti tour", 13, 60),
         ]),
         // The automatically-filed fixture, and the one that shows a channel's
         // two chips coming from two sources: the model reads the uploads as
@@ -240,23 +224,23 @@ enum DebugFixtures {
             ),
             youtubeCategoryId: "28",
             videos: [
-            ("Artemis III launch briefing", 1, 5400, false),
-            ("Mars weather this week", 2, 300, false),
-            ("Space station timelapse", 4, 240, false),
-            ("Live Q&A with the crew", 6, 4200, false),
-            ("Rocket engine test #shorts", 7, 20, true),
+            ("Artemis III launch briefing", 1, 5400),
+            ("Mars weather this week", 2, 300),
+            ("Space station timelapse", 4, 240),
+            ("Live Q&A with the crew", 6, 4200),
+            ("Rocket engine test #shorts", 7, 20),
             ]
         ),
         Channel(id: "UC-conanfans", title: "Conan Clips Archive", categories: ["Comedy"], videos: [
-            ("Late Night 1997: Triumph at Westminster", 100, 500, false),
+            ("Late Night 1997: Triumph at Westminster", 100, 500),
         ]),
         // Every title carries the show name after a pipe and an episode
         // number, so the title cleaner has something to bite on signed out.
         Channel(id: "UC-blocks", title: "Blocks Podcast", categories: ["Podcasts & Interviews"], youtubeCategoryId: "23", videos: [
-            ("Ali Macofsky | Blocks Podcast w/ Neal Brennan | Ep. 214", 9, 4500, false),
-            ("Mark Normand | Blocks Podcast w/ Neal Brennan | Ep. 213", 33, 4200, false),
-            ("Bill Burr | Blocks Podcast w/ Neal Brennan | FULL EPISODE | Ep. 212", 58, 5100, false),
-            ("Tig Notaro | Blocks Podcast w/ Neal Brennan | Ep. 211", 80, 3900, false),
+            ("Ali Macofsky | Blocks Podcast w/ Neal Brennan | Ep. 214", 9, 4500),
+            ("Mark Normand | Blocks Podcast w/ Neal Brennan | Ep. 213", 33, 4200),
+            ("Bill Burr | Blocks Podcast w/ Neal Brennan | FULL EPISODE | Ep. 212", 58, 5100),
+            ("Tig Notaro | Blocks Podcast w/ Neal Brennan | Ep. 211", 80, 3900),
         ]),
     ]
 
@@ -279,7 +263,6 @@ enum DebugFixtures {
                     publishedAt: Date(timeIntervalSinceNow: -video.hoursAgo * 3600),
                     seconds: video.seconds,
                     youtubeCategoryId: channel.youtubeCategoryId,
-                    isShort: video.short,
                     isWatched: index == channel.videos.count - 1
                 )
             }

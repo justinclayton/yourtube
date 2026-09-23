@@ -5,7 +5,8 @@ import Foundation
 ///
 /// Written as a scanner rather than a regex so the failure modes are obvious:
 /// anything malformed returns nil rather than silently yielding 0, which
-/// matters because the Shorts heuristic treats 0 as "unknown, not a Short".
+/// matters because `VideoDraft` treats a duration of 0 as "unknown, not
+/// storable" — a live stream or premiere reports `PT0S` until it airs.
 enum ISO8601Duration {
     static func seconds(from string: String) -> Int? {
         var chars = Array(string)

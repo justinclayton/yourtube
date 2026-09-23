@@ -23,12 +23,12 @@ import Observation
 /// `strippedTitle` stays put, which is what makes turning the rewrite off in
 /// Settings a field copy rather than a second pass over the whole store.
 ///
-/// Staleness is the Shorts classifier's mechanism exactly: each video records
-/// the cleaner version that produced its cached title, and a run picks up
-/// anything below the current one. `version` is the two tiers' versions added
-/// together, so bumping either one re-runs both — tier one's output is tier
-/// two's input, and a rewrite judged against a stale stripping isn't worth
-/// keeping.
+/// Staleness is tracked the same way `CategoryManager`'s classifier tracks
+/// it: each video records the cleaner version that produced its cached
+/// title, and a run picks up anything below the current one. `version` is
+/// the two tiers' versions added together, so bumping either one re-runs
+/// both — tier one's output is tier two's input, and a rewrite judged
+/// against a stale stripping isn't worth keeping.
 @Observable
 @MainActor
 final class TitleCleaner {

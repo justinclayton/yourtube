@@ -20,8 +20,8 @@ struct PlaylistChoice: Hashable, Sendable {
 /// show, and a series-based show browses by season.
 ///
 /// The difference from a channel-backed show is membership and nothing else.
-/// A channel's episodes are a rule ("every non-Short video from this
-/// channel") that `ShowManager` resolves against the store on every read; a
+/// A channel's episodes are a rule ("every video from this channel") that
+/// `ShowManager` resolves against the store on every read; a
 /// playlist's are a list only YouTube knows, so it's stored on the record and
 /// refreshed from the API when the show is opened (`FeedRefresher`
 /// `refreshPlaylistShow`). Everything downstream — the grid, the page, Play
