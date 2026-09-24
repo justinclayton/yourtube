@@ -58,23 +58,23 @@ struct ChannelEvidence: Sendable, Equatable {
 /// user, not a verdict the detector gets to act on unasked — see
 /// `ShowManager.applyAutomaticVerdicts`.
 ///
-/// The signals, in descending strength:
+/// The signals, weighted equally:
 /// - a median duration over twenty minutes: the channel's ordinary upload is
 ///   an episode, not a clip;
 /// - a regular cadence: a show has a slot, whether that's Tuesdays and
 ///   Fridays or every weekday;
 /// - numbered titles (`#147`, `Ep. 31`, `S20 E4`): only a series counts;
-/// - YouTube's own category being News & Politics or Entertainment;
-/// - "podcast" or "episode" in the descriptions.
+/// - "podcast" or "episode" in the descriptions;
+/// - YouTube's own category being News & Politics.
 ///
-/// The threshold is three, which is deliberately more than any single signal:
-/// long videos alone are a maker channel, a regular schedule alone is a vlog.
-/// Because the guess is only ever a `Show` row the user can flip, a false
-/// positive costs one swipe — and one that the detector may never undo.
+/// The threshold is two: no single signal is trusted alone, but any two
+/// agreeing is enough. Because the guess is only ever a `Show` row the user
+/// can flip, a false positive costs one swipe — and one that the detector
+/// may never undo.
 enum ShowDetector {
     /// Bump when the decision logic changes, so every channel is examined
     /// again on the next pass (see `ShowDetectionRunner`).
-    static let version = 2
+    static let version = 4
 
     // MARK: - Gate
 
@@ -93,10 +93,10 @@ enum ShowDetector {
 
     // MARK: - Scoring
 
-    static let threshold = 3
-    static let medianDurationPoints = 2
-    static let cadencePoints = 2
-    static let numberedTitlePoints = 2
+    static let threshold = 2
+    static let medianDurationPoints = 1
+    static let cadencePoints = 1
+    static let numberedTitlePoints = 1
     static let categoryPoints = 1
     static let descriptionPoints = 1
 
@@ -115,7 +115,7 @@ enum ShowDetector {
     static let descriptionKeywordShare = 0.5
 
     /// YouTube category IDs that tilt toward "show", by their API names.
-    static let showCategoryNames = ["25": "News & Politics", "24": "Entertainment"]
+    static let showCategoryNames = ["25": "News & Politics"]
 
     static let descriptionKeywords = ["podcast", "episode"]
 
@@ -226,9 +226,9 @@ enum ShowDetector {
         return descriptionKeywords.contains { haystack.contains($0) }
     }
 
-    /// The channel's usual YouTube category, when that category is one of the
-    /// two the PRD counts as evidence. Videos with no stored category don't
-    /// vote, so a half-migrated store degrades to "no signal".
+    /// The channel's usual YouTube category, when that category is the one
+    /// this counts as evidence. Videos with no stored category don't vote, so
+    /// a half-migrated store degrades to "no signal".
     static func dominantShowCategory(_ videos: [EpisodeSignals]) -> String? {
         let counts = videos.compactMap(\.categoryId).reduce(into: [String: Int]()) {
             $0[$1, default: 0] += 1
