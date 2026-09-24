@@ -217,27 +217,4 @@ final class ShowDetectionRunnerTests: XCTestCase {
         try await runner.detect()
         XCTAssertEqual(runner.lastExamined, 1)
     }
-
-    /// Shorts are never episodes, so they're never evidence either — a
-    /// channel's Shorts must not be able to drag its median duration down.
-    func testShortsAreNotEvidence() async throws {
-        seedShowShapedChannel(id: "UC-bellwether", title: "The Bellwether")
-        for index in 0..<30 {
-            context.insert(Video(
-                videoId: "UC-bellwether-s\(index)",
-                channelId: "UC-bellwether",
-                channelTitle: "The Bellwether",
-                title: "Clip \(index) #shorts",
-                videoDescription: "",
-                publishedAt: Date(timeIntervalSinceNow: -Double(index) * 3_600),
-                durationSeconds: 40,
-                isLikelyShort: true
-            ))
-        }
-        try context.save()
-
-        try await runner.detect()
-
-        XCTAssertTrue(try shows.isShow(channelId: "UC-bellwether"))
-    }
 }

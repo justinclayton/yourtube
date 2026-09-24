@@ -22,10 +22,10 @@ typealias StoreWriterProgress = @Sendable (Int, Int) -> Void
 /// per chunk: tens of interruptions over a long run rather than thousands.
 ///
 /// One writer rather than one per pass, because the passes overlap. A launch
-/// starts classification, cleaning and detection at once, and cleaning and
-/// Shorts re-classification write the same `Video` rows. Sharing a context
-/// keeps those serialized, the way sharing the main context used to, instead
-/// of leaving two contexts to collide over a row at save time.
+/// starts classification, cleaning and detection at once, and cleaning and a
+/// refresh's own inserts write the same `Video` rows. Sharing a context keeps
+/// those serialized, the way sharing the main context used to, instead of
+/// leaving two contexts to collide over a row at save time.
 ///
 /// Each pass lives in an extension beside the manager that drives it. The
 /// managers keep what they always had: the settings, the decision about when

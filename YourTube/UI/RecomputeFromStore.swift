@@ -21,7 +21,7 @@ extension View {
     /// - Parameters:
     ///   - id: Recomputes from scratch whenever this changes, the way
     ///     `task(id:)` does. Pass whatever the count depends on besides the
-    ///     store itself — the Shorts toggle, the shows on screen.
+    ///     store itself — the category chip, the shows on screen.
     ///   - settle: How long to wait for a burst of saves to finish.
     ///   - recompute: Reads the store and updates the view's state.
     func recomputingFromStore<ID: Equatable>(

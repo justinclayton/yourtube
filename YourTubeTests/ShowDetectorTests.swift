@@ -4,9 +4,8 @@ import XCTest
 /// The show detector guesses, so it gets a corpus rather than examples.
 ///
 /// NOTE: the corpus below is hand-written to sit on the decision boundary, not
-/// captured from live API responses — the same caveat as
-/// `ShortsHeuristicTests`. It's built from the six shapes the PRD names as the
-/// hard cases: a twice-weekly hour-long news show, a weekly numbered podcast,
+/// captured from live API responses. It's built from the six shapes the PRD
+/// names as the hard cases: a twice-weekly hour-long news show, a weekly numbered podcast,
 /// and a daily news show (all shows); a maker channel with irregular long
 /// videos, a vlog channel, and a clips channel (all not). Replace it with
 /// captured `videos.list` output before trusting any precision figure.

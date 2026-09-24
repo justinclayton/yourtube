@@ -83,32 +83,50 @@ Settled during issue #60 (2026-09-16):
 The door videos enter the store by. Everything between "the API handed back
 some JSON" and "there is a `Video` row" happens in `VideoIntake`
 (`YourTube/Feed/VideoIntake.swift`) and nowhere else: the DTO is mapped to a
-`VideoDraft`, the Shorts verdict is reached, and only then is the row
-inserted. Three callers use it — the feed refresh, a playlist-backed show's
-membership refresh, and `DebugFixtures` — and no other code in the app
-constructs a `Video`.
+`VideoDraft`, and then the row is inserted. Three callers use it — the feed
+refresh, a playlist-backed show's membership refresh, and `DebugFixtures` —
+and no other code in the app constructs a `Video`.
 
-Settled while doing issue #62 (2026-09-16):
+Settled while doing issue #62 (2026-09-16); revised by issue #132
+(2026-09-17), which moved Shorts exclusion out of intake entirely:
 
-- **Classify before inserting.** The feed's `@Query` watches the store, so a
-  video inserted before its verdict would appear and then vanish. The insert
-  is what's deferred, not the save; a Short is hidden from its first
-  appearance.
-- **The thumbnail verdict is accepted, not owned.** `ThumbnailVerdict` has two
-  adapters: `DownloadedThumbnailVerdict` in the app and
-  `CannedThumbnailVerdict` everywhere else. It is the only part of the
-  decision that leaves the process, so it is the only seam intake needs — and
-  with it, "held until the verdict is known" is a test with no `URLProtocol`
-  in it.
 - **Fixtures go through the door.** `DebugFixtures` describes videos the way
-  the API describes them and hands them to intake with a canned verdict, so
-  `isLikelyShort` and `classifierVersion` are reached rather than stamped.
-  There is no second way in that can drift.
-- **`VideoSignals` has one home.** Both derivations — from a hydrated DTO and
-  from a stored row being re-judged — live on `VideoSignals` itself, so the
-  two halves of one decision can't read different fields.
+  the API describes them and hands them to intake, so nothing about a stored
+  fixture video is hand-stamped. There is no second way in that can drift.
+
+Shorts are no longer judged here, or anywhere after intake: `FeedRefresher`
+fetches each channel's `UULF` (long-form-only) playlist instead of its
+uploads playlist, so a Short never reaches intake to begin with. See
+"Shorts" below.
 
 Not this module's job: finding out which videos there are. The subscription
 list, the channel fan-out, the refresh's phases and the quota they cost stay
 on `FeedRefresher`; `ShowManager` still owns the show catalogue, and
 `WatchState` still owns watched / Up Next / partway-through.
+
+## Shorts
+
+Excluded at the source, not filtered after the fact. Every channel's `UC…`
+ID has a matching `UULF…` playlist — its Videos tab, with no Shorts and no
+live streams — alongside the `UU…` uploads playlist that holds everything.
+`Subscription.uploadsPlaylistId` resolves to `UULF…`, so `FeedRefresher`
+never hydrates a Short in the first place.
+
+Settled during issue #132 (2026-09-17), replacing the duration-plus-signals
+heuristic (`ShortsHeuristic`, `ThumbnailAnalyzer`) that used to hide Shorts
+after storing them:
+
+- **A missing `UULF` playlist is an empty channel, not a failure.** A
+  Shorts-only channel has no Videos tab at all; a 404 on its `UULF` playlist
+  is treated the same as a page with nothing in it.
+- **Playlist-backed shows are the one gap.** A show built from a
+  user-chosen playlist is admitted through `VideoIntake` as-is — nothing
+  narrows a playlist's members the way `UULF` narrows a channel's own
+  uploads, so a Short a creator left in one still shows up as an episode.
+  Accepted rather than worked around: the user chose that playlist.
+- **A pre-#132 store still has the old fields on disk.** `VideoMigrationPlan`
+  (`YourTube/Model/SchemaMigration.swift`) deletes whatever the old heuristic
+  had already flagged before dropping the columns that flagged it, so the
+  signed-in store migrates rather than resets. A few false positives get
+  re-admitted on the next refresh; a few unflagged Shorts linger until they
+  age out.

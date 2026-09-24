@@ -5,7 +5,6 @@ import SwiftData
 /// newest first. Peer of the Shows tab; show episodes appear here too.
 struct FeedView: View {
     @Environment(AppServices.self) private var services
-    @AppStorage(SettingsKeys.showShorts) private var showShorts = false
     @AppStorage(SettingsKeys.feedCategory) private var feedCategory = ""
     @AppStorage(SettingsKeys.channelDailyCap) private var channelDailyCap = SettingsKeys.defaultChannelDailyCap
 
@@ -68,7 +67,6 @@ struct FeedView: View {
                     CategoryChips(names: chipNames, selected: selectedCategory)
                 }
                 SubscriptionFeedList(
-                    showShorts: showShorts,
                     channelIds: channelFilter,
                     channelDailyCap: channelDailyCap,
                     searchQuery: searchQuery,
@@ -81,7 +79,6 @@ struct FeedView: View {
             // of its own first page rather than inheriting how far the last
             // one had been opened up.
             .onChange(of: selectedCategory.wrappedValue) { window = FeedWindow() }
-            .onChange(of: showShorts) { window = FeedWindow() }
             .navigationTitle("Feed")
             .searchable(text: $searchQuery, prompt: "Search titles and channels")
             .toolbar {
@@ -90,31 +87,26 @@ struct FeedView: View {
                 }
             }
         }
-        .task {
-            // Heuristic changes apply to already-stored videos without a refresh.
-            try? await services.feed.intake.reclassifyStale()
-        }
     }
 }
 
-/// Split out so `@Query` can take a predicate that depends on the Shorts
-/// toggle and category filter — the macro needs them fixed at init time.
+/// Split out so `@Query` can take a predicate that depends on the category
+/// filter — the macro needs it fixed at init time.
 private struct SubscriptionFeedList: View {
     @Environment(AppServices.self) private var services
     @Environment(\.modelContext) private var modelContext
-    /// The inbox, one window at a time: matches the Shorts/category filter,
-    /// excludes watched and earmarked videos so triaging a row removes it
+    /// The inbox, one window at a time: matches the category filter, excludes
+    /// watched and earmarked videos so triaging a row removes it
     /// automatically, and stops at `window.limit` rows. See `FeedWindow`.
     @Query private var videos: [Video]
-    /// One row from the same Shorts/category filter without the triage
-    /// exclusion — used only to tell "nothing new" apart from "everything's
-    /// been triaged" for the empty state, which is a question about whether
-    /// anything at all matches, not about how much.
+    /// One row from the same category filter without the triage exclusion —
+    /// used only to tell "nothing new" apart from "everything's been triaged"
+    /// for the empty state, which is a question about whether anything at all
+    /// matches, not about how much.
     @Query private var allMatchingVideos: [Video]
     let channelDailyCap: Int
     let searchQuery: String
     let matchingChannels: [Subscription]
-    let showShorts: Bool
     let window: FeedWindow
     let showOlder: () -> Void
     /// The inbox predicate, kept so search can ask the store the same
@@ -140,7 +132,6 @@ private struct SubscriptionFeedList: View {
     @State private var sections: [(day: Date, rows: [FeedRow<Video>])] = []
 
     init(
-        showShorts: Bool,
         channelIds: [String]?,
         channelDailyCap: Int,
         searchQuery: String,
@@ -151,31 +142,19 @@ private struct SubscriptionFeedList: View {
         self.channelDailyCap = channelDailyCap
         self.searchQuery = searchQuery
         self.matchingChannels = matchingChannels
-        self.showShorts = showShorts
         self.window = window
         self.showOlder = showOlder
-        self.filterKey = "\(showShorts)|\(channelIds?.joined(separator: ",") ?? "*")"
+        self.filterKey = channelIds?.joined(separator: ",") ?? "*"
         let basePredicate: Predicate<Video>?
         let inboxPredicate: Predicate<Video>
-        switch (showShorts, channelIds) {
-        case (true, nil):
+        switch channelIds {
+        case nil:
             basePredicate = nil
             inboxPredicate = #Predicate<Video> { $0.savedForLaterAt == nil && !$0.isWatched }
-        case (false, nil):
-            basePredicate = #Predicate<Video> { !$0.isLikelyShort }
-            inboxPredicate = #Predicate<Video> {
-                !$0.isLikelyShort && $0.savedForLaterAt == nil && !$0.isWatched
-            }
-        case (true, let ids?):
+        case let ids?:
             basePredicate = #Predicate<Video> { ids.contains($0.channelId) }
             inboxPredicate = #Predicate<Video> {
                 ids.contains($0.channelId) && $0.savedForLaterAt == nil && !$0.isWatched
-            }
-        case (false, let ids?):
-            basePredicate = #Predicate<Video> { ids.contains($0.channelId) && !$0.isLikelyShort }
-            inboxPredicate = #Predicate<Video> {
-                ids.contains($0.channelId) && !$0.isLikelyShort
-                    && $0.savedForLaterAt == nil && !$0.isWatched
             }
         }
         self.inboxPredicate = inboxPredicate
@@ -192,10 +171,10 @@ private struct SubscriptionFeedList: View {
 
     private var isSearching: Bool { !LocalSearch.terms(in: searchQuery).isEmpty }
 
-    /// Re-reads the search results: the whole inbox under the current chip
-    /// and Shorts setting, narrowed by `LocalSearch`. Runs on every store
-    /// save while the field has something in it, so marking a result watched
-    /// still takes it off the list.
+    /// Re-reads the search results: the whole inbox under the current chip,
+    /// narrowed by `LocalSearch`. Runs on every store save while the field
+    /// has something in it, so marking a result watched still takes it off
+    /// the list.
     private func refreshSearchMatches() {
         guard isSearching else {
             if !searchMatches.isEmpty { searchMatches = [] }
@@ -206,8 +185,8 @@ private struct SubscriptionFeedList: View {
             sortBy: [SortDescriptor(\Video.publishedAt, order: .reverse)]
         )
         let all = (try? modelContext.fetch(descriptor)) ?? []
-        // The Shorts toggle and category chip are already in the predicate,
-        // so search only ever narrows what the chip would show.
+        // The category chip is already in the predicate, so search only ever
+        // narrows what the chip would show.
         searchMatches = LocalSearch.filter(all, query: searchQuery) {
             [$0.title, $0.displayTitle, $0.channelTitle]
         }
@@ -275,7 +254,7 @@ private struct SubscriptionFeedList: View {
                     Section("Channels") {
                         ForEach(matchingChannels, id: \.channelId) { subscription in
                             NavigationLink {
-                                ChannelView(subscription: subscription, showShorts: showShorts)
+                                ChannelView(subscription: subscription)
                             } label: {
                                 HStack(spacing: 12) {
                                     ChannelAvatar(url: subscription.thumbnailURL, size: 36)
@@ -303,9 +282,6 @@ private struct SubscriptionFeedList: View {
     /// a computed property so the dictionary build, sort, and cap pass run
     /// once per real change to the inbox, the cap setting, or which folds
     /// are open — not once per `body` evaluation. See issue #69.
-    ///
-    /// The Shorts filter is already in the `@Query` predicate, so hidden
-    /// Shorts never count against the cap.
     private func recomputeSections() {
         let calendar = Calendar.current
         let buckets = Dictionary(grouping: videos) {

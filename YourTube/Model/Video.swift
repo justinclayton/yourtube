@@ -3,9 +3,9 @@ import SwiftData
 
 /// A single video from a subscribed channel.
 ///
-/// `videoId` is the primary key throughout the app, which is what makes
-/// feed refresh and classification idempotent — re-running either is a no-op
-/// for videos we've already seen.
+/// `videoId` is the primary key throughout the app, which is what makes feed
+/// refresh idempotent — re-running it is a no-op for videos we've already
+/// seen.
 @Model
 final class Video {
     @Attribute(.unique) var videoId: String
@@ -16,14 +16,10 @@ final class Video {
     var publishedAt: Date
     var durationSeconds: Int
     var thumbnailURL: String?
-    /// Thumbnail aspect ratio, used by the Shorts heuristic. Nil if unknown.
-    var thumbnailWidth: Int?
-    var thumbnailHeight: Int?
     /// YouTube's own `snippet.categoryId` (`"25"` is News & Politics), read by
     /// `ShowDetector`. Nil for videos stored before it was fetched.
     var youtubeCategoryId: String?
 
-    var isLikelyShort: Bool
     var isWatched: Bool
     /// When the user earmarked this video to Up Next; nil when it isn't there.
     /// Named for the Watch Later feature it predates so existing stores open
@@ -40,8 +36,6 @@ final class Video {
     var lastPlayedAt: Date?
 
     var collection: VideoCollection?
-    /// Bumped when the classifier logic changes, to trigger re-classification.
-    var classifierVersion: Int
 
     /// The title as shown: the channel's boilerplate stripped, and then, for
     /// an episode of a show, the on-device model's rewrite of what was left.
@@ -63,7 +57,7 @@ final class Video {
     var seasonNumber: Int?
     var episodeNumber: Int?
     /// Bumped when the cleaning logic changes, to trigger re-cleaning of
-    /// stored videos. Mirrors `classifierVersion`; see `TitleCleaner`.
+    /// stored videos. See `TitleCleaner`.
     var titleCleanerVersion: Int = 0
 
     init(
@@ -75,16 +69,12 @@ final class Video {
         publishedAt: Date,
         durationSeconds: Int,
         thumbnailURL: String? = nil,
-        thumbnailWidth: Int? = nil,
-        thumbnailHeight: Int? = nil,
         youtubeCategoryId: String? = nil,
-        isLikelyShort: Bool = false,
         isWatched: Bool = false,
         savedForLaterAt: Date? = nil,
         upNextOrder: Int? = nil,
         resumePositionSeconds: Double? = nil,
         lastPlayedAt: Date? = nil,
-        classifierVersion: Int = 0,
         cleanedTitle: String? = nil,
         strippedTitle: String? = nil,
         isTitleRewritten: Bool = false,
@@ -100,16 +90,12 @@ final class Video {
         self.publishedAt = publishedAt
         self.durationSeconds = durationSeconds
         self.thumbnailURL = thumbnailURL
-        self.thumbnailWidth = thumbnailWidth
-        self.thumbnailHeight = thumbnailHeight
         self.youtubeCategoryId = youtubeCategoryId
-        self.isLikelyShort = isLikelyShort
         self.isWatched = isWatched
         self.savedForLaterAt = savedForLaterAt
         self.upNextOrder = upNextOrder
         self.resumePositionSeconds = resumePositionSeconds
         self.lastPlayedAt = lastPlayedAt
-        self.classifierVersion = classifierVersion
         self.cleanedTitle = cleanedTitle
         self.strippedTitle = strippedTitle
         self.isTitleRewritten = isTitleRewritten

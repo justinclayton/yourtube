@@ -20,8 +20,7 @@ import Foundation
 /// Both kinds of hiding — segments behind the toggle, older episodes behind
 /// the retention window — are presentation only. Nothing is deleted and
 /// nothing leaves the store, so every hidden video is still in the feed,
-/// still searchable, and still counted by everything outside the show — the
-/// same policy as Shorts hiding.
+/// still searchable, and still counted by everything outside the show.
 struct ShowListing {
     /// Full episodes in air order, newest first, with the retention window
     /// applied.
@@ -59,9 +58,8 @@ struct ShowListing {
 
     /// The listing for a show, from videos the caller already holds.
     ///
-    /// `videos` may hold anything: Shorts and videos outside the show's
-    /// source are filtered out here, so a caller's query doesn't have to be
-    /// exact.
+    /// `videos` may hold anything: videos outside the show's source are
+    /// filtered out here, so a caller's query doesn't have to be exact.
     ///
     /// The season is applied *before* classification rather than after, so
     /// the whole listing is about one thing: the segments behind the toggle,
@@ -257,15 +255,14 @@ struct ShowListing {
     /// Grouping by channel first only narrows the work for channel-backed
     /// shows; a playlist's members can come from anywhere.
     static func unwatchedCounts(from videos: [Video], shows: [Show]) -> [String: Int] {
-        let candidates = videos.filter { !$0.isLikelyShort }
-        let byChannel = Dictionary(grouping: candidates, by: \.channelId)
+        let byChannel = Dictionary(grouping: videos, by: \.channelId)
         return shows.reduce(into: [String: Int]()) { counts, show in
             let pool: [Video]
             switch show.source {
             case .channel(let channelId):
                 pool = byChannel[channelId] ?? []
             case .playlist:
-                pool = candidates
+                pool = videos
             }
             counts[show.id] = ShowListing(of: show, from: pool).unwatchedCount
         }
@@ -277,12 +274,9 @@ struct ShowListing {
     /// season: the raw material everything above is derived from, and the one
     /// place a show's membership rule is written down.
     ///
-    /// A channel-backed show's videos are every non-Short upload from its
-    /// channel; a playlist-backed show's are the ones its playlists hold, as
-    /// of the last membership refresh. Shorts are never episodes of anything
-    /// either way — a playlist can contain one, and it still isn't an episode
-    /// — and they never come back as segments either: a Short is not an
-    /// episode and not a cut-down of one.
+    /// A channel-backed show's videos are every upload from its channel; a
+    /// playlist-backed show's are the ones its playlists hold, as of the last
+    /// membership refresh.
     ///
     /// A nil season is "All seasons", which is also what a show without
     /// seasons always gets.
@@ -290,10 +284,10 @@ struct ShowListing {
         var members: [Video]
         switch show.source {
         case .channel(let channelId):
-            members = videos.filter { $0.channelId == channelId && !$0.isLikelyShort }
+            members = videos.filter { $0.channelId == channelId }
         case .playlist:
             let ids = Set(show.memberVideoIds)
-            members = videos.filter { ids.contains($0.videoId) && !$0.isLikelyShort }
+            members = videos.filter { ids.contains($0.videoId) }
         }
         if let season, show.hasSeasons {
             let ids = Set(show.videoIds(inSeason: season))

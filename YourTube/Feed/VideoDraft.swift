@@ -1,12 +1,11 @@
 import Foundation
 
-/// One hydrated video on its way into the store, with the signals its Shorts
-/// verdict is judged from.
+/// One hydrated video on its way into the store.
 ///
 /// A value type so the two halves of storing a video can sit on different
-/// actors: decoding and classification stay on `VideoIntake`, which owns the
-/// thumbnail verdict, while the row itself is only ever built and inserted on
-/// `StoreWriter`'s context. Nothing of SwiftData's crosses between them.
+/// actors: decoding stays on `VideoIntake`, while the row itself is only ever
+/// built and inserted on `StoreWriter`'s context. Nothing of SwiftData's
+/// crosses between them.
 struct VideoDraft: Sendable {
     var videoId: String
     var channelId: String
@@ -17,13 +16,9 @@ struct VideoDraft: Sendable {
     var durationSeconds: Int
     var thumbnailURL: String?
     var youtubeCategoryId: String?
-    var signals: VideoSignals
-    /// Filled in before the row is built: see `VideoIntake.admit`.
-    var isLikelyShort = false
 
     /// Nil for anything that can't be stored yet. Live streams and premieres
-    /// have no duration, and a 0-second video is one the Shorts heuristic
-    /// can't judge, so they're skipped rather than stored unjudgeable.
+    /// have no duration, so they're skipped rather than stored unjudgeable.
     init?(item: YT.VideoItem) {
         guard let snippet = item.snippet else { return nil }
         guard let durationString = item.contentDetails?.duration,
@@ -31,7 +26,6 @@ struct VideoDraft: Sendable {
               duration > 0
         else { return nil }
 
-        let thumbnail = snippet.thumbnails?.best
         videoId = item.id
         channelId = snippet.channelId ?? ""
         channelTitle = snippet.channelTitle ?? ""
@@ -39,15 +33,12 @@ struct VideoDraft: Sendable {
         videoDescription = snippet.description ?? ""
         publishedAt = snippet.publishedAt ?? .now
         durationSeconds = duration
-        thumbnailURL = thumbnail?.url
+        thumbnailURL = snippet.thumbnails?.best?.url
         youtubeCategoryId = snippet.categoryId
-        signals = VideoSignals(
-            snippet: snippet, durationSeconds: duration, thumbnail: thumbnail
-        )
     }
 
-    /// The row, carrying the verdict already reached for it.
-    func makeVideo(classifierVersion: Int) -> Video {
+    /// The row.
+    func makeVideo() -> Video {
         Video(
             videoId: videoId,
             channelId: channelId,
@@ -57,11 +48,7 @@ struct VideoDraft: Sendable {
             publishedAt: publishedAt,
             durationSeconds: durationSeconds,
             thumbnailURL: thumbnailURL,
-            thumbnailWidth: signals.thumbnailWidth,
-            thumbnailHeight: signals.thumbnailHeight,
-            youtubeCategoryId: youtubeCategoryId,
-            isLikelyShort: isLikelyShort,
-            classifierVersion: classifierVersion
+            youtubeCategoryId: youtubeCategoryId
         )
     }
 }

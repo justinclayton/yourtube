@@ -108,6 +108,22 @@ final class FeedRefresherTests: XCTestCase {
         super.tearDown()
     }
 
+    /// A channel with no long-form uploads at all (Shorts-only, or a channel
+    /// the `UULF` playlist otherwise 404s for) has nothing older to offer,
+    /// not a failure.
+    func testLoadOlderUploadsTreatsAMissingPlaylistAsEmpty() async throws {
+        StubURLProtocol.stub(matching: "playlistItems", json: "{}", statusCode: 404)
+        let refresher = FeedRefresher(
+            modelContext: context,
+            api: YouTubeAPI(session: StubURLProtocol.session()) { "test-access-token" },
+            intake: VideoIntake(writer: StoreWriter(modelContainer: container))
+        )
+
+        let added = try await refresher.loadOlderUploads(channelId: "UCshortsonly")
+
+        XCTAssertEqual(added, 0)
+    }
+
     /// A video from a channel earlier in the fan-out must reach the store
     /// while a later channel's own fetch hasn't even returned. Regression
     /// test for #67: `upsert` used to hold every new video until every
@@ -118,19 +134,19 @@ final class FeedRefresherTests: XCTestCase {
     /// means B cannot possibly finish before the test opens the gate — so
     /// there's no dependence on which of two equally-fast channels the task
     /// group happens to schedule first. `waitUntilStored` then gives channel
-    /// A's own chain (hydrate, classify, insert, cross-context merge) room
-    /// to land without a fixed, and therefore flaky, sleep.
+    /// A's own chain (hydrate, insert, cross-context merge) room to land
+    /// without a fixed, and therefore flaky, sleep.
     func testNewVideoAppearsWhileALaterChannelIsStillBeingFetched() async throws {
         SelectiveGateURLProtocol.reset()
         SelectiveGateURLProtocol.stubs = [
             ("subscriptions", Self.twoChannelSubscriptionsJSON),
-            ("playlistId=UUaaa", Self.playlistJSON(videoId: "videoA")),
-            ("playlistId=UUbbb", Self.playlistJSON(videoId: "videoB")),
+            ("playlistId=UULFaaa", Self.playlistJSON(videoId: "videoA")),
+            ("playlistId=UULFbbb", Self.playlistJSON(videoId: "videoB")),
             ("id=videoA", Self.videoJSON(id: "videoA")),
             ("id=videoB", Self.videoJSON(id: "videoB")),
         ]
         let gated = expectation(description: "channel B's playlist fetch requested")
-        SelectiveGateURLProtocol.gatedFragment = "playlistId=UUbbb"
+        SelectiveGateURLProtocol.gatedFragment = "playlistId=UULFbbb"
         SelectiveGateURLProtocol.gatedRequested = gated
 
         let refresher = makeRefresher(session: SelectiveGateURLProtocol.session())
@@ -153,10 +169,10 @@ final class FeedRefresherTests: XCTestCase {
     }
 
     /// The progress indicator must not sit at "checking channels" once the
-    /// (one and only) channel has been checked: hydration, Shorts
-    /// classification and the save still have to run, and each now gets its
-    /// own phase. Regression test for #67: `Status` used to have nothing but
-    /// the channel count, so the ring looked done while all of that ran.
+    /// (one and only) channel has been checked: hydration and the save still
+    /// have to run, and each now gets its own phase. Regression test for #67:
+    /// `Status` used to have nothing but the channel count, so the ring
+    /// looked done while all of that ran.
     func testPhaseAdvancesPastCheckingChannelsDuringHydration() async throws {
         SelectiveGateURLProtocol.reset()
         SelectiveGateURLProtocol.stubs = [
@@ -264,8 +280,8 @@ final class FeedRefresherTests: XCTestCase {
     // MARK: - Helpers
 
     /// Polls the store until it holds exactly `videoIds`, rather than
-    /// sleeping a fixed amount and hoping the async chain (hydrate, classify,
-    /// insert, cross-context merge) has landed by then.
+    /// sleeping a fixed amount and hoping the async chain (hydrate, insert,
+    /// cross-context merge) has landed by then.
     private func waitUntilStored(
         videoIds: Set<String>, timeout: TimeInterval = 3,
         file: StaticString = #filePath, line: UInt = #line
@@ -320,8 +336,6 @@ final class FeedRefresherTests: XCTestCase {
         "{ \"items\": [ { \"contentDetails\": { \"videoId\": \"\(videoId)\" } } ] }"
     }
 
-    /// A 10-minute video: outside the Shorts duration gate, so classifying
-    /// it never touches the thumbnail session.
     private static func videoJSON(id: String) -> String {
         """
         {
@@ -342,17 +356,11 @@ final class FeedRefresherTests: XCTestCase {
         """
     }
 
-    /// A refresher whose intake can't reach the network at all: the Shorts
-    /// verdict is canned, so the only stubbed traffic is the API's. What a
-    /// verdict does to the store is `VideoIntakeTests`' business.
     private func makeRefresher(session: URLSession) -> FeedRefresher {
         FeedRefresher(
             modelContext: context,
             api: YouTubeAPI(session: session) { "test-access-token" },
-            intake: VideoIntake(
-                writer: StoreWriter(modelContainer: container),
-                thumbnails: CannedThumbnailVerdict()
-            )
+            intake: VideoIntake(writer: StoreWriter(modelContainer: container))
         )
     }
 }

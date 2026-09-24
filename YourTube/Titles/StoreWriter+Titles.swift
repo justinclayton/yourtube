@@ -165,10 +165,10 @@ extension StoreWriter {
     ///
     /// Membership is the one `ShowManager` resolves, inverted into lookups
     /// because this is a pass over the store rather than over one show: a
-    /// channel-backed show's episodes are every non-Short video from its
-    /// channel, a playlist-backed show's are only the videos the playlist
-    /// holds. The host channel of a playlist-backed show is *not* a show, so
-    /// its other uploads keep their tier-one title.
+    /// channel-backed show's episodes are every video from its channel, a
+    /// playlist-backed show's are only the videos the playlist holds. The
+    /// host channel of a playlist-backed show is *not* a show, so its other
+    /// uploads keep their tier-one title.
     ///
     /// Precedence follows `show(containing:)`: a channel-backed show wins over
     /// a playlist-backed one on the same channel, and a playlist's member that
@@ -207,7 +207,7 @@ extension StoreWriter {
 
         let candidates = try modelContext.fetch(FetchDescriptor<Video>(
             predicate: #Predicate {
-                !$0.isTitleRewritten && !$0.isLikelyShort && $0.titleCleanerVersion == version
+                !$0.isTitleRewritten && $0.titleCleanerVersion == version
             },
             sortBy: [SortDescriptor(\.publishedAt, order: .reverse)]
         ))

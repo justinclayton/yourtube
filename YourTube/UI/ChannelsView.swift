@@ -17,7 +17,6 @@ enum ChannelsPresentation: String {
 /// and share the same long-press menu (`ChannelRowMenu`), so they can't drift
 /// out of sync.
 struct ChannelsView: View {
-    @AppStorage(SettingsKeys.showShorts) private var showShorts = false
     @AppStorage(SettingsKeys.channelsPresentation) private var presentation = ChannelsPresentation.list
     @AppStorage(SettingsKeys.channelsCategory) private var channelsCategory = ""
     /// Local, name-only filter over cached subscriptions; see `LocalSearch`.
@@ -26,7 +25,6 @@ struct ChannelsView: View {
     var body: some View {
         NavigationStack {
             ChannelList(
-                showShorts: showShorts,
                 searchQuery: searchQuery,
                 presentation: presentation,
                 channelsCategory: $channelsCategory
@@ -47,12 +45,9 @@ struct ChannelsView: View {
     }
 }
 
-/// Split out so the unwatched query can depend on the Shorts toggle, which
-/// `@Query` needs fixed at init time.
 private struct ChannelList: View {
     @Environment(AppServices.self) private var services
     @Environment(\.modelContext) private var modelContext
-    let showShorts: Bool
     let searchQuery: String
     let presentation: ChannelsPresentation
     @Binding var channelsCategory: String
@@ -73,7 +68,7 @@ private struct ChannelList: View {
     /// video: that one re-counted thousands of rows on every store change
     /// whichever tab was showing (issue #66), and not a `fetchCount` per row
     /// either, which is hundreds of round trips for one screen. See
-    /// `StoreCounts.unwatchedByChannel(in:includingShorts:)`.
+    /// `StoreCounts.unwatchedByChannel(in:)`.
     @State private var unwatchedByChannel: [String: Int] = [:]
 
     @State private var filing: Subscription?
@@ -107,8 +102,7 @@ private struct ChannelList: View {
         Set(showRecords.filter { $0.isActive && !$0.isPlaylistBacked }.map(\.channelId))
     }
 
-    init(showShorts: Bool, searchQuery: String, presentation: ChannelsPresentation, channelsCategory: Binding<String>) {
-        self.showShorts = showShorts
+    init(searchQuery: String, presentation: ChannelsPresentation, channelsCategory: Binding<String>) {
         self.searchQuery = searchQuery
         self.presentation = presentation
         self._channelsCategory = channelsCategory
@@ -164,7 +158,6 @@ private struct ChannelList: View {
                             unwatchedByChannel: unwatchedByChannel,
                             showChannelIds: showChannelIds,
                             priorityChannelIds: priorityChannelIds,
-                            showShorts: showShorts,
                             onFile: { filing = $0 },
                             onAddPlaylist: { pickingPlaylist = $0 },
                             onError: { channelError = $0 }
@@ -186,11 +179,8 @@ private struct ChannelList: View {
             } message: {
                 Text(channelError ?? "")
             }
-            .recomputingFromStore(id: showShorts) {
-                unwatchedByChannel = (try? StoreCounts.unwatchedByChannel(
-                    in: modelContext,
-                    includingShorts: showShorts
-                )) ?? [:]
+            .recomputingFromStore(id: 0) {
+                unwatchedByChannel = (try? StoreCounts.unwatchedByChannel(in: modelContext)) ?? [:]
             }
         }
     }
@@ -224,7 +214,7 @@ private struct ChannelList: View {
             onError: { channelError = $0 }
         )
         return NavigationLink {
-            ChannelView(subscription: subscription, showShorts: showShorts)
+            ChannelView(subscription: subscription)
         } label: {
             ChannelRow(
                 subscription: subscription,
@@ -643,13 +633,11 @@ struct ChannelView: View {
     @State private var reachedEnd = false
     @State private var isPickingPlaylist = false
 
-    init(subscription: Subscription, showShorts: Bool) {
+    init(subscription: Subscription) {
         self.subscription = subscription
         let channelId = subscription.channelId
         _videos = Query(
-            filter: showShorts
-                ? #Predicate<Video> { $0.channelId == channelId }
-                : #Predicate<Video> { $0.channelId == channelId && !$0.isLikelyShort },
+            filter: #Predicate<Video> { $0.channelId == channelId },
             sort: [SortDescriptor(\Video.publishedAt, order: .reverse)]
         )
     }

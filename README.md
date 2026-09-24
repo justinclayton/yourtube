@@ -39,7 +39,7 @@ before you build this.
 |---|---|
 | Subscription feed | Works. Fans out across subscribed channels' uploads playlists. |
 | Playlists as shows | Works. Listing a channel's playlists and paging one costs 1 unit per call, spent only on demand. |
-| Hiding Shorts | Heuristic, ~95% accurate. There is no `isShort` flag in the API. |
+| Hiding Shorts | Works. The channel's `UULF` (long-form-only) playlist is fetched instead of its uploads playlist, so a Short never enters the store. |
 | Up Next (earmarks), watched state | Works, stored **on-device**. YouTube's own Watch Later isn't API-accessible, and this app doesn't try to mirror it. |
 | Search | Works, **local only**: filters cached titles and channel names on device. The API's search endpoint costs 100 quota units per call, so it isn't used. |
 | Playback | Works, via YouTube's IFrame player. |
@@ -60,29 +60,21 @@ So: expect to tap "Sign in" about once a week. The app is built around this
 rather than fighting it — expiry shows as a banner above the feed, and cached
 videos stay readable while signed out.
 
-### Why Shorts detection is a guess
+### How Shorts are excluded
 
-The API has never exposed a Shorts flag. The most accurate signal available is
-probing `youtube.com/shorts/{id}` and watching for a redirect (~99% accurate),
-but that's an undocumented endpoint, it rate-limits aggressively, and it
-arguably breaches the API Terms of Service. This app doesn't use it.
+The API has never exposed a Shorts flag, but every channel carries a
+`UULF<suffix>` playlist alongside its `UU<suffix>` uploads playlist — its
+Videos tab, with no Shorts and no live streams. It's undocumented, but stable
+and free to call the ordinary way: `playlistItems.list` at 1 quota unit,
+exactly like the uploads playlist it replaced. `Subscription.uploadsPlaylistId`
+fetches `UULF` instead of `UU`, so a Short never enters the store to begin
+with, rather than being fetched and then hidden.
 
-Instead: a video is treated as a Short if it's **3 minutes or under** (YouTube's
-cap since late 2024) *and* one of these corroborates it:
+A channel with no long-form uploads (Shorts-only) has no `UULF` playlist at
+all; a 404 on it is treated as an empty page, not a failure.
 
-- tagged `#shorts` in the title or description;
-- a portrait thumbnail (rare — the API reports 16:9 for nearly everything);
-- a **pillarboxed thumbnail**: YouTube renders vertical video into a 16:9
-  thumbnail with a blurred fill either side. `ThumbnailAnalyzer` downloads the
-  small `hqdefault.jpg` (no API quota) and compares edge detail in the side
-  strips against the centre. Shorts score well under half; regular videos are
-  roughly even. This catches the untagged majority.
-
-Duration alone isn't enough — trailers, clips, and pre-2020 uploads are often
-short.
-
-Because it's a guess, Shorts are **hidden, never deleted**. If something you
-wanted gets filtered, flip *Show Shorts* in Settings.
+Playlist-backed shows are the one exception: a user-chosen playlist is
+admitted as-is, so a Short a creator put in one still shows up as an episode.
 
 ## Setup
 
@@ -148,12 +140,12 @@ calendar reminder.
 The tab bar is Shows, Feed, Channels, Settings. Feed is an **inbox**: videos
 appear newest first until you triage them, and once a video is watched or
 earmarked it leaves the feed, so the feed trends toward empty instead of
-scrolling forever. A fully triaged feed (for the current category/Shorts
-filter) shows an "All caught up" state rather than a blank list. Every row
-has swipe actions — leading to earmark to Up Next, trailing to mark
-watched — so triage is a gesture, not a trip into the player. Category
-chips, the Priority chip, the Shorts toggle, the per-channel daily cap, and
-local search all keep working over whatever's left in the inbox.
+scrolling forever. A fully triaged feed (for the current category filter)
+shows an "All caught up" state rather than a blank list. Every row has swipe
+actions — leading to earmark to Up Next, trailing to mark watched — so
+triage is a gesture, not a trip into the player. Category chips, the
+Priority chip, the per-channel daily cap, and local search all keep working
+over whatever's left in the inbox.
 
 The inbox is read a page at a time — the newest 300 rows, with a "Show older"
 row at the foot for the next 300 — so the day grouping and the daily cap only
@@ -232,8 +224,7 @@ entirely for it.
 episodes*, and the older ones drop off the page and out of the counts with a
 footer saying how many went and why. Neither kind of hiding deletes anything
 or touches the store — hidden episodes and segments are still in the feed,
-still searchable, still there when the setting is cleared. It's the same
-policy as Shorts hiding.
+still searchable, still there when the setting is cleared.
 
 Four per-show settings live behind the button in the top corner. **Play order**
 is the newest-first/oldest-first choice above. **Segments** is a "Hide
@@ -256,9 +247,8 @@ as a standing decision, so the automatic detector below can't overrule either
 one. Channels marks its shows with a small screen icon and lists them first
 inside each category, above a rule that reads "Other channels", so the split
 the app has made is visible at a glance; a category that is all shows or no
-shows has no rule to draw. A show's episodes are every non-Short video from
-its channel, resolved live, so a new upload is an episode the moment it
-lands.
+shows has no rule to draw. A show's episodes are every video from its
+channel, resolved live, so a new upload is an episode the moment it lands.
 
 A channel-backed show can also be un-flagged from its own page: the toolbar
 menu next to Show settings offers "Not a show" too, for when a detector guess
@@ -294,21 +284,21 @@ arrive with the routine refresh; a playlist's membership is a list only
 YouTube knows, so it is asked for when the show is created and again when its
 page is opened — one quota unit per 50 items, never during the routine
 refresh. New videos a playlist turns up are stored through `VideoIntake`, the
-same door the feed uses, Shorts verdict first, so they show up in the feed
-too. Signed out,
-nothing is asked and the page lists what the store already holds.
+same door the feed uses, so they show up in the feed too — including a Short,
+since nothing filters a playlist's members the way `UULF` filters a channel's
+own uploads (see "How Shorts are excluded" above). Signed out, nothing is
+asked and the page lists what the store already holds.
 
 ### Guessing which channels are shows
 
 Most shows file themselves. After a refresh (and at launch) a detector reads
 each channel's stored videos and guesses, so Your Shows fills up without your
-doing anything. It's guesswork of the same kind as the Shorts heuristic: a
-channel has to have a few full-length uploads to be considered at all, and
-then several weak, equally-weighted signals are summed against a threshold of
-two — a median duration over twenty minutes, a regular posting slot, numbered
-episode titles, "podcast" or "episode" in the descriptions, and YouTube's own
-News & Politics category. No single signal is trusted alone, but any two
-agreeing is enough.
+doing anything. It's guesswork: a channel has to have a few full-length
+uploads to be considered at all, and then several weak, equally-weighted
+signals are summed against a threshold of two — a median duration over twenty
+minutes, a regular posting slot, numbered episode titles, "podcast" or
+"episode" in the descriptions, and YouTube's own News & Politics category. No
+single signal is trusted alone, but any two agreeing is enough.
 
 Every guess says why. The show page and the channel's Categories sheet list
 the reasons the detector found, so a wrong one can be recognised and
@@ -438,7 +428,7 @@ house style that can be derived rather than guessed.
 Only show episodes are rewritten: it's one model call per title, and
 clickbait is most in the way where the app is pretending to be television.
 Episodes are resolved by the same membership rule `ShowManager` uses — every
-non-Short upload of a channel-backed show, only the playlist's members for a
+upload of a channel-backed show, only the playlist's members for a
 playlist-backed one — so the host channel of a podcast playlist keeps tier one
 on everything that isn't the podcast. Everything else gets tier one alone, and
 so does every device without Apple Intelligence — the feature degrades rather
@@ -467,10 +457,11 @@ own `ModelContext` (see "Where the writes go") and never in front of the
 feed: results are cached on `Video` (`cleanedTitle`,
 `strippedTitle`, `episodeNumber`, `seasonNumber`) and a video with none yet
 shows its raw title. Each video records the `TitleCleaner.version` that
-produced its result, exactly as the Shorts heuristic does. That version is the
-two tiers' versions added together, so bumping either one re-cleans the whole
-store on the next launch with no migration — a rewrite judged against a
-stripping that has since changed isn't worth keeping.
+produced its result, the same way `CategoryManager`'s classifier tracks
+staleness. That version is the two tiers' versions added together, so
+bumping either one re-cleans the whole store on the next launch with no
+migration — a rewrite judged against a stripping that has since changed
+isn't worth keeping.
 
 The player shows YouTube's original title under the cleaned one whenever the
 two differ, so nothing the app changed is hidden.
@@ -591,7 +582,7 @@ YourTube/
   App/        Entry point, DI wiring, config loading
   Auth/       Google OAuth (PKCE), Keychain, token lifecycle
   API/        YouTube Data API client, DTOs, quota tracking
-  Feed/       Refresh algorithm, Shorts heuristic, thumbnail analysis
+  Feed/       Refresh algorithm, video intake
   UpNext/     The earmark list behind the Shows tab
   Shows/      The show catalogue behind Your Shows, and the show detector
   Categorize/ On-device channel classification, category management
@@ -736,17 +727,13 @@ The `yourtube-sim-fixtures` entry in `.claude/launch.json` carries it.
 
 Run with Cmd-U. Coverage is concentrated where the risk is:
 
-- `ShortsHeuristicTests` and `ShowDetectorTests` — the two components that
-  guess. The show detector is run against a corpus of the six shapes that sit
-  on its boundary: a twice-weekly news show, a numbered podcast, a daily news
-  show buried in its own segments, a maker channel, a vlog, and a clips
-  channel.
+- `ShowDetectorTests` — the one component that guesses whether a channel is a
+  show, run against a corpus of the six shapes that sit on its boundary: a
+  twice-weekly news show, a numbered podcast, a daily news show buried in its
+  own segments, a maker channel, a vlog, and a clips channel.
 - `VideoIntakeTests` — the one door videos enter the store by: the DTO
-  mapping, the Shorts verdict, and the insert. Pins that a new video never
-  reaches the store before its verdict, since the feed observes the store
-  live, and that the thumbnail is only asked about where it could change the
-  answer. No network: the thumbnail verdict is an injected dependency, canned
-  here and `URLSession`-backed in the app.
+  mapping and the insert, and that a live stream or premiere with no
+  duration is skipped rather than stored unjudgeable.
 - `FeedRefresherTests` — a refresh against stubbed API responses: the
   subscription reconciliation, the channel fan-out, and the phases the
   progress ring shows.
@@ -764,12 +751,14 @@ Run with Cmd-U. Coverage is concentrated where the risk is:
   leaves nothing pending on the main context.
 - `StoreCountsTests` — the badge and library counts, now that they're read
   from the store on demand rather than counted out of a live query. Pins that
-  the cheap answer is the same answer: the Channels badges still follow the
-  Shorts setting, and the Your Shows badges still respect segments and the
-  retention window.
+  the cheap answer is the same answer: the Your Shows badges still respect
+  segments and the retention window.
+- `SchemaMigrationTests` — that a pre-#132 store (still carrying the Shorts
+  heuristic's fields) migrates onto the current schema instead of resetting,
+  and that the rows it had already flagged as Shorts are deleted in the
+  process.
 - `ShowManagerTests` — the show catalogue: membership for both kinds of show
-  (a channel's non-Short videos, a playlist's items — Shorts are never
-  episodes either way), seasons and the picker's filter,
+  (a channel's videos, a playlist's items), seasons and the picker's filter,
   episode-versus-segment classification at the threshold and when the
   threshold moves, unwatched counts under a retention window, what Play next
   opens under each play order (an episode in progress always winning), the
@@ -798,11 +787,10 @@ Run with Cmd-U. Coverage is concentrated where the risk is:
   rules, on the titles Breaking Points and #87 actually produced.
 - `ISO8601DurationTests`, `PKCETests`, `SubscriptionTests`.
 
-**The Shorts corpus is synthetic**, and so is the show detector's. The cases
-in `ShortsHeuristicTests.corpus` and `ShowDetectorTests` are hand-written to
-cover the decision boundary, not captured from live API responses. Replace
-them with real `videos.list` output before trusting the precision and recall
-figures.
+**The show detector's corpus is synthetic.** The cases in `ShowDetectorTests`
+are hand-written to cover the decision boundary, not captured from live API
+responses. Replace them with real `videos.list` output before trusting the
+precision and recall figures.
 
 ## Roadmap
 
