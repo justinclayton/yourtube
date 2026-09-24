@@ -304,11 +304,11 @@ Most shows file themselves. After a refresh (and at launch) a detector reads
 each channel's stored videos and guesses, so Your Shows fills up without your
 doing anything. It's guesswork of the same kind as the Shorts heuristic: a
 channel has to have a few full-length uploads to be considered at all, and
-then several weak signals are summed against a threshold — a median duration
-over twenty minutes, a regular posting slot, numbered episode titles,
-YouTube's own News & Politics or Entertainment category, and "podcast" or
-"episode" in the descriptions. No single signal is enough, because long
-videos alone are a maker channel and a reliable schedule alone is a vlog.
+then several weak, equally-weighted signals are summed against a threshold of
+two — a median duration over twenty minutes, a regular posting slot, numbered
+episode titles, "podcast" or "episode" in the descriptions, and YouTube's own
+News & Politics category. No single signal is trusted alone, but any two
+agreeing is enough.
 
 Every guess says why. The show page and the channel's Categories sheet list
 the reasons the detector found, so a wrong one can be recognised and
