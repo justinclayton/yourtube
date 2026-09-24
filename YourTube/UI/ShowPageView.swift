@@ -226,6 +226,17 @@ struct ShowPageView: View {
         dismiss()
     }
 
+    /// Accepts the detector's guess as the user's own decision, which the
+    /// detector can then never overrule. The flag is no longer a guess, so
+    /// the "Flagged as a show automatically" banner goes with it.
+    private func keepAsShow() {
+        try? services.shows.setIsShow(
+            true,
+            channelId: show.channelId,
+            channelTitle: subscription?.title ?? show.title
+        )
+    }
+
     /// Removes a playlist-backed show outright, no confirmation, and leaves
     /// the page since the show it was showing is gone. The channel's own
     /// show flag is a separate record and is never touched here.
@@ -269,9 +280,10 @@ struct ShowPageView: View {
                 }
             }
             // A playlist-backed show has no channel-level decision to
-            // record, so it gets the reasons without the button.
+            // record, so it gets the reasons without the buttons.
             DetectorReasons(
                 show: show,
+                keepAsShow: show.isPlaylistBacked ? nil : keepAsShow,
                 markAsNotAShow: show.isPlaylistBacked ? nil : markAsNotAShow
             )
             seasonPicker
@@ -609,10 +621,14 @@ private extension Video {
 ///
 /// Collapsed to one line by default — most of the time the guess is right and
 /// the reasons are noise above the episodes. Tapping the line reveals them,
-/// together with the one correction that matters: "Not a show", which records
-/// the standing decision the detector can never overrule.
+/// together with the two answers the user can give: "Keep as a show" and
+/// "Not a show". Either records a standing decision the detector can never
+/// overrule, and either one ends the guess, so the banner goes.
 struct DetectorReasons: View {
     let show: Show
+    /// Records "this is a show" as the user's decision. Nil alongside
+    /// `markAsNotAShow`, for the same reason.
+    var keepAsShow: (() -> Void)?
     /// Records "not a show" and leaves the page. Nil when the page has no
     /// channel-level decision to record (a playlist-backed show), in which
     /// case only the reasons are offered.
@@ -659,8 +675,18 @@ struct DetectorReasons: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
-                    if let markAsNotAShow {
-                        HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    if let keepAsShow, let markAsNotAShow {
+                        HStack(spacing: 12) {
+                            Button {
+                                keepAsShow()
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "checkmark")
+                                    Text("Keep as a show")
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .font(.subheadline)
                             Button(role: .destructive) {
                                 markAsNotAShow()
                             } label: {
@@ -671,10 +697,6 @@ struct DetectorReasons: View {
                             }
                             .buttonStyle(.bordered)
                             .font(.subheadline)
-                            Text("That decision sticks.")
-                                .font(.caption)
-                                .foregroundStyle(.tertiary)
-                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                 }
