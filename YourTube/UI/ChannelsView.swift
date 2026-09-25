@@ -626,12 +626,17 @@ struct ChannelView: View {
     @Environment(AppServices.self) private var services
     let subscription: Subscription
     @Query private var videos: [Video]
+    /// The channel's own show row, if the catalogue has one, so the toolbar
+    /// menu can offer the flag in whichever direction it isn't. A tombstone
+    /// ("not a show") is a row too; `isActive` tells them apart.
+    @Query private var showRecords: [Show]
 
     @State private var isLoadingMore = false
     @State private var loadMoreError: String?
     /// Set once a "load older" call returns nothing new, so we stop offering it.
     @State private var reachedEnd = false
     @State private var isPickingPlaylist = false
+    @State private var showFlagError: String?
 
     init(subscription: Subscription) {
         self.subscription = subscription
@@ -640,6 +645,12 @@ struct ChannelView: View {
             filter: #Predicate<Video> { $0.channelId == channelId },
             sort: [SortDescriptor(\Video.publishedAt, order: .reverse)]
         )
+        let showId = ShowSource.channel(id: channelId).showId
+        _showRecords = Query(filter: #Predicate<Show> { $0.id == showId })
+    }
+
+    private var isShow: Bool {
+        showRecords.first?.isActive ?? false
     }
 
     var body: some View {
@@ -677,19 +688,49 @@ struct ChannelView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            // The other half of "Add playlist as show": on the channel page
-            // itself, for when you got here by browsing rather than by
-            // long-pressing a row.
+            // The show flag and "Add playlist as show", on the channel page
+            // itself: tapping a row lands here, and the swipe and long-press
+            // menus in the list are easy to miss.
             ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    isPickingPlaylist = true
+                Menu {
+                    Button {
+                        setIsShow(!isShow)
+                    } label: {
+                        Label(
+                            isShow ? "Not a show" : "Mark as show",
+                            systemImage: isShow ? "tv.slash" : "tv"
+                        )
+                    }
+                    Button {
+                        isPickingPlaylist = true
+                    } label: {
+                        Label("Add playlist as show…", systemImage: "list.bullet.rectangle.portrait")
+                    }
                 } label: {
-                    Label("Add playlist as show", systemImage: "list.bullet.rectangle.portrait")
+                    Label("Show options", systemImage: isShow ? "tv.fill" : "tv")
                 }
             }
         }
         .sheet(isPresented: $isPickingPlaylist) {
             PlaylistShowPicker(subscription: subscription)
+        }
+        .alert("Couldn't update channel", isPresented: Binding(
+            get: { showFlagError != nil },
+            set: { if !$0 { showFlagError = nil } }
+        )) {
+            Button("OK", role: .cancel) { showFlagError = nil }
+        } message: {
+            Text(showFlagError ?? "")
+        }
+    }
+
+    /// Both directions are recorded, as from the list's menu: "Not a show"
+    /// is a standing decision the detector can't overrule.
+    private func setIsShow(_ isOn: Bool) {
+        do {
+            try services.shows.setIsShow(isOn, channelId: subscription.channelId, channelTitle: subscription.title)
+        } catch {
+            showFlagError = error.localizedDescription
         }
     }
 

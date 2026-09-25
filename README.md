@@ -241,8 +241,8 @@ and Up Next as well as to the page. Other shows are unaffected; a show's
 poster in the grid is always channel art, because that's what makes it a show
 and not a video.
 
-Flag a channel as a show from the Channels tab: swipe it, long-press it, or
-use its Categories sheet. Both answers are recorded — "Not a show" is stored
+Flag a channel as a show from the Channels tab: swipe it, long-press it, use
+its Categories sheet, or open the channel and use the TV menu in its toolbar. Both answers are recorded — "Not a show" is stored
 as a standing decision, so the automatic detector below can't overrule either
 one. Channels marks its shows with a small screen icon and lists them first
 inside each category, above a rule that reads "Other channels", so the split
@@ -261,7 +261,7 @@ catalogue.
 A channel isn't always the unit you think in. A podcast hosted on a network
 channel is its own show, and a series-based show has a playlist per series.
 So a playlist can be a show: long-press a channel in the Channels tab and pick
-**Add playlist as show**, or use the button on the channel's own page.
+**Add playlist as show**, or pick it from the TV menu on the channel's own page.
 
 The sheet lists the channel's playlists with their video counts. Pick one and
 that playlist is the show. Pick several and they become one show with a season
