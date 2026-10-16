@@ -150,7 +150,7 @@ final class CategoryManagerTests: XCTestCase {
             var seen: [String] = []
             func categorize(_ channel: ChannelDescriptor, among categories: [String]) async throws -> CategoryGuess {
                 seen = categories
-                return await CategoryGuess(categories: [CategoryManager.priorityName, "Cars"])
+                return CategoryGuess(categories: [CategoryManager.priorityName, "Cars"])
             }
         }
         let recorder = Recorder()
@@ -1102,7 +1102,7 @@ final class CategoryPromptTests: XCTestCase {
     }
 
     /// Real drift seen from the on-device model.
-    @MainActor func testResolveToleratesDroppedOrMangledTokens() {
+    func testResolveToleratesDroppedOrMangledTokens() {
         let categories = CategoryManager.defaultCategoryNames
         XCTAssertEqual(CategoryPrompt.resolve("Music’ Audio Gear", among: categories), "Music & Audio Gear")
         XCTAssertEqual(CategoryPrompt.resolve("Music’ & Audio Gear", among: categories), "Music & Audio Gear")
@@ -1119,7 +1119,6 @@ final class CategoryPromptTests: XCTestCase {
 
 /// The policy itself, without a store: one category from the model, a second
 /// only from YouTube's own filing.
-@MainActor
 final class CategoryDecisionTests: XCTestCase {
     private let taxonomy = CategoryManager.defaultCategoryNames
 
