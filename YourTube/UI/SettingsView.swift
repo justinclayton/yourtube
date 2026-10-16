@@ -38,8 +38,11 @@ struct SettingsView: View {
                 Section("Account") {
                     switch services.auth.state {
                     case .signedIn:
-                        Label("Signed in", systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
+                        Label(
+                            services.auth.channel.map { "Signed in as \($0.title)" } ?? "Signed in",
+                            systemImage: "checkmark.circle.fill"
+                        )
+                        .foregroundStyle(.green)
                         Button("Sign out", role: .destructive) {
                             Task { await services.auth.signOut() }
                         }
@@ -50,6 +53,11 @@ struct SettingsView: View {
                             Task { await services.auth.signIn() }
                         }
                         .disabled(services.auth.isWorking)
+                        if let channel = services.auth.channel {
+                            Text("Showing \(channel.title)'s data. Signing in as another channel opens that channel's data instead.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
 
                     if let error = services.auth.lastError {

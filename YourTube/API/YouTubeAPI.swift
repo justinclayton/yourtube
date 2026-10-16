@@ -51,6 +51,18 @@ struct YouTubeAPI: Sendable {
 
     // MARK: - Endpoints
 
+    /// The channel the token was issued for: the one picked at sign-in.
+    /// 1 quota unit.
+    func myChannel() async throws -> ChannelIdentity {
+        let page: YT.PageResponse<YT.Channel> = try await get(
+            path: "channels",
+            query: ["part": "snippet", "mine": "true"],
+            cost: 1
+        )
+        guard let channel = page.items.first else { throw APIError.malformedResponse }
+        return ChannelIdentity(id: channel.id, title: channel.snippet?.title ?? channel.id)
+    }
+
     /// All channels the signed-in user subscribes to. 1 quota unit per page of 50.
     func subscriptions() async throws -> [YT.SubscriptionItem] {
         try await allPages(

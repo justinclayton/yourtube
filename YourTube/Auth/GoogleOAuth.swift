@@ -81,22 +81,40 @@ final class GoogleOAuth: NSObject {
         return try await exchange(code: code, verifier: pkce.verifier)
     }
 
-    private func presentConsent(pkce: PKCE, state: String) async throws -> URL {
-        var components = URLComponents(url: Self.authEndpoint, resolvingAgainstBaseURL: false)!
-        components.queryItems = [
+    /// The authorize request's query. `select_account` makes Google show the
+    /// account and channel picker on every sign-in, since one Google account
+    /// can own several channels and the token is bound to the one picked.
+    static func authorizeQueryItems(
+        config: AppConfig.Values,
+        challenge: String,
+        challengeMethod: String,
+        state: String
+    ) -> [URLQueryItem] {
+        [
             .init(name: "client_id", value: config.clientId),
             .init(name: "redirect_uri", value: config.redirectURI),
             .init(name: "response_type", value: "code"),
-            .init(name: "scope", value: Self.scopes.joined(separator: " ")),
-            .init(name: "code_challenge", value: pkce.challenge),
-            .init(name: "code_challenge_method", value: pkce.method),
+            .init(name: "scope", value: scopes.joined(separator: " ")),
+            .init(name: "code_challenge", value: challenge),
+            .init(name: "code_challenge_method", value: challengeMethod),
             .init(name: "state", value: state),
             // Required to get a refresh token back at all.
             .init(name: "access_type", value: "offline"),
-            // Without this, Google only returns a refresh token on the very
-            // first consent — which makes re-auth after expiry silently useless.
-            .init(name: "prompt", value: "consent"),
+            // `consent`: without it, Google only returns a refresh token on
+            // the very first consent — which makes re-auth after expiry
+            // silently useless.
+            .init(name: "prompt", value: "consent select_account"),
         ]
+    }
+
+    private func presentConsent(pkce: PKCE, state: String) async throws -> URL {
+        var components = URLComponents(url: Self.authEndpoint, resolvingAgainstBaseURL: false)!
+        components.queryItems = Self.authorizeQueryItems(
+            config: config,
+            challenge: pkce.challenge,
+            challengeMethod: pkce.method,
+            state: state
+        )
 
         let url = components.url!
 
