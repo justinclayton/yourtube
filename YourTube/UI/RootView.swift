@@ -36,7 +36,7 @@ struct RootView: View {
         }
         .task {
             services.categories.seedDefaultCategoriesIfNeeded()
-            try? services.categories.migrateLegacyRules()
+            _ = try? services.categories.migrateLegacyRules()
             _ = try? services.watchState.migrateLegacySaves()
             // Attempt a silent token refresh on launch so a still-valid session
             // goes straight to the feed without a sign-in prompt.

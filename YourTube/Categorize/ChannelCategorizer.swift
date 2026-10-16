@@ -278,6 +278,17 @@ struct FoundationModelCategorizer: ChannelCategorizer {
         return try GenerationSchema(root: root, dependencies: [choice])
     }
 
+    /// The iOS 27 SDK renames `sampling:` to `samplingMode:` and deprecates
+    /// the old label; CI still builds with the iOS 26 SDK, which only has the
+    /// old one. Drop the `#else` once CI moves to Xcode 27.
+    private static var greedy: GenerationOptions {
+        #if compiler(>=6.4)
+        GenerationOptions(samplingMode: .greedy)
+        #else
+        GenerationOptions(sampling: .greedy)
+        #endif
+    }
+
     func categorize(_ channel: ChannelDescriptor, among categories: [String]) async throws -> CategoryGuess {
         // A fresh session per channel keeps the context window small and stops
         // one channel's answer from anchoring the next.
@@ -289,7 +300,7 @@ struct FoundationModelCategorizer: ChannelCategorizer {
             schema: try Self.schema(for: categories),
             // Greedy: the same channel gets the same answer on a re-sort, so a
             // second pass changes a chip only when the evidence changed.
-            options: GenerationOptions(sampling: .greedy)
+            options: Self.greedy
         )
         let answer = try response.content.value(String.self, forProperty: CategoryPrompt.answerProperty)
         let resolved = CategoryPrompt.resolve(answer, among: categories)

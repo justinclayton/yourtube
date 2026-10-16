@@ -45,7 +45,7 @@ final class CategoryManager {
     }
 
     /// The taxonomy seeded on first launch. Editable afterwards in Settings.
-    static let defaultCategoryNames = [
+    nonisolated static let defaultCategoryNames = [
         "Comedy",
         "Music & Audio Gear",
         "Tech & Engineering",
@@ -61,7 +61,7 @@ final class CategoryManager {
     ]
 
     /// Display name for channels with no topic category. Not a real category.
-    static let uncategorizedName = "Uncategorized"
+    nonisolated static let uncategorizedName = "Uncategorized"
 
     /// The built-in, hand-picked tag for the few channels the user never wants
     /// to miss. Pinned first in the chip row; the classifier never sees it.
@@ -86,7 +86,7 @@ final class CategoryManager {
     /// category and sampled greedily, and a second category can only come
     /// from YouTube's own filing — so every channel padded out to two or
     /// three guesses needs re-sorting once.
-    static let classifierVersion = 4
+    nonisolated static let classifierVersion = 4
 
     /// Whether an automatically-filed channel's recent uploads have turned
     /// over enough to be worth asking the classifier about again. Compares

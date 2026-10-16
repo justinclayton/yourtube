@@ -20,7 +20,7 @@ import SwiftData
 ///   `markWatched` the manual button uses.
 extension WatchState {
     /// Below this many seconds in, a video counts as not started.
-    static let startedThreshold: Double = 30
+    nonisolated static let startedThreshold: Double = 30
 
     /// Watched once playback passes this fraction of the duration.
     static let watchedFraction: Double = 0.9
@@ -31,7 +31,7 @@ extension WatchState {
     /// playback lasts (#71), so the 2 s poll in `PlayerView` only calls
     /// `record` when `shouldWrite` says so, or unconditionally on pause and
     /// on leaving the player.
-    static let minimumWriteDelta: Double = 15
+    nonisolated static let minimumWriteDelta: Double = 15
 
     /// Whether a newly polled position is worth writing to the store.
     ///
