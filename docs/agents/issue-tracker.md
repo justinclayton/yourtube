@@ -38,6 +38,10 @@ A coordinator session can work a batch of `ready-for-agent` issues by launching 
 - **Recovery.** On resuming a run after a limit or a sleep: `xcrun simctl list devices | grep YourTube`, boot what is down, `scripts/simpool.sh status` and release locks held by dead agents, then launch a fresh agent with an explicit "state you inherit" section (commits, PR, scratchpad artifacts, how `main` moved).
 - **The `/run-issues` and `/take-issue` skills moved out of this repo** (PR #121, to user-level skill files) and no longer carry device names to keep in sync; this file and `README.md` are the source of truth for the simulator pool.
 
+## Review-ready
+
+A change is ready for review when the tests pass and a clean build has no compiler warnings, in app or test code. Check with `xcodebuild clean build-for-testing` (plain `build` skips the test target) and grep for `.swift:<line>:<col>: warning:`; the AppIntents "Metadata extraction skipped" line is Xcode tooling, not code, and does not count. Fix the warnings a change introduces and any it touches; don't open the PR with them outstanding.
+
 ## Screenshots and video on pull requests
 
 A PR for anything a person can see (a new screen, control, layout, or a visible bug fix) carries pictures of it, so the review can happen from the PR page rather than by building the branch. Screenshots for a static change; a short GIF for an interaction (a tap, a swipe, a transition). Skip it for pure model, refactor, or tooling changes.

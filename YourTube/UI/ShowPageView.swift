@@ -335,7 +335,7 @@ struct ShowPageView: View {
                 .frame(maxWidth: .infinity)
             }
             Button("Mark all watched") {
-                try? services.shows.markAllWatched(of: show)
+                _ = try? services.shows.markAllWatched(of: show)
             }
             .buttonStyle(.bordered)
             .disabled(listing.unwatchedCount == 0)

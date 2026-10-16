@@ -289,7 +289,7 @@ struct FoundationModelCategorizer: ChannelCategorizer {
             schema: try Self.schema(for: categories),
             // Greedy: the same channel gets the same answer on a re-sort, so a
             // second pass changes a chip only when the evidence changed.
-            options: GenerationOptions(sampling: .greedy)
+            options: GenerationOptions(samplingMode: .greedy)
         )
         let answer = try response.content.value(String.self, forProperty: CategoryPrompt.answerProperty)
         let resolved = CategoryPrompt.resolve(answer, among: categories)

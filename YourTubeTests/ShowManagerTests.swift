@@ -242,6 +242,7 @@ final class ShowManagerTests: XCTestCase {
 
     /// The stub detector: a hand-written set of verdicts standing in for the
     /// cadence-and-duration heuristic, which is tested on its own corpus.
+    @discardableResult
     private func automaticPass(_ verdicts: (channelId: String, isShow: Bool)...) throws -> Int {
         try manager.applyAutomaticVerdicts(verdicts.map {
             ShowVerdict(channelId: $0.channelId, channelTitle: $0.channelId, isShow: $0.isShow,

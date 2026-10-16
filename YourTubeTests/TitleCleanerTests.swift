@@ -43,20 +43,27 @@ private final class GatedRewriter: TitleRewriter, @unchecked Sendable {
     }
 
     func rewrite(_ request: TitleRewriteRequest) async throws -> String {
-        lock.lock()
-        calls += 1
-        let call = calls
-        lock.unlock()
-        if call == stopAt {
+        if nextCall() == stopAt {
             reached.fulfill()
-            // Runs on the writer's own thread, so blocking here holds only the
-            // batch; the main actor stays free for the test to look around.
-            gate.wait()
+            holdAtGate()
         }
         return request.strippedTitle.lowercased()
     }
 
     func resume() { gate.signal() }
+
+    private func nextCall() -> Int {
+        lock.withLock {
+            calls += 1
+            return calls
+        }
+    }
+
+    /// Runs on the writer's own thread, so blocking here holds only the
+    /// batch; the main actor stays free for the test to look around.
+    /// Synchronous because a semaphore wait can't be made from an async
+    /// context directly.
+    private func holdAtGate() { gate.wait() }
 }
 
 /// The cleaner's own job is the bookkeeping around `TitleStripper`: which
