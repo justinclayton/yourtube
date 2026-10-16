@@ -28,6 +28,11 @@ struct CategoryChips: View {
                 .padding(.horizontal)
                 .padding(.vertical, 8)
             }
+            // A horizontal scroll view draws on into the side safe areas, so
+            // where a device keeps its clock and toolbar in a side column
+            // (iPhone Duo) the chips ran under it. Clip to the laid-out
+            // frame so the row ends where the content below it does.
+            .clipped()
             .onAppear { proxy.scrollTo(selected, anchor: .center) }
         }
     }
