@@ -14,6 +14,10 @@ import SwiftData
 /// row becoming a single card after a removal) it re-applied that state to
 /// whatever row took the old one's place and pushed it unasked.
 struct ShowsView: View {
+    #if DEBUG
+    // PROTOTYPE — throwaway entry point, see UI/Prototype.
+    @State private var showingSuggestionsPrototype = false
+    #endif
     // No `@Query` of its own on purpose: a query is invalidated by any save
     // anywhere, and this view is the parent of the whole tab, so one here
     // re-created every section below it — including the sections on a tab
@@ -33,6 +37,18 @@ struct ShowsView: View {
                 .padding(.bottom, 24)
             }
             .navigationTitle("Shows")
+            #if DEBUG
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { showingSuggestionsPrototype = true } label: {
+                        Image(systemName: "sparkles")
+                    }
+                }
+            }
+            .sheet(isPresented: $showingSuggestionsPrototype) {
+                ShowSuggestionsPrototype()
+            }
+            #endif
             .navigationDestination(for: Video.self) { video in
                 PlayerView(video: video)
             }
