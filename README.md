@@ -638,6 +638,38 @@ simulator. The simulator tool's tap and swipe coordinates are device points
 (402×874 on an iPhone 17 Pro, as `attach` reports), not the pixels of the
 screenshot it returns (1206×2622): divide by three, or taps silently miss.
 
+### Agents: the Xcode MCP tools
+
+Xcode's MCP server (`mcp__xcode__*`) drives the Xcode app itself. It adds
+what `xcodebuild` and the simulator tool can't do: render a `#Preview`
+(`RenderPreview`), run Swift in a file's own scope (`RunCodeSnippet`), lldb on
+a running app (`InvokeDebuggerCommand`), one file's diagnostics without a full
+build (`XcodeRefreshCodeIssuesInFile`), and taps with a UI-hierarchy readback
+(`DeviceInteraction*`).
+
+- **`DeviceInteraction*` only accepts a device on Xcode's SDK version.** In
+  October 2026, with Xcode's iOS 27.1 SDK, it rejected the iPhone 16 Pro on
+  iOS 27.0 (over both Wi-Fi and USB) and the booted `YourTube` simulators on
+  26.2, and accepted only an iOS 27.1 simulator. Until the phone and the pool
+  are on the SDK's version, use the simulator tool.
+
+- **Open the project first.** Run `xcodegen generate`, then `XcodeOpenWorkspace`
+  on the worktree's `YourTube.xcodeproj`. Until a project is open every call
+  is refused as unapproved, and after that each call needs the
+  `workspaceIdentifier` the open returned.
+- **Set the run destination before running anything.** `RunProject`,
+  `RunAllTests`, `RunSomeTests` and `RenderPreview` use Xcode's active
+  destination, which is not `YourTube 1` by default. Acquire a device from the
+  pool (below), then point Xcode at it with `XcodeSwitchRunDestination`; the
+  Xcode tools don't take the pool's lock for you.
+- **Never use the tools that edit the project.** `AddEntitlement`,
+  `AddInfoPlist`, `UpdateTargetBuildSetting`, `UpdateFileCompilerFlags`,
+  `XcodeNewTarget`, `XcodeWrite`, `XcodeMV`, `XcodeMakeDir` and `XcodeRM` all
+  write to `YourTube.xcodeproj`, which `xcodegen generate` overwrites. Make the
+  change in `project.yml` and regenerate.
+- `RunProject` is Xcode's Run (Cmd-R), so it keeps the store (see
+  [What keeps the data](#what-keeps-the-data-and-what-wipes-it)).
+
 ### Parallel work: the simulator pool
 
 All four simulators — `YourTube 1` through `YourTube 4` — share one naming
