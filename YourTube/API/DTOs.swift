@@ -43,6 +43,18 @@ enum YT {
         }
     }
 
+    // MARK: channels.list
+
+    /// The signed-in channel, from `channels.list?mine=true`.
+    struct Channel: Decodable {
+        let id: String
+        let snippet: Snippet?
+
+        struct Snippet: Decodable {
+            let title: String?
+        }
+    }
+
     // MARK: playlists.list
 
     /// One playlist owned by a channel, as offered when picking a

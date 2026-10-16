@@ -76,6 +76,34 @@ enum DebugFixtures {
     static let defaultsSuite = "net.claytons.yourtube.fixtures"
     static var defaults: UserDefaults { UserDefaults(suiteName: defaultsSuite)! }
 
+    /// The Keychain service a fixture run's auth reads, so it never sees, and
+    /// can never refresh or drop, the real account's tokens.
+    static let keychainService = "net.claytons.yourtube.fixtures"
+
+    /// A session over the fixture store: signed out, with its directory,
+    /// quota and Keychain all kept apart from the real ones. The fixture
+    /// library stays open whatever the auth does, since no channel can be
+    /// signed into with the placeholder config.
+    @MainActor
+    static func makeSession() throws -> AppSession {
+        let container = try makeContainer()
+        let defaults = Self.defaults
+        let quota = QuotaTracker(defaults: defaults)
+        let auth = AuthController(
+            config: config,
+            directory: ChannelDirectory(defaults: defaults),
+            keychain: KeychainStore(service: keychainService),
+            identify: { _ in throw GoogleOAuth.OAuthError.noRefreshToken }
+        )
+        let library = ChannelLibrary(
+            location: nil, container: container, defaults: defaults, auth: auth, quota: quota
+        )
+        // Manual verification hook for issue #68; no-op unless launched with
+        // -mutateFixtureTitle.
+        scheduleTitleMutation(in: container.mainContext)
+        return AppSession(auth: auth, quota: quota) { _ in library }
+    }
+
     @MainActor
     static func makeContainer() throws -> ModelContainer {
         // The fixture store is new every launch, so its defaults are too:

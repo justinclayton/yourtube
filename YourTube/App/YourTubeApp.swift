@@ -5,62 +5,49 @@ import SwiftData
 struct YourTubeApp: App {
     /// Config is loaded once at launch. If it's missing we show setup
     /// instructions rather than crashing, since a fresh clone won't have it.
-    private let setup: Result<Setup, Error>
-
-    /// Everything a launch resolves once: the store, the services over it,
-    /// and the `UserDefaults` those services and `@AppStorage` write to.
-    private struct Setup {
-        let container: ModelContainer
-        let services: AppServices
-        let defaults: UserDefaults
-    }
+    private let session: Result<AppSession, Error>
 
     init() {
-        setup = MainActor.assumeIsolated {
+        session = MainActor.assumeIsolated {
             Result {
                 #if DEBUG
                 if DebugFixtures.isRequested {
-                    // A fixture run gets its own defaults suite as well as its
-                    // own store, so nothing it does reaches the real account.
-                    let container = try DebugFixtures.makeContainer()
-                    let defaults = DebugFixtures.defaults
-                    let services = AppServices(
-                        config: DebugFixtures.config,
-                        modelContext: container.mainContext,
-                        defaults: defaults
-                    )
-                    // Manual verification hook for issue #68; no-op unless
-                    // launched with -mutateFixtureTitle. See `DebugFixtures`.
-                    DebugFixtures.scheduleTitleMutation(in: container.mainContext)
-                    return Setup(container: container, services: services, defaults: defaults)
+                    return try DebugFixtures.makeSession()
                 }
                 #endif
-                let config = try AppConfig.load()
-                let container = try ModelContainer(
-                    for: Video.self, Subscription.self,
-                    VideoCollection.self, ChannelRule.self, Show.self,
-                    migrationPlan: VideoMigrationPlan.self
-                )
-                let services = AppServices(
-                    config: config,
-                    modelContext: container.mainContext
-                )
-                return Setup(container: container, services: services, defaults: .standard)
+                return AppSession.live(config: try AppConfig.load())
             }
         }
     }
 
     var body: some Scene {
         WindowGroup {
-            switch setup {
-            case .success(let setup):
-                RootView()
-                    .modelContainer(setup.container)
-                    .environment(setup.services)
-                    .defaultAppStorage(setup.defaults)
+            switch session {
+            case .success(let session):
+                ChannelLibraryView(session: session)
             case .failure(let error):
                 SetupInstructionsView(error: error)
             }
+        }
+    }
+}
+
+/// Shows whichever channel's library is open, rebuilding the whole view tree
+/// when a sign-in or sign-out swaps it, so nothing keeps reading the
+/// previous channel's store or settings.
+private struct ChannelLibraryView: View {
+    let session: AppSession
+
+    var body: some View {
+        switch session.library {
+        case .success(let library):
+            RootView()
+                .modelContainer(library.container)
+                .environment(library.services)
+                .defaultAppStorage(library.defaults)
+                .id(library.id)
+        case .failure(let error):
+            SetupInstructionsView(error: error)
         }
     }
 }
@@ -80,16 +67,23 @@ final class AppServices {
     let shows: ShowManager
     let showDetector: ShowDetectionRunner
 
-    init(config: AppConfig.Values, modelContext: ModelContext, defaults: UserDefaults = .standard) {
+    /// - Parameters:
+    ///   - defaults: the open channel's suite. `quota` is shared across
+    ///     channels and never reads it.
+    ///   - tokenProvider: hands out tokens for this library's channel only;
+    ///     see `AuthController.validAccessToken(for:)`.
+    init(
+        modelContext: ModelContext,
+        defaults: UserDefaults,
+        auth: AuthController,
+        quota: QuotaTracker,
+        tokenProvider: @escaping YouTubeAPI.TokenProvider
+    ) {
         // One writer for every background pass, so the passes that overlap at
         // launch share a context instead of colliding over a row. See
         // `StoreWriter`.
         let writer = StoreWriter(modelContainer: modelContext.container)
-        let auth = AuthController(config: config)
-        let quota = QuotaTracker(defaults: defaults)
-        let api = YouTubeAPI(quota: quota) { [auth] in
-            try await auth.validAccessToken()
-        }
+        let api = YouTubeAPI(quota: quota, tokenProvider: tokenProvider)
         self.auth = auth
         self.quota = quota
         self.api = api

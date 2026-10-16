@@ -719,6 +719,15 @@ re-login. Installing a different branch's build is fine: SwiftData migrates
 the store forward for additive schema changes, and a build that can't open
 the store fails loudly with its setup screen rather than touching it.
 
+Each YouTube channel signed into gets its own store, defaults and Keychain
+entry. The first channel the app identifies keeps `default.store`, the
+standard defaults and the `refresh_token` key; every later channel gets
+`Library/Application Support/Channels/<channel ID>/YourTube.store`, the
+`net.claytons.yourtube.channel.<channel ID>` defaults suite and a
+`refresh_token.<channel ID>` key. The standard defaults also hold which
+channels are known and open (`channels.*`) and the quota count, which every
+channel shares.
+
 Before anything you're unsure of, copy the store out:
 
 ```sh
