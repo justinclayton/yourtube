@@ -1,11 +1,20 @@
 import Foundation
 import Security
 
+/// Where `AuthController` keeps refresh tokens. The app uses `KeychainStore`;
+/// tests use an in-memory one, since an unsigned CI build has no Keychain
+/// access at all.
+protocol SecretStore: Sendable {
+    func set(_ value: String?, for key: String) throws
+    func get(_ key: String) -> String?
+    func remove(_ key: String) throws
+}
+
 /// Minimal Keychain wrapper for the OAuth refresh token.
 ///
 /// Uses `kSecAttrAccessibleAfterFirstUnlock` so background refresh can still
 /// read the token while the phone is locked.
-struct KeychainStore {
+struct KeychainStore: SecretStore {
     let service: String
 
     init(service: String = "net.claytons.yourtube.oauth") {

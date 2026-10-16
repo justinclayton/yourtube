@@ -48,7 +48,7 @@ final class AuthController {
     /// state, so the app can open the matching library. See `AppSession`.
     var onLocationChange: (() -> Void)?
 
-    private let keychain: KeychainStore
+    private let keychain: any SecretStore
     private let oauth: GoogleOAuth
     private let directory: ChannelDirectory
     private let identify: Identifier
@@ -62,7 +62,7 @@ final class AuthController {
     init(
         config: AppConfig.Values,
         directory: ChannelDirectory,
-        keychain: KeychainStore = KeychainStore(),
+        keychain: any SecretStore = KeychainStore(),
         session: URLSession = .shared,
         identify: @escaping Identifier
     ) {

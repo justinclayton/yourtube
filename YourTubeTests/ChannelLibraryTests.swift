@@ -14,7 +14,7 @@ final class ChannelLibraryTests: XCTestCase {
     private var root: URL!
     private var directoryDefaults: UserDefaults!
     private var directorySuite: String!
-    private var keychain: KeychainStore!
+    private var keychain: InMemorySecretStore!
     private var quota: QuotaTracker!
     private var quotaSuite: String!
     /// What the stub identifier answers for the next token it is shown.
@@ -27,7 +27,7 @@ final class ChannelLibraryTests: XCTestCase {
         directoryDefaults = UserDefaults(suiteName: directorySuite)
         quotaSuite = "ChannelLibraryTests.quota.\(unique)"
         quota = QuotaTracker(defaults: UserDefaults(suiteName: quotaSuite)!)
-        keychain = KeychainStore(service: "ChannelLibraryTests.\(unique)")
+        keychain = InMemorySecretStore()
         identifies = alpha
     }
 
@@ -36,7 +36,6 @@ final class ChannelLibraryTests: XCTestCase {
         directoryDefaults.removePersistentDomain(forName: directorySuite)
         UserDefaults.standard.removePersistentDomain(forName: quotaSuite)
         for location in [LibraryLocation.legacy, .channel(alpha.id), .channel(beta.id)] {
-            try? keychain.remove(location.refreshTokenKey)
             if let suite = location.defaultsSuiteName {
                 UserDefaults.standard.removePersistentDomain(forName: suite)
             }
@@ -305,4 +304,13 @@ final class ChannelLibraryTests: XCTestCase {
         let url = try XCTUnwrap(StubURLProtocol.recordedRequests.first?.url?.absoluteString)
         XCTAssertTrue(url.contains("mine=true"))
     }
+}
+
+/// Stands in for the Keychain, which an unsigned CI build can't reach.
+final class InMemorySecretStore: SecretStore, @unchecked Sendable {
+    private var values: [String: String] = [:]
+
+    func set(_ value: String?, for key: String) throws { values[key] = value }
+    func get(_ key: String) -> String? { values[key] }
+    func remove(_ key: String) throws { values[key] = nil }
 }
