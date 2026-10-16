@@ -50,13 +50,12 @@ struct ChannelEvidence: Sendable, Equatable {
 ///
 /// The gate also asks that the channel is still posting. A channel that once
 /// had a slot but hasn't uploaded in months — cancelled, on hiatus, or its
-/// host no longer able to — isn't a recurring thing to auto-add someone to
+/// host no longer able to — isn't a recurring thing to suggest to someone
 /// today, whatever its back catalogue looks like. This is re-checked every
-/// pass, not just once, and marks its verdict `dormant` rather than plain
-/// `false`: a channel that never looked like a show is silently skipped, but
-/// one that was already flagged and has gone quiet is a question for the
-/// user, not a verdict the detector gets to act on unasked — see
-/// `ShowManager.applyAutomaticVerdicts`.
+/// pass for a channel with a pending suggestion, so a suggestion that goes
+/// quiet is withdrawn; the verdict is marked `dormant` so its reason says
+/// why. A show the user added is never touched, dormant or not — see
+/// `ShowSuggestions.apply`.
 ///
 /// The signals, weighted equally:
 /// - a median duration over twenty minutes: the channel's ordinary upload is
@@ -68,9 +67,8 @@ struct ChannelEvidence: Sendable, Equatable {
 /// - YouTube's own category being News & Politics.
 ///
 /// The threshold is two: no single signal is trusted alone, but any two
-/// agreeing is enough. Because the guess is only ever a `Show` row the user
-/// can flip, a false positive costs one swipe — and one that the detector
-/// may never undo.
+/// agreeing is enough. Because the guess is only ever a suggestion the user
+/// answers, a false positive costs one untouched poster in the Pick grid.
 enum ShowDetector {
     /// Bump when the decision logic changes, so every channel is examined
     /// again on the next pass (see `ShowDetectionRunner`).

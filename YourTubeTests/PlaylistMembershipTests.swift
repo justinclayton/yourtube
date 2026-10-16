@@ -17,7 +17,7 @@ final class PlaylistMembershipTests: XCTestCase {
 
     override func setUp() async throws {
         container = try ModelContainer(
-            for: Video.self, Subscription.self, VideoCollection.self, ChannelRule.self, Show.self,
+            for: Video.self, Subscription.self, VideoCollection.self, ChannelRule.self, Show.self, ShowSuggestion.self,
             configurations: ModelConfiguration(isStoredInMemoryOnly: true)
         )
         shows = ShowManager(

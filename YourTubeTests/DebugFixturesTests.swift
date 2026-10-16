@@ -92,6 +92,23 @@ final class DebugFixturesTests: XCTestCase {
         let podcast = try XCTUnwrap(shows.first { $0.title == "Second Take" })
         XCTAssertEqual(podcast.playOrder, .oldestFirst)
     }
+
+    /// The Pick grid and the Your Shows footer need something pending to be
+    /// driven on a signed-out simulator. Seeded through `ShowSuggestions.apply`
+    /// from the detector's own verdicts, so the reasons are real ones; the
+    /// channel the user called "not a show" is never among them.
+    func testFixturesSeedPendingSuggestions() throws {
+        let container = try DebugFixtures.makeContainer()
+        let pending = try ShowSuggestions(modelContext: container.mainContext).pending()
+
+        XCTAssertEqual(
+            Set(pending.map(\.title)), ["The Rundown", "Field Notes", "Kitchen Table"],
+            "every undecided show-shaped channel, and nothing else"
+        )
+        XCTAssertTrue(pending.allSatisfy { !$0.reasons.isEmpty })
+        XCTAssertEqual(pending.first?.title, "The Rundown", "the most watched comes first")
+        XCTAssertNotNil(pending.first?.engagement.line)
+    }
 }
 
 // MARK: - What came through the door

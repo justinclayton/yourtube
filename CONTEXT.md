@@ -75,8 +75,9 @@ Settled during issue #60 (2026-09-16):
   its own (the mean of the two middles, over day gaps rather than durations);
   sharing this one would move its verdicts.
 - **Not this type's job:** the catalogue. Which channels are shows, the
-  tombstones, the detector's verdicts and the playlist membership writes stay
-  on `ShowManager`, which owns the store.
+  tombstones and the playlist membership writes stay on `ShowManager`, which
+  owns the store; the detector's verdicts become suggestions on
+  `ShowSuggestions`, never shows.
 
 ## Intake
 

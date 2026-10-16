@@ -13,7 +13,15 @@ import SwiftData
 /// show appears under every category its channel carries. Priority shows are
 /// pinned to the front of whatever the chips leave, so the tag means the same
 /// thing here as it does on the feed.
+///
+/// Beneath the grid, and only while the detector has suggestions pending, a
+/// single footnote row opens the Pick grid. It's the one place suggestions
+/// are counted: no badge, no banner.
 struct YourShowsSection: View {
+    /// Pending suggestions; the row is drawn only when there are any.
+    let suggestionCount: Int
+    let showSuggestions: () -> Void
+
     @Environment(AppServices.self) private var services
     @Environment(\.modelContext) private var modelContext
     @AppStorage(SettingsKeys.showsCategory) private var showsCategory = ""
@@ -53,6 +61,9 @@ struct YourShowsSection: View {
                 } else {
                     posters
                 }
+            }
+            if grid.isLoaded, suggestionCount > 0 {
+                suggestionsRow
             }
         }
         // The chip is the only thing besides the store itself the grid depends
@@ -97,11 +108,28 @@ struct YourShowsSection: View {
         }
     }
 
+    private var suggestionsRow: some View {
+        Button(action: showSuggestions) {
+            HStack(spacing: 4) {
+                Text(suggestionCount == 1 ? "1 channel looks like a show" : "\(suggestionCount) channels look like shows")
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.semibold))
+            }
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 4)
+    }
+
     private var emptyHint: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("No shows yet")
                 .font(.subheadline.weight(.semibold))
-            Text("Mark a channel as a show in Channels.")
+            Text(suggestionCount > 0
+                 ? "Pick from the channels that look like shows below, or mark a channel as a show in Channels."
+                 : "Mark a channel as a show in Channels.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

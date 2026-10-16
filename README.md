@@ -17,6 +17,8 @@ for watching more. Every design decision in this file follows from that:
 
 - The feed is an inbox to reach the end of, not a stream to stay in. "Caught
   up" is the goal state, and the daily cap exists so one channel can't flood it.
+- Nothing is followed unless you chose it. The app can suggest that a channel
+  looks like a show, but every show in Your Shows is one you added.
 - Shows are followed episode by episode. Up Next is the list of things you
   decided to watch, in the order you decided.
 - Titles are calmed rather than sold. The cleaner strips the shouting and the
@@ -166,12 +168,14 @@ the time left. It fills itself from playback and empties itself, and it's
 hidden when there's nothing in progress.
 
 **Your Shows** sits beneath Up Next: a three-column grid of the channels
-you've flagged as shows, each a square of channel art with the show's full
+you've added as shows, each a square of channel art with the show's full
 name set beneath it and a count of the episodes you haven't watched (no badge
 when you're caught up). Posters carry nothing but art and a name, so a show
 never looks like a single video. The chips above the grid are the feed's
 chips, and a show appears under every category its channel carries; Priority
-shows are pinned first.
+shows are pinned first. When the detector has suggestions waiting, a single
+quiet line at the foot of the grid says how many and opens them (see
+"Suggesting which channels are shows" below).
 
 ### The show page
 
@@ -251,8 +255,8 @@ shows has no rule to draw. A show's episodes are every video from its
 channel, resolved live, so a new upload is an episode the moment it lands.
 
 A channel-backed show can also be un-flagged from its own page: the toolbar
-menu next to Show settings offers "Not a show" too, for when a detector guess
-turns out wrong and Channels isn't where you're looking. It records the same
+menu next to Show settings offers "Not a show" too, for when a show you added
+turns out not to be one and Channels isn't where you're looking. It records the same
 standing decision and leaves the page, since the show is no longer in the
 catalogue.
 
@@ -289,25 +293,43 @@ since nothing filters a playlist's members the way `UULF` filters a channel's
 own uploads (see "How Shorts are excluded" above). Signed out, nothing is
 asked and the page lists what the store already holds.
 
-### Guessing which channels are shows
+### Suggesting which channels are shows
 
-Most shows file themselves. After a refresh (and at launch) a detector reads
-each channel's stored videos and guesses, so Your Shows fills up without your
-doing anything. It's guesswork: a channel has to have a few full-length
-uploads to be considered at all, and then several weak, equally-weighted
-signals are summed against a threshold of two — a median duration over twenty
-minutes, a regular posting slot, numbered episode titles, "podcast" or
-"episode" in the descriptions, and YouTube's own News & Politics category. No
-single signal is trusted alone, but any two agreeing is enough.
+Every show is added by you, from the Channels tab or from a suggestion. After
+a refresh (and at launch) a detector reads each channel's stored videos and
+guesses which ones look like shows. It's guesswork: a channel has to have a
+few full-length uploads to be considered at all, and then several weak,
+equally-weighted signals are summed against a threshold of two — a median
+duration over twenty minutes, a regular posting slot, numbered episode titles,
+"podcast" or "episode" in the descriptions, and YouTube's own News & Politics
+category. No single signal is trusted alone, but any two agreeing is enough.
 
-Every guess says why. The show page and the channel's Categories sheet list
-the reasons the detector found, so a wrong one can be recognised and
-corrected rather than just overturned. Corrections are permanent: a channel
-you have flagged either way is skipped entirely by every later pass, and a
-show you created by hand is never taken back. Adding a playlist-backed show
-is not a decision about its channel, though — a channel that only hosts a
-playlist show still gets its own verdict from the detector. Channels are
-examined once and then only again when their uploads actually move.
+A guess is only ever a **suggestion**. Suggestions are picked in one sheet,
+the Your Shows grid before it's yours: every suggested channel as a poster,
+nothing ticked. Tap the ones you follow; hold a poster to read the detector's
+reasons and what you've already watched from it. The channels you already
+watch come first. One button adds the ticked and sets the rest aside, after
+saying how many of each. Setting aside is the same permanent "Not a show" the
+Channels tab records, so the list is finite and a channel you set aside is
+never suggested again (the Channels tab can still flag it). Done closes the
+sheet without deciding anything.
+
+The sheet opens by itself once per store, the first time there is anything in
+it: right after the upgrade that introduced it, which handed every show the
+detector had added by itself back as a suggestion, or after a fresh install's
+first detector pass. After that it lives behind the line at the foot of Your
+Shows and nowhere else: no badge, no banner.
+
+A suggestion that stops looking like a show — including one whose channel
+goes quiet for four months — disappears on its own, and deciding about a
+channel anywhere (the Channels tab, the show page) clears its suggestion. A
+show you added keeps the reasons it was suggested for, on its show page and
+in the channel's Categories sheet. A channel you have decided about either way
+is skipped entirely by every later pass, and a show you added is never taken
+back by the app. Adding a playlist-backed show is not a decision about its
+channel, though — a channel that only hosts a playlist show can still be
+suggested. Channels are examined once and then only again when their uploads
+actually move.
 
 The player offers two actions under the video, Up Next and Watched, and
 nothing that moves you to another video: no next-episode button and no
@@ -744,10 +766,10 @@ container path changes after every reinstall, so always re-run
 
 Debug builds accept a `-seedFixtures` launch argument. The app then opens an
 in-memory store pre-filled with a few subscriptions, categories, videos, and
-five show-shaped channels — a twice-weekly long-form interview show, a
-numbered weekly podcast, a weekday news hour with cut-down segments, one left
-unflagged for the detector to find at launch, and one marked "Not a show" that
-it must never pick up — plus two playlist-backed shows: a podcast hosted on a
+seven show-shaped channels — a twice-weekly long-form interview show, a
+numbered weekly podcast, a weekday news hour with cut-down segments, three
+left undecided as pending suggestions for the Pick grid and the Your Shows
+footer, and one marked "Not a show" that must never be suggested — plus two playlist-backed shows: a podcast hosted on a
 network channel, and a three-series programme whose page offers a season
 picker (see `DebugFixtures.swift`). It skips `Config.plist`,
 so it runs signed out
@@ -797,18 +819,24 @@ Run with Cmd-U. Coverage is concentrated where the risk is:
 - `SchemaMigrationTests` — that a pre-#132 store (still carrying the Shorts
   heuristic's fields) migrates onto the current schema instead of resetting,
   and that the rows it had already flagged as Shorts are deleted in the
-  process.
+  process; and that a pre-#145 store keeps its shows and gains the
+  suggestions table.
 - `ShowManagerTests` — the show catalogue: membership for both kinds of show
   (a channel's videos, a playlist's items), seasons and the picker's filter,
   episode-versus-segment classification at the threshold and when the
   threshold moves, unwatched counts under a retention window, what Play next
-  opens under each play order (an episode in progress always winning), the
-  cadence weekdays and typical duration behind the show page's habit line,
-  and the thing most worth pinning — a hand-made show flag, in either
-  direction, surviving an automatic detector pass.
+  opens under each play order (an episode in progress always winning), and
+  the cadence weekdays and typical duration behind the show page's habit line.
+- `ShowSuggestionsTests` — the detector suggests and the user decides: a
+  verdict creates, refreshes or withdraws a suggestion and never a show; a
+  channel decided either way is never suggested; accepting keeps the reasons,
+  setting aside leaves the tombstone, a decision made in the Channels tab
+  clears the suggestion; the upgrade that turns the old detector's shows into
+  suggestions; and `SuggestionRanking`'s order, table-driven.
 - `ShowDetectionRunnerTests` — the pass that joins the detector to the
-  catalogue: what it flags, what it is forbidden to touch, and the fingerprint
-  that stops it re-judging a channel whose uploads haven't moved.
+  suggestions: what it suggests, what it is forbidden to touch, the
+  fingerprint that stops it re-judging a channel whose uploads haven't moved,
+  and the one-shot upgrade before its first pass.
 - `ChannelDailyCapTests` — the per-channel daily cap that folds a prolific
   channel's extra uploads into a "+N more" row.
 - `TitleStripperTests` — the title cleaner, driven against **real** per-channel
@@ -838,7 +866,7 @@ precision and recall figures.
 Built so far: sign-in, subscription feed with Shorts filtering, playback,
 Up Next, watched state, browse by channel, on-device channel categories with a
 category filter on the feed, shows in the Your Shows grid — flagged by
-hand or guessed, with reasons, by the show detector — and title cleaning in
+hand or picked from the show detector's suggestions, with reasons — and title cleaning in
 both tiers: the deterministic stripper everywhere, the on-device rewrite on
 show episodes.
 

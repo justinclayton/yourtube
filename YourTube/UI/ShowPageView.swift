@@ -226,17 +226,6 @@ struct ShowPageView: View {
         dismiss()
     }
 
-    /// Accepts the detector's guess as the user's own decision, which the
-    /// detector can then never overrule. The flag is no longer a guess, so
-    /// the "Flagged as a show automatically" banner goes with it.
-    private func keepAsShow() {
-        try? services.shows.setIsShow(
-            true,
-            channelId: show.channelId,
-            channelTitle: subscription?.title ?? show.title
-        )
-    }
-
     /// Removes a playlist-backed show outright, no confirmation, and leaves
     /// the page since the show it was showing is gone. The channel's own
     /// show flag is a separate record and is never touched here.
@@ -250,7 +239,7 @@ struct ShowPageView: View {
     /// Art, provenance, habit, and the two buttons. The lines are stacked in
     /// order of how sure the app is of them: the source is a fact, the
     /// cadence is computed from what's arrived so far, and the detector's
-    /// reasons for calling this a show sit beneath them when it was a guess.
+    /// reasons sit beneath them when the show was added from a suggestion.
     private func header(listing: ShowListing) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 16) {
@@ -279,13 +268,7 @@ struct ShowPageView: View {
                     }
                 }
             }
-            // A playlist-backed show has no channel-level decision to
-            // record, so it gets the reasons without the buttons.
-            DetectorReasons(
-                show: show,
-                keepAsShow: show.isPlaylistBacked ? nil : keepAsShow,
-                markAsNotAShow: show.isPlaylistBacked ? nil : markAsNotAShow
-            )
+            DetectorReasons(reasons: show.detectorReasons)
             seasonPicker
             buttons(listing: listing)
         }
@@ -615,35 +598,25 @@ private extension Video {
     var episodeTitle: String { displayTitle }
 }
 
-/// Why the detector thought this channel was a show. Shown only for a guess:
-/// a flag the user made by hand needs no justifying, and a guess that can't be
-/// read can't be trusted or corrected.
+/// Why the detector suggested this channel, kept from the suggestion the
+/// show was added from. Nothing for a show flagged in the Channels tab, which
+/// needs no justifying.
 ///
-/// Collapsed to one line by default — most of the time the guess is right and
-/// the reasons are noise above the episodes. Tapping the line reveals them,
-/// together with the two answers the user can give: "Keep as a show" and
-/// "Not a show". Either records a standing decision the detector can never
-/// overrule, and either one ends the guess, so the banner goes.
+/// Collapsed to one line by default: the show is the user's now, and the
+/// reasons are provenance rather than something to act on.
 struct DetectorReasons: View {
-    let show: Show
-    /// Records "this is a show" as the user's decision. Nil alongside
-    /// `markAsNotAShow`, for the same reason.
-    var keepAsShow: (() -> Void)?
-    /// Records "not a show" and leaves the page. Nil when the page has no
-    /// channel-level decision to record (a playlist-backed show), in which
-    /// case only the reasons are offered.
-    var markAsNotAShow: (() -> Void)?
+    let reasons: [String]
 
     @State private var isExpanded = false
 
     var body: some View {
-        if show.flagOrigin == .heuristic, !show.detectorReasons.isEmpty {
+        if !reasons.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 Button {
                     withAnimation(.snappy) { isExpanded.toggle() }
                 } label: {
                     HStack(spacing: 6) {
-                        Text("Flagged as a show automatically")
+                        Text("Added from a suggestion")
                             .font(.subheadline.weight(.semibold))
                         Spacer(minLength: 0)
                         // The hint goes once the answer is showing, so the
@@ -663,40 +636,16 @@ struct DetectorReasons: View {
                 // Plain, so the tap lands on this button alone rather than
                 // on every button in the enclosing list row.
                 .buttonStyle(.plain)
-                .accessibilityLabel("Flagged as a show automatically")
+                .accessibilityLabel("Added from a suggestion")
                 .accessibilityHint(isExpanded ? "Hides why" : "Shows why")
 
                 if isExpanded {
                     VStack(alignment: .leading, spacing: 6) {
-                        ForEach(show.detectorReasons, id: \.self) { reason in
+                        ForEach(reasons, id: \.self) { reason in
                             Text("· \(reason)")
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                    if let keepAsShow, let markAsNotAShow {
-                        HStack(spacing: 12) {
-                            Button {
-                                keepAsShow()
-                            } label: {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "checkmark")
-                                    Text("Keep as a show")
-                                }
-                            }
-                            .buttonStyle(.bordered)
-                            .font(.subheadline)
-                            Button(role: .destructive) {
-                                markAsNotAShow()
-                            } label: {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "tv.slash")
-                                    Text("Not a show")
-                                }
-                            }
-                            .buttonStyle(.bordered)
-                            .font(.subheadline)
                         }
                     }
                 }

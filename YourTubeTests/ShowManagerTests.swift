@@ -3,10 +3,8 @@ import SwiftData
 @testable import YourTube
 
 /// The show catalogue, driven through `ShowManager` against an in-memory
-/// container the way `CategoryManagerTests` drives categories. `ShowDetector`'s
-/// verdicts are handed in directly rather than computed (that's
-/// `ShowDetectorTests`): what's under test here is that the user's decisions
-/// survive a pass, and that a guess arrives with its reasons attached.
+/// container the way `CategoryManagerTests` drives categories. What the
+/// detector's verdicts do (suggest, never add) is `ShowSuggestionsTests`.
 ///
 /// What a show *lists* is not here: that is `ShowListing`, a value type over
 /// a show's settings and a pile of videos, tested container-free in
@@ -23,7 +21,7 @@ final class ShowManagerTests: XCTestCase {
     override func setUp() async throws {
         let config = ModelConfiguration(isStoredInMemoryOnly: true)
         container = try ModelContainer(
-            for: Video.self, Subscription.self, VideoCollection.self, ChannelRule.self, Show.self,
+            for: Video.self, Subscription.self, VideoCollection.self, ChannelRule.self, Show.self, ShowSuggestion.self,
             configurations: config
         )
         manager = ShowManager(modelContext: context, watchState: WatchState(modelContext: context))
@@ -236,181 +234,6 @@ final class ShowManagerTests: XCTestCase {
         XCTAssertEqual(try manager.markAllWatched(of: show), 2)
         let hidden = try XCTUnwrap(context.fetch(FetchDescriptor<Video>()).first { $0.videoId == "ep-4" })
         XCTAssertFalse(hidden.isWatched, "clearing a backlog doesn't reach behind the page")
-    }
-
-    // MARK: - Surviving an automatic pass
-
-    /// The stub detector: a hand-written set of verdicts standing in for the
-    /// cadence-and-duration heuristic, which is tested on its own corpus.
-    @discardableResult
-    private func automaticPass(_ verdicts: (channelId: String, isShow: Bool)...) throws -> Int {
-        try manager.applyAutomaticVerdicts(verdicts.map {
-            ShowVerdict(channelId: $0.channelId, channelTitle: $0.channelId, isShow: $0.isShow,
-                        reasons: ["stub"])
-        })
-    }
-
-    func testHandFlaggedShowSurvivesAPassThatSaysItIsNotAShow() throws {
-        try manager.markAsShow(channelId: "UC-news", channelTitle: "Newsline")
-
-        try automaticPass((channelId: "UC-news", isShow: false))
-
-        XCTAssertTrue(try manager.isShow(channelId: "UC-news"))
-        let record = try XCTUnwrap(manager.record(forChannelId: "UC-news"))
-        XCTAssertEqual(record.flagOrigin, .user)
-        XCTAssertEqual(record.title, "Newsline", "the pass doesn't get to rename it either")
-    }
-
-    func testNotAShowSurvivesAPassThatSaysItIsAShow() throws {
-        try manager.markAsNotAShow(channelId: "UC-vlog", channelTitle: "Berlin Vlogs")
-
-        try automaticPass((channelId: "UC-vlog", isShow: true))
-
-        XCTAssertFalse(try manager.isShow(channelId: "UC-vlog"))
-        XCTAssertTrue(try manager.shows().isEmpty)
-        XCTAssertEqual(try manager.record(forChannelId: "UC-vlog")?.override, .forceNotShow)
-    }
-
-    func testPassFlagsUntouchedChannelsAndCanChangeItsOwnMind() throws {
-        try automaticPass(
-            (channelId: "UC-news", isShow: true),
-            (channelId: "UC-vlog", isShow: false)
-        )
-        XCTAssertEqual(try manager.shows().map(\.channelId), ["UC-news"])
-        XCTAssertEqual(try manager.record(forChannelId: "UC-news")?.flagOrigin, .heuristic)
-        XCTAssertNil(try manager.record(forChannelId: "UC-vlog"), "a plain no leaves no trace")
-
-        // Its own earlier guess is its to withdraw.
-        try automaticPass((channelId: "UC-news", isShow: false))
-        XCTAssertTrue(try manager.shows().isEmpty)
-        XCTAssertNil(try manager.record(forChannelId: "UC-news"))
-    }
-
-    func testUserCanCorrectAHeuristicGuessAndTheCorrectionSticks() throws {
-        try automaticPass((channelId: "UC-vlog", isShow: true))
-        XCTAssertTrue(try manager.isShow(channelId: "UC-vlog"))
-
-        try manager.markAsNotAShow(channelId: "UC-vlog", channelTitle: "Berlin Vlogs")
-        try automaticPass((channelId: "UC-vlog", isShow: true))
-
-        XCTAssertFalse(try manager.isShow(channelId: "UC-vlog"))
-    }
-
-    /// A guess has to carry its reasons, or the show page can't say why the
-    /// channel is there.
-    func testAGuessKeepsItsReasonsAndAHandFlagHasNone() throws {
-        try manager.applyAutomaticVerdicts([ShowVerdict(
-            channelId: "UC-news", channelTitle: "Newsline", isShow: true,
-            reasons: ["Episodes usually run 1 hr 5 min", "Posts on a regular schedule (Tue, Fri)"]
-        )])
-        let guessed = try XCTUnwrap(manager.record(forChannelId: "UC-news"))
-        XCTAssertEqual(guessed.flagOrigin, .heuristic)
-        XCTAssertEqual(guessed.detectorReasons.count, 2)
-
-        // Taking the decision by hand makes the reasons moot.
-        try manager.markAsShow(channelId: "UC-news", channelTitle: "Newsline")
-        XCTAssertEqual(try manager.record(forChannelId: "UC-news")?.detectorReasons, [])
-    }
-
-    /// A later pass replaces the reasons rather than appending to them.
-    func testASecondPassRefreshesTheReasons() throws {
-        try manager.applyAutomaticVerdicts([ShowVerdict(
-            channelId: "UC-news", channelTitle: "Newsline", isShow: true, reasons: ["Old reason"]
-        )])
-        try manager.applyAutomaticVerdicts([ShowVerdict(
-            channelId: "UC-news", channelTitle: "Newsline", isShow: true, reasons: ["New reason"]
-        )])
-        XCTAssertEqual(try manager.record(forChannelId: "UC-news")?.detectorReasons, ["New reason"])
-    }
-
-    // MARK: - Going dormant
-
-    /// Gone quiet isn't the detector's decision to make alone: the row stays,
-    /// flagged for the user to answer, rather than disappearing.
-    func testADormantVerdictHoldsTheShowForReviewInsteadOfDroppingIt() throws {
-        try automaticPass((channelId: "UC-news", isShow: true))
-
-        try manager.applyAutomaticVerdicts([ShowVerdict(
-            channelId: "UC-news", channelTitle: "Newsline", isShow: false,
-            reasons: ["Hasn't posted in 130 days"], dormant: true
-        )])
-
-        XCTAssertTrue(try manager.isShow(channelId: "UC-news"), "still in the catalogue until the user answers")
-        let record = try XCTUnwrap(manager.record(forChannelId: "UC-news"))
-        XCTAssertTrue(record.pendingDormancyReview)
-        XCTAssertEqual(record.detectorReasons, ["Hasn't posted in 130 days"])
-    }
-
-    /// A user-flagged show can't be touched by a plain "no" pass; a dormant
-    /// one is no different.
-    func testHandFlaggedShowSurvivesADormantVerdictToo() throws {
-        try manager.markAsShow(channelId: "UC-news", channelTitle: "Newsline")
-
-        try manager.applyAutomaticVerdicts([ShowVerdict(
-            channelId: "UC-news", channelTitle: "Newsline", isShow: false, dormant: true
-        )])
-
-        XCTAssertTrue(try manager.isShow(channelId: "UC-news"))
-        let record = try XCTUnwrap(manager.record(forChannelId: "UC-news"))
-        XCTAssertEqual(record.flagOrigin, .user)
-        XCTAssertFalse(record.pendingDormancyReview)
-    }
-
-    func testMarkAsShowResolvesADormancyReviewByKeepingIt() throws {
-        try automaticPass((channelId: "UC-news", isShow: true))
-        try manager.applyAutomaticVerdicts([ShowVerdict(
-            channelId: "UC-news", channelTitle: "Newsline", isShow: false, dormant: true
-        )])
-
-        try manager.markAsShow(channelId: "UC-news", channelTitle: "Newsline")
-
-        let record = try XCTUnwrap(manager.record(forChannelId: "UC-news"))
-        XCTAssertFalse(record.pendingDormancyReview)
-        XCTAssertEqual(record.flagOrigin, .user)
-        XCTAssertEqual(record.override, .forceShow)
-        XCTAssertTrue(try manager.isShow(channelId: "UC-news"))
-    }
-
-    func testMarkAsNotAShowResolvesADormancyReviewByDroppingIt() throws {
-        try automaticPass((channelId: "UC-news", isShow: true))
-        try manager.applyAutomaticVerdicts([ShowVerdict(
-            channelId: "UC-news", channelTitle: "Newsline", isShow: false, dormant: true
-        )])
-
-        try manager.markAsNotAShow(channelId: "UC-news", channelTitle: "Newsline")
-
-        let record = try XCTUnwrap(manager.record(forChannelId: "UC-news"))
-        XCTAssertFalse(record.pendingDormancyReview)
-        XCTAssertEqual(record.override, .forceNotShow)
-        XCTAssertFalse(try manager.isShow(channelId: "UC-news"))
-    }
-
-    /// The channel posting again before the user gets to it answers the
-    /// question on its own.
-    func testAChannelThatPostsAgainResolvesItsOwnDormancyReview() throws {
-        try automaticPass((channelId: "UC-news", isShow: true))
-        try manager.applyAutomaticVerdicts([ShowVerdict(
-            channelId: "UC-news", channelTitle: "Newsline", isShow: false, dormant: true
-        )])
-        XCTAssertTrue(try XCTUnwrap(manager.record(forChannelId: "UC-news")).pendingDormancyReview)
-
-        try manager.applyAutomaticVerdicts([ShowVerdict(
-            channelId: "UC-news", channelTitle: "Newsline", isShow: true,
-            reasons: ["Posts on a regular schedule (Tue, Fri)"]
-        )])
-
-        let record = try XCTUnwrap(manager.record(forChannelId: "UC-news"))
-        XCTAssertFalse(record.pendingDormancyReview)
-        XCTAssertEqual(record.flagOrigin, .heuristic)
-    }
-
-    func testShowsPendingDormancyReviewListsOnlyThoseAwaitingAnAnswer() throws {
-        try automaticPass((channelId: "UC-news", isShow: true), (channelId: "UC-vlog", isShow: true))
-        try manager.applyAutomaticVerdicts([ShowVerdict(
-            channelId: "UC-news", channelTitle: "Newsline", isShow: false, dormant: true
-        )])
-
-        XCTAssertEqual(try manager.showsPendingDormancyReview().map(\.channelId), ["UC-news"])
     }
 
     // MARK: - Playlist-backed shows
@@ -671,12 +494,12 @@ final class ShowManagerTests: XCTestCase {
                       "the channel's own show flag is a separate record and survives")
     }
 
-    /// A hand-made playlist show is the user's decision, so an automatic pass
+    /// A hand-made playlist show is the user's decision, so a detector pass
     /// over its channel can't disturb it.
-    func testAnAutomaticPassLeavesPlaylistShowsAlone() throws {
+    func testADetectorPassLeavesPlaylistShowsAlone() throws {
         let show = try playlistShow("Quizmaster", channelId: "UC-quiz",
                                     seasons: [(playlist: "PL-s", name: "Quizmaster", videoIds: [])])
-        try manager.applyAutomaticVerdicts([ShowVerdict(
+        try ShowSuggestions(modelContext: context).apply([ShowVerdict(
             channelId: "UC-quiz", channelTitle: "Quizmaster Extra", isShow: false
         )])
         XCTAssertNotNil(try manager.record(id: show.id))

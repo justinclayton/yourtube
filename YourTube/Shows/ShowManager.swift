@@ -1,31 +1,31 @@
 import Foundation
 import SwiftData
 
-/// One channel's verdict from the automatic show detector: is this a show, and
-/// why. `ShowDetector` produces them; the manager applies them, and knows what
-/// it must never touch. The reasons are kept on the `Show` row so the show page
-/// can say why a channel was flagged.
+/// One channel's verdict from the show detector: does this look like a show,
+/// and why. `ShowDetector` produces them; `ShowSuggestions.apply` turns them
+/// into suggestions, and knows what it must never touch. The reasons travel
+/// with the suggestion, and onto the show if the user adds it.
 struct ShowVerdict: Sendable, Equatable {
     var channelId: String
     var channelTitle: String
     var isShow: Bool
     var reasons: [String] = []
     /// True when `isShow` is false specifically because the channel's gone
-    /// quiet, rather than never having looked like a show. `applyAutomaticVerdicts`
-    /// treats this case differently for a channel already flagged: it holds
-    /// the row for the user to decide about instead of dropping it.
+    /// quiet, rather than never having looked like a show. Either way a
+    /// pending suggestion goes; the flag is there so the reasons can say why.
     var dormant: Bool = false
 }
 
 /// Owns the show catalogue: which channels are shows, which videos are their
 /// episodes, and how many of those are still unwatched.
 ///
-/// Shows are flagged by hand in this release. A detector arrives later, so
-/// every write records who made the call (`flagOrigin`) and whether the user
-/// has a standing opinion (`override`). `applyAutomaticVerdicts` is the door
-/// the detector comes through, and it is barred for any channel the user has
-/// decided about in either direction — including "not a show", which leaves a
-/// `Show` row behind purely as a tombstone. `shows()` never returns those.
+/// Every show is added by the user: flagged in the Channels tab, or accepted
+/// from a detector suggestion (see `ShowSuggestions`). Both paths come through
+/// `markAsShow` and `markAsNotAShow`, which record a standing decision
+/// (`override`) and clear any pending suggestion for the channel. "Not a
+/// show" leaves a `Show` row behind purely as a tombstone, which is what keeps
+/// the detector from suggesting the channel again; `shows()` never returns
+/// those.
 ///
 /// A channel-backed show's membership is resolved live rather than stored:
 /// its episodes are every video from its channel. That keeps the
@@ -91,38 +91,47 @@ final class ShowManager {
         try record(forChannelId: channelId)?.isActive ?? false
     }
 
-    /// Heuristic shows whose latest pass found the channel gone quiet —
-    /// still in the catalogue, but waiting on the user to say whether to
-    /// keep them. What a dormancy prompt should list.
-    func showsPendingDormancyReview() throws -> [Show] {
-        try shows().filter(\.pendingDormancyReview)
-    }
-
-    /// Flags a channel as a show by hand. A hand-made flag is permanent until
-    /// the user changes it: origin and override both say "user", so no
-    /// automatic pass can take it back.
+    /// Adds a channel as a show. Permanent until the user changes it: origin
+    /// and override both say "user", so the detector never reconsiders it.
+    ///
+    /// - Parameter reasons: the detector's reasons, when the show is accepted
+    ///   from a suggestion; empty for a flag made in the Channels tab.
     @discardableResult
-    func markAsShow(channelId: String, channelTitle: String) throws -> Show {
-        let show = try upsert(
-            source: .channel(id: channelId),
-            title: channelTitle,
-            flagOrigin: .user,
-            override: .forceShow
+    func markAsShow(channelId: String, channelTitle: String, reasons: [String] = []) throws -> Show {
+        let show = try Self.recordDecision(
+            isShow: true, channelId: channelId, channelTitle: channelTitle, reasons: reasons, in: modelContext
         )
         try modelContext.save()
         return show
     }
 
-    /// Records "this is not a show". The row stays as a tombstone so a later
-    /// detector run can't flag the channel again.
+    /// Records "this is not a show". The row stays as a tombstone so the
+    /// detector never suggests the channel again.
     func markAsNotAShow(channelId: String, channelTitle: String) throws {
-        try upsert(
+        try Self.recordDecision(isShow: false, channelId: channelId, channelTitle: channelTitle, in: modelContext)
+        try modelContext.save()
+    }
+
+    /// The write behind both of the above, unsaved, so `ShowSuggestions` can
+    /// record a whole Pick in one save. A decision ends any suggestion
+    /// pending for the channel, wherever it was made.
+    @discardableResult
+    nonisolated static func recordDecision(
+        isShow: Bool,
+        channelId: String,
+        channelTitle: String,
+        reasons: [String] = [],
+        in modelContext: ModelContext
+    ) throws -> Show {
+        try ShowSuggestions.dismissSuggestion(forChannel: channelId, in: modelContext)
+        return try upsert(
             source: .channel(id: channelId),
             title: channelTitle,
             flagOrigin: .user,
-            override: .forceNotShow
+            override: isShow ? .forceShow : .forceNotShow,
+            reasons: reasons,
+            in: modelContext
         )
-        try modelContext.save()
     }
 
     func setIsShow(_ isShow: Bool, channelId: String, channelTitle: String) throws {
@@ -134,7 +143,7 @@ final class ShowManager {
     }
 
     /// Forgets a channel entirely, override included, so the detector is free
-    /// to have an opinion about it again.
+    /// to suggest it again.
     func forget(channelId: String) throws {
         guard let record = try record(forChannelId: channelId) else { return }
         modelContext.delete(record)
@@ -142,25 +151,7 @@ final class ShowManager {
     }
 
     @discardableResult
-    private func upsert(
-        source: ShowSource,
-        title: String,
-        flagOrigin: ShowFlagOrigin,
-        override: ShowOverride,
-        reasons: [String] = []
-    ) throws -> Show {
-        try Self.upsert(
-            source: source,
-            title: title,
-            flagOrigin: flagOrigin,
-            override: override,
-            reasons: reasons,
-            in: modelContext
-        )
-    }
-
-    @discardableResult
-    nonisolated static func upsert(
+    private nonisolated static func upsert(
         source: ShowSource,
         title: String,
         flagOrigin: ShowFlagOrigin,
@@ -173,7 +164,6 @@ final class ShowManager {
             existing.flagOrigin = flagOrigin
             existing.override = override
             existing.detectorReasons = reasons
-            existing.pendingDormancyReview = false
             return existing
         }
         let show = Show(source: source, title: title, flagOrigin: flagOrigin, override: override)
@@ -253,80 +243,5 @@ final class ShowManager {
     @discardableResult
     func markAllWatched(of show: Show) throws -> Int {
         try watchState.markWatched(listing(of: show).episodes.filter { !$0.isWatched })
-    }
-
-    // MARK: - Automatic pass
-
-    /// Applies a detector's verdicts to the catalogue.
-    ///
-    /// The user always wins: a channel with an override in either direction is
-    /// skipped whole, and so is a show the user created by hand. A channel the
-    /// detector flags gets a heuristic show; one it un-flags loses its
-    /// heuristic show — unless the un-flagging is dormancy, which is a
-    /// question for the user rather than a verdict the detector gets to act
-    /// on by itself: the row stays, `pendingDormancyReview` goes up, and
-    /// `markAsShow`/`markAsNotAShow` are how the user answers it. Returns how
-    /// many rows changed.
-    @discardableResult
-    func applyAutomaticVerdicts(_ verdicts: [ShowVerdict]) throws -> Int {
-        try Self.applyAutomaticVerdicts(verdicts, in: modelContext)
-    }
-
-    /// The same rules on any context, so the detector can apply its verdicts
-    /// on the background one it read the evidence from.
-    @discardableResult
-    nonisolated static func applyAutomaticVerdicts(
-        _ verdicts: [ShowVerdict],
-        in modelContext: ModelContext
-    ) throws -> Int {
-        var changed = 0
-        for verdict in verdicts {
-            let existing = try record(id: ShowSource.channel(id: verdict.channelId).showId, in: modelContext)
-            if let existing, existing.override != .none || existing.flagOrigin == .user {
-                continue
-            }
-            switch (verdict.isShow, existing) {
-            case (true, let existing?):
-                // A heuristic show is re-verdicted every pass (its dormancy
-                // gate depends on wall-clock time, not just its stored
-                // videos), so most passes reconfirm a verdict that hasn't
-                // actually moved. Only count and save when it has. Coming
-                // back from dormancy on its own — the channel posted again
-                // before the user answered — resolves the question too.
-                if existing.title != verdict.channelTitle
-                    || existing.detectorReasons != verdict.reasons
-                    || existing.pendingDormancyReview {
-                    existing.title = verdict.channelTitle
-                    existing.detectorReasons = verdict.reasons
-                    existing.pendingDormancyReview = false
-                    changed += 1
-                }
-            case (true, nil):
-                try upsert(
-                    source: .channel(id: verdict.channelId),
-                    title: verdict.channelTitle,
-                    flagOrigin: .heuristic,
-                    override: .none,
-                    reasons: verdict.reasons,
-                    in: modelContext
-                )
-                changed += 1
-            case (false, let existing?) where verdict.dormant:
-                // Gone quiet is the user's call: hold the row and ask, rather
-                // than drop a show they may still want.
-                if !existing.pendingDormancyReview || existing.detectorReasons != verdict.reasons {
-                    existing.detectorReasons = verdict.reasons
-                    existing.pendingDormancyReview = true
-                    changed += 1
-                }
-            case (false, let existing?):
-                modelContext.delete(existing)
-                changed += 1
-            case (false, nil):
-                continue
-            }
-        }
-        if changed > 0 { try modelContext.save() }
-        return changed
     }
 }

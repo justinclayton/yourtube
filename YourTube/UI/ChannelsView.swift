@@ -415,9 +415,11 @@ struct CategoryPickerSheet: View {
     @State private var selected: Set<PersistentIdentifier> = []
     @State private var isPriority = false
     @State private var isShow = false
-    /// The detector's reasons, when it was the detector that flagged this
-    /// channel. Empty for a hand-made flag.
+    /// The detector's reasons: a pending suggestion's, or the ones a show
+    /// kept from the suggestion it was added from. Empty for a hand-made flag.
     @State private var showReasons: [String] = []
+    /// Whether `showReasons` belong to a suggestion still waiting on an answer.
+    @State private var isSuggested = false
     /// The category classifier's evidence for this channel's rule, when it
     /// was the classifier that filed it. Nil for a hand-filed channel, or one
     /// never classified at all.
@@ -444,10 +446,11 @@ struct CategoryPickerSheet: View {
                     }
                 } footer: {
                     VStack(alignment: .leading, spacing: 6) {
-                        // A guess has to say why, here as much as on the show
-                        // page: this is where it gets corrected.
+                        // A suggestion says why, here as much as in the Pick
+                        // grid: this is the other place it gets answered.
                         if !showReasons.isEmpty {
-                            Text("Flagged automatically: " + showReasons.joined(separator: "; ") + ".")
+                            Text((isSuggested ? "Suggested as a show: " : "Added from a suggestion: ")
+                                 + showReasons.joined(separator: "; ") + ".")
                         }
                         Text("Shows get a poster in Your Shows, with an unwatched count. Turning this off marks \u{201C}not a show\u{201D} permanently.")
                     }
@@ -531,8 +534,16 @@ struct CategoryPickerSheet: View {
                 selected = Set((rule?.topicCollections ?? []).map(\.persistentModelID))
                 isPriority = rule?.isPriority ?? false
                 isShow = (try? services.shows.isShow(channelId: subscription.channelId)) ?? false
-                let record = try? services.shows.record(forChannelId: subscription.channelId)
-                showReasons = record?.flagOrigin == .heuristic ? (record?.detectorReasons ?? []) : []
+                // A pending suggestion's reasons, or the ones a show kept from
+                // the suggestion it was added from.
+                if let suggestion = try? services.suggestions.suggestion(forChannel: subscription.channelId) {
+                    showReasons = suggestion.reasons
+                    isSuggested = true
+                } else {
+                    let record = try? services.shows.record(forChannelId: subscription.channelId)
+                    showReasons = record?.isActive == true ? (record?.detectorReasons ?? []) : []
+                    isSuggested = false
+                }
                 // A user-set rule shows no reasons: it's the user's call now,
                 // not the classifier's guess.
                 classifierEvidence = (rule?.isUserSet == false && rule?.classifiedAt != nil) ? rule : nil
@@ -563,8 +574,10 @@ struct CategoryPickerSheet: View {
                 do {
                     try services.shows.setIsShow(isOn, channelId: subscription.channelId, channelTitle: subscription.title)
                     isShow = isOn
-                    // The flag is the user's now, so the guess's reasons go.
+                    // A hand-made flag keeps no reasons, and either answer
+                    // ends a pending suggestion.
                     showReasons = []
+                    isSuggested = false
                     error = nil
                 } catch {
                     self.error = error.localizedDescription

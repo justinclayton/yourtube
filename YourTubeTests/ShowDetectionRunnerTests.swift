@@ -2,8 +2,9 @@ import XCTest
 import SwiftData
 @testable import YourTube
 
-/// The pass that joins `ShowDetector` to the catalogue: which channels it
-/// looks at, and which it is never allowed to touch.
+/// The pass that joins `ShowDetector` to the suggestions: which channels it
+/// looks at, which it is never allowed to touch, and that it never adds a
+/// show itself.
 ///
 /// The channels below are the same synthetic shapes as `ShowDetectorTests`,
 /// cut down to what the store needs to reproduce a verdict.
@@ -12,15 +13,17 @@ final class ShowDetectionRunnerTests: XCTestCase {
     private var container: ModelContainer!
     private var context: ModelContext { container.mainContext }
     private var shows: ShowManager!
+    private var suggestions: ShowSuggestions!
     private var runner: ShowDetectionRunner!
     private var defaults: UserDefaults!
 
     override func setUp() async throws {
         container = try ModelContainer(
-            for: Video.self, Subscription.self, VideoCollection.self, ChannelRule.self, Show.self,
+            for: Video.self, Subscription.self, VideoCollection.self, ChannelRule.self, Show.self, ShowSuggestion.self,
             configurations: ModelConfiguration(isStoredInMemoryOnly: true)
         )
         shows = ShowManager(modelContext: context, watchState: WatchState(modelContext: context))
+        suggestions = ShowSuggestions(modelContext: context)
         defaults = UserDefaults(suiteName: "ShowDetectionRunnerTests-\(UUID().uuidString)")
         runner = ShowDetectionRunner(modelContext: context, defaults: defaults)
     }
@@ -74,28 +77,26 @@ final class ShowDetectionRunnerTests: XCTestCase {
         try? context.save()
     }
 
-    func testAPassFlagsAShowShapedChannelWithItsReasonsAndLeavesTheRestAlone() async throws {
+    func testAPassSuggestsAShowShapedChannelWithItsReasonsAndAddsNoShow() async throws {
         seedShowShapedChannel(id: "UC-bellwether", title: "The Bellwether")
         seedClipsChannel(id: "UC-clips", title: "Clips Archive")
 
         let changed = try await runner.detect()
 
         XCTAssertEqual(changed, 1)
-        XCTAssertEqual(try shows.shows().map(\.channelId), ["UC-bellwether"])
-        let record = try XCTUnwrap(shows.record(forChannelId: "UC-bellwether"))
-        XCTAssertEqual(record.flagOrigin, .heuristic)
-        XCTAssertFalse(record.detectorReasons.isEmpty, "a guess has to say why")
-        XCTAssertNil(try shows.record(forChannelId: "UC-clips"))
+        let pending = try suggestions.pending()
+        XCTAssertEqual(pending.map(\.channelId), ["UC-bellwether"])
+        XCTAssertFalse(pending[0].reasons.isEmpty, "a suggestion has to say why")
+        XCTAssertTrue(try shows.allRecords().isEmpty, "the detector never adds a show")
     }
 
-    func testAChannelTheUserCalledNotAShowIsNeverFlagged() async throws {
+    func testAChannelTheUserCalledNotAShowIsNeverSuggested() async throws {
         seedShowShapedChannel(id: "UC-offtherecord", title: "Off the Record")
         try shows.markAsNotAShow(channelId: "UC-offtherecord", channelTitle: "Off the Record")
 
         try await runner.detect()
 
-        XCTAssertFalse(try shows.isShow(channelId: "UC-offtherecord"))
-        XCTAssertTrue(try shows.shows().isEmpty)
+        XCTAssertTrue(try suggestions.pending().isEmpty)
         XCTAssertEqual(try shows.record(forChannelId: "UC-offtherecord")?.override, .forceNotShow)
     }
 
@@ -123,9 +124,7 @@ final class ShowDetectionRunnerTests: XCTestCase {
 
         try await runner.detect()
 
-        let channelRecord = try XCTUnwrap(shows.record(forChannelId: "UC-bellwether"))
-        XCTAssertEqual(channelRecord.flagOrigin, .heuristic, "the detector reached the channel")
-        XCTAssertTrue(try shows.isShow(channelId: "UC-bellwether"))
+        XCTAssertEqual(try suggestions.pending().map(\.channelId), ["UC-bellwether"], "the detector reached the channel")
         // The playlist show is untouched.
         XCTAssertEqual(try shows.playlistShows(forChannelId: "UC-bellwether").count, 1)
     }
@@ -139,15 +138,15 @@ final class ShowDetectionRunnerTests: XCTestCase {
 
         XCTAssertFalse(context.hasChanges)
         let fresh = ModelContext(container)
-        XCTAssertEqual(try fresh.fetch(FetchDescriptor<Show>()).map(\.channelId), ["UC-bellwether"])
+        XCTAssertEqual(try fresh.fetch(FetchDescriptor<ShowSuggestion>()).map(\.channelId), ["UC-bellwether"])
     }
 
     // MARK: - Examining a channel once
 
-    /// A rejected channel's fingerprint really does skip it. A flagged show is
-    /// the deliberate exception — see the dormancy test below — so it's the
-    /// one re-examined here even though nothing about it moved.
-    func testASecondPassOverAnUnchangedStoreExaminesOnlyTheFlaggedShow() async throws {
+    /// A rejected channel's fingerprint really does skip it. A pending
+    /// suggestion is the deliberate exception — see the dormancy test below —
+    /// so it's the one re-examined here even though nothing about it moved.
+    func testASecondPassOverAnUnchangedStoreExaminesOnlyTheSuggestedChannel() async throws {
         seedShowShapedChannel(id: "UC-bellwether", title: "The Bellwether")
         seedClipsChannel(id: "UC-clips", title: "Clips Archive")
 
@@ -155,9 +154,9 @@ final class ShowDetectionRunnerTests: XCTestCase {
         XCTAssertEqual(runner.lastExamined, 2)
 
         try await runner.detect()
-        XCTAssertEqual(runner.lastExamined, 1, "the flagged show is re-checked; the rejected channel is skipped")
+        XCTAssertEqual(runner.lastExamined, 1, "the suggestion is re-checked; the rejected channel is skipped")
         XCTAssertEqual(runner.lastChanged, 0, "its verdict didn't move, so nothing counts as changed")
-        XCTAssertEqual(try shows.shows().count, 1, "and the catalogue is left as it was")
+        XCTAssertEqual(try suggestions.pendingCount(), 1, "and the suggestion is left as it was")
     }
 
     func testANewUploadPutsItsChannelBackInFrontOfTheDetector() async throws {
@@ -183,11 +182,11 @@ final class ShowDetectionRunnerTests: XCTestCase {
 
     /// The fingerprint can't see a channel going quiet — its video count and
     /// newest date don't change just because time passes. That's what the
-    /// unconditional re-check of flagged shows is for.
-    func testAFlaggedShowGoingDormantIsHeldForReviewOnTheNextPass() async throws {
+    /// unconditional re-check of pending suggestions is for.
+    func testASuggestionGoingDormantIsWithdrawnOnTheNextPass() async throws {
         seedShowShapedChannel(id: "UC-bellwether", title: "The Bellwether")
         try await runner.detect()
-        XCTAssertTrue(try shows.isShow(channelId: "UC-bellwether"))
+        XCTAssertEqual(try suggestions.pendingCount(), 1)
 
         let videos = try context.fetch(FetchDescriptor<Video>())
         let daysSinceOldestStillFresh = Double(ShowDetector.maximumDormantDays + 30)
@@ -198,12 +197,8 @@ final class ShowDetectionRunnerTests: XCTestCase {
 
         try await runner.detect()
 
-        // Still in the catalogue — going quiet is the user's call, not the
-        // detector's, so it's held for review rather than dropped.
-        XCTAssertTrue(try shows.isShow(channelId: "UC-bellwether"))
-        let record = try XCTUnwrap(shows.record(forChannelId: "UC-bellwether"))
-        XCTAssertTrue(record.pendingDormancyReview)
-        XCTAssertTrue(record.detectorReasons.contains { $0.hasPrefix("Hasn't posted in") }, "\(record.detectorReasons)")
+        XCTAssertTrue(try suggestions.pending().isEmpty, "withdrawn without asking")
+        XCTAssertTrue(try shows.allRecords().isEmpty)
     }
 
     /// Changing the heuristic has to reach channels already examined under the
@@ -216,5 +211,57 @@ final class ShowDetectionRunnerTests: XCTestCase {
         defaults.set(ShowDetector.version - 1, forKey: ShowDetectionRunner.versionKey)
         try await runner.detect()
         XCTAssertEqual(runner.lastExamined, 1)
+    }
+
+    // MARK: - The upgrade
+
+    /// The first pass under the new rules hands the old grid back: the
+    /// detector's own shows become suggestions, and every channel is looked
+    /// at again.
+    func testTheFirstPassConvertsTheDetectorsShowsAndForgetsTheFingerprints() async throws {
+        seedShowShapedChannel(id: "UC-bellwether", title: "The Bellwether")
+        seedClipsChannel(id: "UC-clips", title: "Clips Archive")
+        // What the old detector left behind for the Bellwether.
+        let guess = Show(source: .channel(id: "UC-bellwether"), title: "The Bellwether", flagOrigin: .heuristic)
+        guess.detectorReasons = ["Numbered episodes"]
+        context.insert(guess)
+        try shows.markAsShow(channelId: "UC-mine", channelTitle: "Mine")
+        // A store the old detector had already been over.
+        defaults.set(["UC-bellwether": "stale", "UC-clips": "stale"], forKey: ShowDetectionRunner.fingerprintsKey)
+        defaults.set(ShowDetector.version, forKey: ShowDetectionRunner.versionKey)
+
+        try await runner.detect()
+
+        XCTAssertEqual(runner.lastExamined, 2, "every channel is re-examined once")
+        XCTAssertEqual(try suggestions.pending().map(\.channelId), ["UC-bellwether"])
+        XCTAssertNil(try shows.record(forChannelId: "UC-bellwether"), "the guessed show is now only a suggestion")
+        XCTAssertEqual(try shows.shows().map(\.channelId), ["UC-mine"])
+    }
+
+    func testASuggestionForAChannelYouUnsubscribedFromIsWithdrawn() async throws {
+        let subscription = seedShowShapedChannel(id: "UC-bellwether", title: "The Bellwether")
+        try await runner.detect()
+        XCTAssertEqual(try suggestions.pendingCount(), 1)
+
+        context.delete(subscription)
+        try context.save()
+        try await runner.detect()
+
+        XCTAssertEqual(try suggestions.pendingCount(), 0)
+    }
+
+    /// Once per store: a later pass converts nothing.
+    func testTheConversionRunsOnce() async throws {
+        try await runner.detect()
+        context.insert(Show(source: .channel(id: "UC-old"), title: "Old Guess", flagOrigin: .heuristic))
+        try context.save()
+
+        try await runner.detect()
+
+        XCTAssertNotNil(try shows.record(forChannelId: "UC-old"))
+        XCTAssertEqual(
+            defaults.integer(forKey: ShowDetectionRunner.suggestionsMigrationKey),
+            ShowDetectionRunner.suggestionsMigrationVersion
+        )
     }
 }

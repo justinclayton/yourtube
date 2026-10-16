@@ -66,7 +66,7 @@ final class ChannelLibrary: Identifiable {
             )
             container = try ModelContainer(
                 for: Video.self, Subscription.self,
-                VideoCollection.self, ChannelRule.self, Show.self,
+                VideoCollection.self, ChannelRule.self, Show.self, ShowSuggestion.self,
                 migrationPlan: VideoMigrationPlan.self,
                 configurations: ModelConfiguration(url: url)
             )
@@ -74,7 +74,7 @@ final class ChannelLibrary: Identifiable {
             // The legacy store, opened exactly as it was before channels.
             container = try ModelContainer(
                 for: Video.self, Subscription.self,
-                VideoCollection.self, ChannelRule.self, Show.self,
+                VideoCollection.self, ChannelRule.self, Show.self, ShowSuggestion.self,
                 migrationPlan: VideoMigrationPlan.self
             )
         }
@@ -91,7 +91,7 @@ final class ChannelLibrary: Identifiable {
     static func signedOut(auth: AuthController, quota: QuotaTracker) throws -> ChannelLibrary {
         UserDefaults.standard.removePersistentDomain(forName: signedOutSuite)
         let container = try ModelContainer(
-            for: Video.self, Subscription.self, VideoCollection.self, ChannelRule.self, Show.self,
+            for: Video.self, Subscription.self, VideoCollection.self, ChannelRule.self, Show.self, ShowSuggestion.self,
             configurations: ModelConfiguration(isStoredInMemoryOnly: true)
         )
         return ChannelLibrary(

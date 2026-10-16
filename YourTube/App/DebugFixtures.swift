@@ -108,10 +108,10 @@ enum DebugFixtures {
     static func makeContainer() throws -> ModelContainer {
         // The fixture store is new every launch, so its defaults are too:
         // otherwise the show detector would believe it had already examined
-        // these channels and leave the grid short of its heuristic show.
+        // these channels, and the Pick grid would count as already offered.
         defaults.removePersistentDomain(forName: defaultsSuite)
         let container = try ModelContainer(
-            for: Video.self, Subscription.self, VideoCollection.self, ChannelRule.self, Show.self,
+            for: Video.self, Subscription.self, VideoCollection.self, ChannelRule.self, Show.self, ShowSuggestion.self,
             configurations: ModelConfiguration(isStoredInMemoryOnly: true)
         )
 
@@ -398,12 +398,14 @@ enum DebugFixtures {
 ///   three cut-down segments. Segments are ordinary videos, not Shorts, which
 ///   is exactly why a show has to tell them apart.
 ///
-/// Two more exist for the detector rather than the grid:
+/// Four more exist for the detector rather than the grid:
 ///
-/// - **The Rundown** — show-shaped and unflagged, so a fixture run shows the
-///   detector finding a show by itself, reasons and all.
+/// - **The Rundown**, **Field Notes** and **Kitchen Table** — show-shaped and
+///   undecided, so the fixture store has pending suggestions for the Pick
+///   grid and the Your Shows footer, reasons and all. Some of their episodes
+///   are watched and some aren't, so the grid has engagement to rank by.
 /// - **Off the Record** — just as show-shaped, and marked "Not a show" by
-///   hand. It's the one the detector must never pick up.
+///   hand. It's the one the detector must never suggest.
 extension DebugFixtures {
     /// What the fixture store has already decided about a show-shaped channel,
     /// so a run exercises all three states the detector has to respect.
@@ -413,7 +415,7 @@ extension DebugFixtures {
         /// "Not a show" by hand: a tombstone the detector must not overturn,
         /// on a channel it would otherwise flag.
         case notAShow
-        /// No row at all — the detector's to find at launch.
+        /// No `Show` row: the detector suggests it.
         case undecided
     }
 
@@ -487,8 +489,8 @@ extension DebugFixtures {
             ],
             unwatched: 2
         ),
-        // Nothing decided about this one, so the detector finds it at launch
-        // and the grid gains a poster nobody flagged by hand.
+        // Nothing decided about this one, so it's a pending suggestion: the
+        // one in the Pick grid with the most watched.
         ShowChannel(
             id: "UC-rundown",
             title: "The Rundown",
@@ -507,6 +509,45 @@ extension DebugFixtures {
                 ("The Rundown: Ep. 82 — the committee hearings", 3_540),
             ],
             unwatched: 4
+        ),
+        // Undecided too, and nothing watched: a suggestion ranked on the
+        // detector's reasons alone.
+        ShowChannel(
+            id: "UC-fieldnotes",
+            title: "Field Notes",
+            categories: ["Science & Explainers"],
+            flag: .undecided,
+            youtubeCategoryId: "27",
+            weekdays: [1],
+            hour: 10,
+            episodes: [
+                ("Field Notes, Ep. 24 — the salt marsh", 2_880),
+                ("Field Notes, Ep. 23 — a winter on the ridge", 3_060),
+                ("Field Notes, Ep. 22 — the last lighthouse keepers", 2_760),
+                ("Field Notes, Ep. 21 — reading a river", 2_940),
+                ("Field Notes, Ep. 20 — the night shift at the zoo", 3_120),
+                ("Field Notes, Ep. 19 — following the swifts", 2_820),
+            ],
+            unwatched: 6
+        ),
+        // Undecided, one episode watched: ranked between the other two.
+        ShowChannel(
+            id: "UC-kitchentable",
+            title: "Kitchen Table",
+            categories: ["Food", "Podcasts & Interviews"],
+            flag: .undecided,
+            youtubeCategoryId: "26",
+            weekdays: [3],
+            hour: 8,
+            episodes: [
+                ("Kitchen Table #31 — bread, slowly", 3_300),
+                ("Kitchen Table #30 — the case for stock", 3_540),
+                ("Kitchen Table #29 — cooking for one", 3_180),
+                ("Kitchen Table #28 — a pantry tour", 3_420),
+                ("Kitchen Table #27 — knives, honestly", 3_060),
+                ("Kitchen Table #26 — what to do with a glut", 3_360),
+            ],
+            unwatched: 5
         ),
         // Show-shaped in every way the detector can see, and the user has
         // said no. It must stay out of Your Shows however many passes run.
@@ -578,8 +619,10 @@ extension DebugFixtures {
     /// Seeds the show-shaped channels and the `Show` rows that put them in
     /// Your Shows. Three are flagged the way the user would flag them by hand
     /// — through `ShowManager`, the same call the Channels list makes — so the
-    /// grid is populated without anything automatic having to run; the other
-    /// two are left for the detector to get right and wrong.
+    /// grid is populated without anything automatic having to run. The
+    /// undecided ones become suggestions the way a detector pass makes them:
+    /// `ShowDetector`'s verdict on their stored videos, applied through
+    /// `ShowSuggestions`.
     @MainActor
     private static func seedShows(
         _ context: ModelContext,
@@ -619,6 +662,20 @@ extension DebugFixtures {
             }
         }
         try context.save()
+
+        var verdicts: [ShowVerdict] = []
+        for channel in showChannels where channel.flag == .undecided {
+            let channelId = channel.id
+            let videos = try context.fetch(FetchDescriptor<Video>(
+                predicate: #Predicate { $0.channelId == channelId }
+            ))
+            verdicts.append(ShowDetector.verdict(for: ChannelEvidence(
+                channelId: channel.id,
+                channelTitle: channel.title,
+                videos: videos.map(ShowDetectionRunner.signals(for:))
+            )))
+        }
+        try ShowSuggestions(modelContext: context).apply(verdicts)
     }
 
     /// A daily show's episodes are named for their day, so the fixture titles
