@@ -236,10 +236,9 @@ struct ShowPageView: View {
 
     // MARK: - Header
 
-    /// Art, provenance, habit, and the two buttons. The lines are stacked in
-    /// order of how sure the app is of them: the source is a fact, the
-    /// cadence is computed from what's arrived so far, and the detector's
-    /// reasons sit beneath them when the show was added from a suggestion.
+    /// Art, source, habit, and the two buttons. The lines are stacked in
+    /// order of how sure the app is of them: the source is a fact, and the
+    /// cadence is computed from what's arrived so far.
     private func header(listing: ShowListing) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 16) {
@@ -268,7 +267,6 @@ struct ShowPageView: View {
                     }
                 }
             }
-            DetectorReasons(reasons: show.detectorReasons)
             seasonPicker
             buttons(listing: listing)
         }
@@ -596,63 +594,4 @@ private extension Video {
     /// for a show's episodes has been through both the boilerplate stripper
     /// and the model rewrite. See `TitleCleaner`.
     var episodeTitle: String { displayTitle }
-}
-
-/// Why the detector suggested this channel, kept from the suggestion the
-/// show was added from. Nothing for a show flagged in the Channels tab, which
-/// needs no justifying.
-///
-/// Collapsed to one line by default: the show is the user's now, and the
-/// reasons are provenance rather than something to act on.
-struct DetectorReasons: View {
-    let reasons: [String]
-
-    @State private var isExpanded = false
-
-    var body: some View {
-        if !reasons.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                Button {
-                    withAnimation(.snappy) { isExpanded.toggle() }
-                } label: {
-                    HStack(spacing: 6) {
-                        Text("Added from a suggestion")
-                            .font(.subheadline.weight(.semibold))
-                        Spacer(minLength: 0)
-                        // The hint goes once the answer is showing, so the
-                        // title keeps its line; the chevron says the rest.
-                        if !isExpanded {
-                            Text("Why?")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.tertiary)
-                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    }
-                    .contentShape(Rectangle())
-                }
-                // Plain, so the tap lands on this button alone rather than
-                // on every button in the enclosing list row.
-                .buttonStyle(.plain)
-                .accessibilityLabel("Added from a suggestion")
-                .accessibilityHint(isExpanded ? "Hides why" : "Shows why")
-
-                if isExpanded {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(reasons, id: \.self) { reason in
-                            Text("· \(reason)")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12)
-            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        }
-    }
 }

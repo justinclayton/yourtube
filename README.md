@@ -308,8 +308,8 @@ A guess is only ever a **suggestion**. Suggestions are picked in one sheet,
 the Your Shows grid before it's yours: every suggested channel as a poster,
 nothing ticked. Tap the ones you follow; hold a poster to read the detector's
 reasons and what you've already watched from it. The channels you already
-watch come first. One button adds the ticked and sets the rest aside, after
-saying how many of each. Setting aside is the same permanent "Not a show" the
+watch come first. One button adds the ticked and sets the rest aside, with no
+second question. Setting aside is the same permanent "Not a show" the
 Channels tab records, so the list is finite and a channel you set aside is
 never suggested again (the Channels tab can still flag it). Done closes the
 sheet without deciding anything.
@@ -323,8 +323,7 @@ Shows and nowhere else: no badge, no banner.
 A suggestion that stops looking like a show — including one whose channel
 goes quiet for four months — disappears on its own, and deciding about a
 channel anywhere (the Channels tab, the show page) clears its suggestion. A
-show you added keeps the reasons it was suggested for, on its show page and
-in the channel's Categories sheet. A channel you have decided about either way
+show you added is yours: it doesn't say where it came from or why. A channel you have decided about either way
 is skipped entirely by every later pass, and a show you added is never taken
 back by the app. Adding a playlist-backed show is not a decision about its
 channel, though — a channel that only hosts a playlist show can still be

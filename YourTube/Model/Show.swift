@@ -117,9 +117,9 @@ final class Show {
     /// source video is listed as an episode. See `ShowListing`.
     var hideSegments: Bool = true
     var artPreferenceRaw: String
-    /// Why the detector suggested this channel, in its own words, kept when
-    /// the user adds the show from its suggestion so the show page can still
-    /// say where it came from. Empty for a show flagged from the Channels tab.
+    /// Why the old detector flagged this channel, from before shows were
+    /// only added by hand. Read once, when `ShowSuggestions` turns such a
+    /// show back into a suggestion; empty for every show the user added.
     var detectorReasons: [String] = []
     /// Season names in running order, for a show built from several
     /// playlists. Empty for a show backed by one playlist, which has nothing

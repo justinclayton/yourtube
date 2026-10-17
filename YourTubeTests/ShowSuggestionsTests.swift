@@ -111,7 +111,7 @@ final class ShowSuggestionsTests: XCTestCase {
 
     // MARK: - The user's answers
 
-    func testAcceptingAddsAUserShowThatKeepsItsReasons() throws {
+    func testAcceptingAddsAUserShowWithNoReasons() throws {
         try suggestions.apply([verdict("UC-news", reasons: ["Episodes usually run 1 hr 5 min", "Numbered episodes"])])
 
         try suggestions.accept(["UC-news"])
@@ -121,7 +121,7 @@ final class ShowSuggestionsTests: XCTestCase {
         XCTAssertEqual(show.channelId, "UC-news")
         XCTAssertEqual(show.flagOrigin, .user)
         XCTAssertEqual(show.override, .forceShow)
-        XCTAssertEqual(show.detectorReasons, ["Episodes usually run 1 hr 5 min", "Numbered episodes"])
+        XCTAssertEqual(show.detectorReasons, [], "the user added it; it needs no why")
     }
 
     func testSettingAsideLeavesATombstoneSoItIsNeverSuggestedAgain() throws {

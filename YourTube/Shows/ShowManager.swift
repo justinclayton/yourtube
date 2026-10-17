@@ -4,7 +4,7 @@ import SwiftData
 /// One channel's verdict from the show detector: does this look like a show,
 /// and why. `ShowDetector` produces them; `ShowSuggestions.apply` turns them
 /// into suggestions, and knows what it must never touch. The reasons travel
-/// with the suggestion, and onto the show if the user adds it.
+/// with the suggestion, for the Pick grid to show.
 struct ShowVerdict: Sendable, Equatable {
     var channelId: String
     var channelTitle: String
@@ -93,14 +93,9 @@ final class ShowManager {
 
     /// Adds a channel as a show. Permanent until the user changes it: origin
     /// and override both say "user", so the detector never reconsiders it.
-    ///
-    /// - Parameter reasons: the detector's reasons, when the show is accepted
-    ///   from a suggestion; empty for a flag made in the Channels tab.
     @discardableResult
-    func markAsShow(channelId: String, channelTitle: String, reasons: [String] = []) throws -> Show {
-        let show = try Self.recordDecision(
-            isShow: true, channelId: channelId, channelTitle: channelTitle, reasons: reasons, in: modelContext
-        )
+    func markAsShow(channelId: String, channelTitle: String) throws -> Show {
+        let show = try Self.recordDecision(isShow: true, channelId: channelId, channelTitle: channelTitle, in: modelContext)
         try modelContext.save()
         return show
     }
@@ -120,7 +115,6 @@ final class ShowManager {
         isShow: Bool,
         channelId: String,
         channelTitle: String,
-        reasons: [String] = [],
         in modelContext: ModelContext
     ) throws -> Show {
         try ShowSuggestions.dismissSuggestion(forChannel: channelId, in: modelContext)
@@ -129,7 +123,6 @@ final class ShowManager {
             title: channelTitle,
             flagOrigin: .user,
             override: isShow ? .forceShow : .forceNotShow,
-            reasons: reasons,
             in: modelContext
         )
     }
@@ -156,18 +149,18 @@ final class ShowManager {
         title: String,
         flagOrigin: ShowFlagOrigin,
         override: ShowOverride,
-        reasons: [String] = [],
         in modelContext: ModelContext
     ) throws -> Show {
         if let existing = try record(id: source.showId, in: modelContext) {
             existing.title = title
             existing.flagOrigin = flagOrigin
             existing.override = override
-            existing.detectorReasons = reasons
+            // A decision needs no justifying, so any reasons left from the
+            // old detector go.
+            existing.detectorReasons = []
             return existing
         }
         let show = Show(source: source, title: title, flagOrigin: flagOrigin, override: override)
-        show.detectorReasons = reasons
         modelContext.insert(show)
         return show
     }

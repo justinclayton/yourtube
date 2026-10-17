@@ -146,7 +146,7 @@ final class ShowSuggestions {
 
     // MARK: - The user's side
 
-    /// Adds each channel as a show, keeping the reasons it was suggested for.
+    /// Adds each channel as a show.
     func accept(_ channelIds: [String]) throws {
         try resolve(accepting: channelIds, settingAside: [])
     }
@@ -168,7 +168,6 @@ final class ShowSuggestions {
                     isShow: isShow,
                     channelId: channelId,
                     channelTitle: suggestion.title,
-                    reasons: isShow ? suggestion.reasons : [],
                     in: modelContext
                 )
                 modelContext.delete(suggestion)

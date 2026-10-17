@@ -17,7 +17,6 @@ struct SuggestedShowsSheet: View {
     @State private var suggestions: [PendingSuggestion]?
     @State private var ticked: Set<String> = []
     @State private var inspecting: PendingSuggestion?
-    @State private var isConfirming = false
     @State private var outcome: Outcome?
     @State private var error: String?
 
@@ -65,7 +64,7 @@ struct SuggestedShowsSheet: View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    Text(Self.intro(count: suggestions.count))
+                    Text(Self.intro)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -96,28 +95,13 @@ struct SuggestedShowsSheet: View {
                     .padding(.horizontal)
             }
             Button {
-                if setAsideCount(of: suggestions) > 0 {
-                    isConfirming = true
-                } else {
-                    finish(suggestions)
-                }
+                finish(suggestions)
             } label: {
                 Text(Self.buttonTitle(ticked: ticked.count))
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            // On the button, so the dialog points at what asked for it.
-            .confirmationDialog(
-                Self.confirmationTitle(adding: ticked.count, settingAside: setAsideCount(of: suggestions)),
-                isPresented: $isConfirming,
-                titleVisibility: .visible
-            ) {
-                Button(ticked.isEmpty ? "Set Aside" : "Add and Set Aside") { finish(suggestions) }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("They stay channels and won't be suggested again.")
-            }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
         }
@@ -132,10 +116,6 @@ struct SuggestedShowsSheet: View {
         } else {
             ticked.insert(suggestion.id)
         }
-    }
-
-    private func setAsideCount(of suggestions: [PendingSuggestion]) -> Int {
-        suggestions.count { !ticked.contains($0.id) }
     }
 
     private func finish(_ suggestions: [PendingSuggestion]) {
@@ -155,25 +135,13 @@ struct SuggestedShowsSheet: View {
 
     // MARK: - Wording
 
-    static func intro(count: Int) -> String {
-        let channels = count == 1 ? "1 channel looks like a show" : "\(count) channels look like shows"
-        return "\(channels). Tap the ones you follow; the rest stay channels. Hold a poster to see why it's here."
-    }
+    static let intro = "These channels might be good candidates to add to the Shows tab. Tap and hold on one of the channels below to understand how we make these recommendations"
 
     static func buttonTitle(ticked: Int) -> String {
         switch ticked {
         case 0: "None of these"
         case 1: "Add 1 show"
         default: "Add \(ticked) shows"
-        }
-    }
-
-    static func confirmationTitle(adding: Int, settingAside: Int) -> String {
-        let channels = settingAside == 1 ? "1 channel" : "\(settingAside) channels"
-        switch adding {
-        case 0: return "Set aside \(channels)?"
-        case 1: return "Add 1 show and set aside \(channels)?"
-        default: return "Add \(adding) shows and set aside \(channels)?"
         }
     }
 }
