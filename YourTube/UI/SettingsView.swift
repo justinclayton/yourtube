@@ -18,6 +18,9 @@ enum SettingsKeys {
     /// Whether Channels shows the grouped list or the avatar grid. See
     /// `ChannelsPresentation`.
     static let channelsPresentation = "settings.channelsPresentation"
+    /// Whether this store has been shown the Pick grid unasked. See
+    /// `ShowsView`.
+    static let suggestionsOffered = "shows.suggestions.offered"
 }
 
 struct SettingsView: View {

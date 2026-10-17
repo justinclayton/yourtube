@@ -49,7 +49,7 @@ final class SchemaMigrationTests: XCTestCase {
         try makeV1Store()
 
         let migrated = try ModelContainer(
-            for: Video.self, Subscription.self, VideoCollection.self, ChannelRule.self, Show.self,
+            for: Video.self, Subscription.self, VideoCollection.self, ChannelRule.self, Show.self, ShowSuggestion.self,
             migrationPlan: VideoMigrationPlan.self,
             configurations: ModelConfiguration(url: storeURL)
         )
@@ -58,11 +58,46 @@ final class SchemaMigrationTests: XCTestCase {
         XCTAssertEqual(videos.map(\.videoId), ["real-video"], "the flagged row is gone, the real one survived")
     }
 
+    /// A store from between #132 and #145: `Show` still has its dormancy
+    /// flag and there is no `ShowSuggestion` table. Both changes are
+    /// lightweight; the shows themselves have to come through untouched,
+    /// since turning the detector's into suggestions is the detector's job.
+    func testAV2StoreKeepsItsShowsAndGainsSuggestions() throws {
+        let old = try ModelContainer(
+            for: SchemaV2.Video.self, SchemaV2.Subscription.self,
+            SchemaV2.VideoCollection.self, SchemaV2.ChannelRule.self, SchemaV2.Show.self,
+            configurations: ModelConfiguration(schema: Schema(versionedSchema: SchemaV2.self), url: storeURL)
+        )
+        let show = SchemaV2.Show(
+            id: "channel:UCaaa", sourceKind: "channel", sourceId: "UCaaa", channelId: "UCaaa",
+            title: "A Show", flagOriginRaw: "heuristic", overrideRaw: "none",
+            playOrderRaw: "newestFirst", artPreferenceRaw: "channelArt"
+        )
+        show.detectorReasons = ["Numbered episodes"]
+        show.pendingDormancyReview = true
+        old.mainContext.insert(show)
+        try old.mainContext.save()
+
+        let migrated = try ModelContainer(
+            for: Video.self, Subscription.self, VideoCollection.self, ChannelRule.self, Show.self, ShowSuggestion.self,
+            migrationPlan: VideoMigrationPlan.self,
+            configurations: ModelConfiguration(url: storeURL)
+        )
+
+        let shows = try migrated.mainContext.fetch(FetchDescriptor<Show>())
+        XCTAssertEqual(shows.map(\.id), ["channel:UCaaa"])
+        XCTAssertEqual(shows.first?.flagOrigin, .heuristic)
+        XCTAssertEqual(shows.first?.detectorReasons, ["Numbered episodes"])
+        migrated.mainContext.insert(ShowSuggestion(channelId: "UCbbb", title: "B", reasons: []))
+        try migrated.mainContext.save()
+        XCTAssertEqual(try migrated.mainContext.fetchCount(FetchDescriptor<ShowSuggestion>()), 1)
+    }
+
     /// A brand-new store (no file on disk yet) has nothing to migrate from,
     /// so it just opens on the current schema.
     func testAFreshStoreOpensWithoutMigrating() throws {
         let container = try ModelContainer(
-            for: Video.self, Subscription.self, VideoCollection.self, ChannelRule.self, Show.self,
+            for: Video.self, Subscription.self, VideoCollection.self, ChannelRule.self, Show.self, ShowSuggestion.self,
             migrationPlan: VideoMigrationPlan.self,
             configurations: ModelConfiguration(url: storeURL)
         )

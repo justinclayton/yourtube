@@ -2,10 +2,10 @@ import Foundation
 import SwiftData
 import Observation
 
-/// Runs `ShowDetector` over the stored channels and files its verdicts through
-/// `ShowManager`, the way `CategoryManager` runs the classifier: fire and
-/// forget, at launch and after every refresh, never on the path to drawing
-/// anything.
+/// Runs `ShowDetector` over the stored channels and turns its verdicts into
+/// suggestions through `ShowSuggestions`, the way `CategoryManager` runs the
+/// classifier: fire and forget, at launch and after every refresh, never on
+/// the path to drawing anything. It never creates a show; the user does.
 ///
 /// Two things keep the pass cheap and quiet. It skips any channel the user has
 /// an opinion about, so a hand-made flag is never even reconsidered. And it
@@ -14,14 +14,20 @@ import Observation
 /// when its uploads actually move. The fingerprints are keyed by detector
 /// version, so changing the heuristic re-examines everything exactly once.
 ///
-/// A channel already flagged as a show is the exception: it's re-examined
+/// A channel with a pending suggestion is the exception: it's re-examined
 /// every pass regardless of its fingerprint, because the detector's dormancy
 /// gate can flip its verdict with no upload ever moving — a channel that's
 /// gone dark looks the same to the fingerprint forever.
 ///
+/// Before its first pass on a store, the runner converts the shows the
+/// detector filed by itself before issue #145 into suggestions, and forgets
+/// the fingerprints so every channel is examined once under the new rules.
+/// The version key for that lives in the same per-store defaults as the
+/// fingerprints, so each channel's store is converted once.
+///
 /// Fingerprints live in `UserDefaults` rather than the store because most
-/// channels are examined and rejected, and a rejection has no `Show` row to
-/// hang anything off.
+/// channels are examined and rejected, and a rejection has no row to hang
+/// anything off.
 ///
 /// The pass itself runs on `StoreWriter`, off the main context. It reads every
 /// video in the store to judge a channel's shape, which on the main context
@@ -31,12 +37,16 @@ import Observation
 final class ShowDetectionRunner {
     static let fingerprintsKey = "shows.detector.fingerprints"
     static let versionKey = "shows.detector.version"
+    /// Which upgrade of the show catalogue this store has had; see
+    /// `convertHeuristicShowsIfNeeded`.
+    static let suggestionsMigrationKey = "shows.suggestions.migrationVersion"
+    static let suggestionsMigrationVersion = 1
 
     private(set) var lastRunAt: Date?
     /// Channels actually examined by the last pass; the rest were unchanged
     /// or the user's business.
     private(set) var lastExamined = 0
-    /// Show rows the last pass added, updated, or removed.
+    /// Suggestions the last pass added, refreshed, or removed.
     private(set) var lastChanged = 0
     private(set) var isRunning = false
 
@@ -62,13 +72,14 @@ final class ShowDetectionRunner {
         }
     }
 
-    /// One pass. Returns how many `Show` rows changed.
+    /// One pass. Returns how many suggestions changed.
     @discardableResult
     func detect() async throws -> Int {
         guard !isRunning else { return 0 }
         isRunning = true
         defer { isRunning = false }
 
+        try await convertHeuristicShowsIfNeeded()
         forgetFingerprintsIfDetectorChanged()
         let outcome = try await writer.detectShows(fingerprints: storedFingerprints())
         defaults.set(outcome.fingerprints, forKey: Self.fingerprintsKey)
@@ -97,6 +108,16 @@ final class ShowDetectionRunner {
 
     private func storedFingerprints() -> [String: String] {
         defaults.dictionary(forKey: Self.fingerprintsKey) as? [String: String] ?? [:]
+    }
+
+    /// Hands the shows the detector filed by itself back as suggestions,
+    /// once per store. The fingerprints go with it: a channel the old rules
+    /// examined and flagged has to be looked at again to be suggested.
+    private func convertHeuristicShowsIfNeeded() async throws {
+        guard defaults.integer(forKey: Self.suggestionsMigrationKey) < Self.suggestionsMigrationVersion else { return }
+        _ = try await writer.convertHeuristicShows()
+        defaults.removeObject(forKey: Self.fingerprintsKey)
+        defaults.set(Self.suggestionsMigrationVersion, forKey: Self.suggestionsMigrationKey)
     }
 
     private func forgetFingerprintsIfDetectorChanged() {

@@ -65,6 +65,7 @@ final class AppServices {
     let watchState: WatchState
     let titles: TitleCleaner
     let shows: ShowManager
+    let suggestions: ShowSuggestions
     let showDetector: ShowDetectionRunner
 
     /// - Parameters:
@@ -98,6 +99,7 @@ final class AppServices {
         let watchState = WatchState(modelContext: modelContext)
         self.watchState = watchState
         self.shows = ShowManager(modelContext: modelContext, watchState: watchState)
+        self.suggestions = ShowSuggestions(modelContext: modelContext)
         self.titles = TitleCleaner(
             modelContext: modelContext,
             rewriter: TitleRewriterFactory.makeSystemRewriter(),

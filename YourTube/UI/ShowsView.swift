@@ -20,14 +20,22 @@ struct ShowsView: View {
     // nobody was looking at. Each section owns the query it draws from
     // instead. See issue #66.
 
+    @Environment(AppServices.self) private var services
+    /// Per store, like every `@AppStorage` here: each channel's library is
+    /// offered its suggestions once.
+    @AppStorage(SettingsKeys.suggestionsOffered) private var suggestionsOffered = false
+    /// How many channels the detector is suggesting, recounted after each
+    /// save. A count rather than a query, for the reason above.
+    @State private var suggestionCount = 0
+    @State private var isPicking = false
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 28) {
-                    DormancyReviewSection()
                     ContinueWatchingSection()
                     UpNextSection()
-                    YourShowsSection()
+                    YourShowsSection(suggestionCount: suggestionCount) { isPicking = true }
                 }
                 .padding(.horizontal)
                 .padding(.bottom, 24)
@@ -47,64 +55,25 @@ struct ShowsView: View {
                 ShowPageView(show: show)
             }
         }
-    }
-}
-
-/// Shows the automatic pass wants to drop because the channel's gone quiet,
-/// but won't without asking first — see `ShowManager.applyAutomaticVerdicts`.
-/// One banner per show, since more than one can go dormant independently and
-/// each needs its own answer.
-private struct DormancyReviewSection: View {
-    @Query(filter: #Predicate<Show> { $0.pendingDormancyReview })
-    private var pending: [Show]
-
-    var body: some View {
-        if !pending.isEmpty {
-            VStack(spacing: 8) {
-                ForEach(pending) { show in
-                    DormancyReviewBanner(show: show)
-                }
-            }
+        // Here rather than in Your Shows: that section sits at the foot of a
+        // lazy stack and may not exist yet when the first suggestions land.
+        .recomputingFromStore(id: 0) {
+            suggestionCount = (try? services.suggestions.pendingCount()) ?? 0
+            offerSuggestionsOnce()
+        }
+        .sheet(isPresented: $isPicking) {
+            SuggestedShowsSheet()
         }
     }
-}
 
-/// "This channel's gone quiet — still a show?" Deliberately an inline banner
-/// rather than a blocking alert, the way `ReauthBanner` in `FeedView` is: the
-/// answer can wait, and it sits right above the show it's asking about.
-private struct DormancyReviewBanner: View {
-    @Environment(AppServices.self) private var services
-    let show: Show
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "moon.zzz")
-                .foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(show.title)
-                    .font(.subheadline.weight(.semibold))
-                Text(show.detectorReasons.first ?? "Hasn't posted in a while")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            Button("Remove") { resolve(keep: false) }
-                .font(.subheadline)
-            Button("Keep") { resolve(keep: true) }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-        }
-        .padding(.horizontal)
-        .padding(.vertical, 10)
-        .background(.secondary.opacity(0.12))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-    }
-
-    /// Either answer resolves the review: `setIsShow` reaches `markAsShow` or
-    /// `markAsNotAShow`, both of which clear `pendingDormancyReview` as part
-    /// of recording the user's decision.
-    private func resolve(keep: Bool) {
-        try? services.shows.setIsShow(keep, channelId: show.channelId, channelTitle: show.title)
+    /// The Pick grid is put in front of you once, the first time there's
+    /// anything in it: right after the upgrade hands the old grid back, or
+    /// after a fresh install's first detector pass. Closing it counts as
+    /// offered. After that it's only the footer row in Your Shows.
+    private func offerSuggestionsOnce() {
+        guard !suggestionsOffered, suggestionCount > 0, !isPicking else { return }
+        suggestionsOffered = true
+        isPicking = true
     }
 }
 

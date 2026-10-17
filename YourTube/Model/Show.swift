@@ -37,7 +37,9 @@ enum PlayOrder: String, Codable, CaseIterable, Sendable {
     case oldestFirst
 }
 
-/// Who decided this is a show.
+/// Who decided this is a show. Only `user` is written since issue #145: the
+/// detector suggests rather than files, and the upgrade turned every
+/// `heuristic` row into a `ShowSuggestion`. The case stays so old rows decode.
 enum ShowFlagOrigin: String, Codable, Sendable {
     case user
     case heuristic
@@ -115,15 +117,10 @@ final class Show {
     /// source video is listed as an episode. See `ShowListing`.
     var hideSegments: Bool = true
     var artPreferenceRaw: String
-    /// Why the detector flagged this channel, in its own words, so a guess can
-    /// be read and trusted or corrected. Empty for a hand-made flag.
+    /// Why the old detector flagged this channel, from before shows were
+    /// only added by hand. Read once, when `ShowSuggestions` turns such a
+    /// show back into a suggestion; empty for every show the user added.
     var detectorReasons: [String] = []
-    /// Set when a heuristic show's latest pass found the channel's gone quiet.
-    /// A show going dormant is the user's call, not the detector's: the row is
-    /// held rather than dropped, and this is what asks. `markAsShow` and
-    /// `markAsNotAShow` both clear it, whichever way the user answers; so does
-    /// the detector itself, if the channel starts posting again first.
-    var pendingDormancyReview: Bool = false
     /// Season names in running order, for a show built from several
     /// playlists. Empty for a show backed by one playlist, which has nothing
     /// to pick between, and for every channel-backed show.

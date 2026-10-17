@@ -14,7 +14,7 @@ extension StoreWriter {
         /// Channels actually examined; the rest were unchanged or the user's
         /// business.
         var examined = 0
-        /// Show rows added, updated, or removed.
+        /// Suggestions added, refreshed, or removed.
         var changed = 0
         var fingerprints: [String: String] = [:]
     }
@@ -34,14 +34,12 @@ extension StoreWriter {
         let decided = Set(channelShows
             .filter { $0.override != .none || $0.flagOrigin == .user }
             .map(\.channelId))
-        // A heuristic verdict can go stale purely because time passed — a
-        // channel that's gone dark looks identical to the fingerprint forever,
-        // since nothing about its stored videos changes. So a channel we've
-        // already flagged as a show is re-examined every pass rather than only
-        // when its uploads move, to catch it going dormant.
-        let heuristicallyFlagged = Set(channelShows
-            .filter { $0.override == .none && $0.flagOrigin == .heuristic }
-            .map(\.channelId))
+        // A verdict can go stale purely because time passed — a channel
+        // that's gone dark looks identical to the fingerprint forever, since
+        // nothing about its stored videos changes. So a channel with a
+        // pending suggestion is re-examined every pass rather than only when
+        // its uploads move, to catch it going dormant and withdraw it.
+        let suggested = Set(try modelContext.fetch(FetchDescriptor<ShowSuggestion>()).map(\.channelId))
 
         var verdicts: [ShowVerdict] = []
         var examined = 0
@@ -52,7 +50,7 @@ extension StoreWriter {
 
             let videos = byChannel[channelId] ?? []
             let fingerprint = ShowDetectionRunner.fingerprint(of: videos)
-            let mustRecheck = heuristicallyFlagged.contains(channelId)
+            let mustRecheck = suggested.contains(channelId)
             guard mustRecheck || fingerprints[channelId] != fingerprint else { continue }
 
             examined += 1
@@ -64,13 +62,26 @@ extension StoreWriter {
             )))
         }
 
+        // A suggestion for a channel you've since unsubscribed from has no
+        // subscription left to examine; it's withdrawn like any other no.
+        let subscribed = Set(subscriptions.map(\.channelId))
+        for channelId in suggested.subtracting(subscribed) {
+            verdicts.append(ShowVerdict(channelId: channelId, channelTitle: "", isShow: false))
+        }
+
         // Applied in chunks like every other pass, though a pass usually
         // changes only a handful of rows: it's the first pass over a fresh
-        // store, which can flag dozens at once, that the chunking is for.
+        // store, which can suggest dozens at once, that the chunking is for.
         var changed = 0
         for chunk in verdicts.chunked(into: Self.chunkSize) {
-            changed += try ShowManager.applyAutomaticVerdicts(chunk, in: modelContext)
+            changed += try ShowSuggestions.apply(chunk, in: modelContext)
         }
         return DetectionOutcome(examined: examined, changed: changed, fingerprints: fingerprints)
+    }
+
+    /// The one-shot upgrade pass from issue #145, on this context like the
+    /// detection pass it runs before. See `ShowSuggestions.convertHeuristicShows`.
+    func convertHeuristicShows() throws -> Int {
+        try ShowSuggestions.convertHeuristicShows(in: modelContext)
     }
 }
